@@ -5,7 +5,7 @@ import { CssBaseline, ThemeProvider } from '@mui/material';
 import App from './App.jsx';
 import { themes } from './themes.js';
 
-const Root = () => {
+export const Root = () => {
   // Intentamos recuperar el tema guardado, si no existe usamos 'blue'
   const [themeName, setThemeName] = useState(() => {
     return localStorage.getItem('themeName') || 'blue';

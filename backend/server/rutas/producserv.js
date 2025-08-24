@@ -10,10 +10,19 @@ const producPopulate = ['rubro', 'marca', 'unidaddemedida'];
 
 /** LISTAR (por defecto, sólo activos) */
 router.get('/producservs', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, incluirInactivos } = req.query;
-  //const query = incluirInactivos === 'true' ? {} : { activo: true };
+  const { desde = 0, limite = 500, search } = req.query;
 
-  const producservs = await Producserv.find()
+  // Filtro de búsqueda por código o descripción (case-insensitive)
+  const q = search
+    ? {
+        $or: [
+          { codprod: { $regex: search, $options: 'i' } },
+          { descripcion: { $regex: search, $options: 'i' } },
+        ],
+      }
+    : {};
+
+  const producservs = await Producserv.find(q)
     .skip(toNumber(desde, 0))
     .limit(toNumber(limite, 500))
     .sort('descripcion')
@@ -21,7 +30,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     .lean()
     .exec();
 
-  const cantidad = await Producserv.countDocuments();
+  const cantidad = await Producserv.countDocuments(q);
   res.json({ ok: true, producservs, cantidad });
 }));
 

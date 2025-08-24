@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Box,
   Button,
@@ -9,7 +9,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { postLogin } from "../api/rutaUsuarios"; // tu helper original
-import fondoLogo from "../assets/logo.png"; // 🖼 asegurate de tener esta imagen en src/assets/
+// import fondoLogo from "../assets/logo.png"; // 🖼 asegurate de tener esta imagen en src/assets/
 
 const LoginForm = () => {
   const navigate = useNavigate();
@@ -32,18 +32,18 @@ const LoginForm = () => {
     if (token) {
       navigate("/");
     }
-  }, []);
+  }, [navigate]);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.clear();
     setIsLoggedIn(false);
     navigate("/login");
-  };
+  }, [navigate]);
 
-  const resetTimer = () => {
+  const resetTimer = useCallback(() => {
     clearTimeout(window.inactivityTimeout);
     window.inactivityTimeout = setTimeout(logout, 600000); // 10 min
-  };
+  }, [logout]);
 
   useEffect(() => {
     window.addEventListener("mousemove", resetTimer);
@@ -53,7 +53,7 @@ const LoginForm = () => {
       window.removeEventListener("keydown", resetTimer);
       clearTimeout(window.inactivityTimeout);
     };
-  }, []);
+  }, [resetTimer]);
 
   const handleChange = (e) => {
     setFormValues({ ...formValues, [e.target.name]: e.target.value });

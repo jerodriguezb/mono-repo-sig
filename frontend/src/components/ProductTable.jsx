@@ -1,5 +1,9 @@
 import React, {
-  useState, useEffect, forwardRef, useImperativeHandle
+  useState,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
 } from 'react';
 import {
   DataGrid, GridActionsCellItem
@@ -22,7 +26,7 @@ function CustomFooter({ totalCount = 0 }) {
   );
 }
 
-const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
+const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, ref) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -30,12 +34,12 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
   const [page, setPage] = useState(0);         // 0-based
   const [rowCount, setRowCount] = useState(0); // total desde backend
 
-  const fetchData = async (p = page) => {
+  const fetchData = useCallback(async (p = 0) => {
     setLoading(true);
     try {
       const desde = p * pageSize;
       const { data } = await api.get('/producservs', {
-        params: { desde, limite: pageSize }
+        params: { desde, limite: pageSize, search }
       });
 
       const flat = (data.producservs ?? []).map((x) => ({
@@ -59,9 +63,12 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [pageSize, search]);
 
-  useEffect(() => { fetchData(0); }, []);
+  useEffect(() => {
+    fetchData(0);
+    setPage(0);
+  }, [search, fetchData]);
 
   useImperativeHandle(ref, () => ({
     refresh: () => fetchData(page),
