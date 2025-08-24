@@ -1,0 +1,70 @@
+Backend
+
+actualizar nodemon
+
+ADMINISTRADOR DE CONEXIONES ALTAS Y BAJAS DE USUARIOS DE ACUREDO A LAS CONECIONES AL SISTEMA.-
+
+Comanda.js
+Producto seria un arreglo con los siguientes ítems (Matriz: cod producto, cantidad, cod lista, monto, cant entregada,)
+
+proveedor, provincia, rubro agregar counter
+
+stock y precio tablas con auditoria.
+
+
+chequear invoices no se si lo usamos.-
+hay probar el login.- listo.-
+hay que asegurar todas las rutas con verificatoken, todos los métodos. get….
+no se toco ultimacomanda.js eliminar?.-
+nro de comanda automatico. listo.-
+asegurar config.js el password y user de base de datos esta inseguro.-
+Build para evennode.-
+
+
+POSTMAN:
+para probar login
+
+{
+  "email": "admin@soychu.com.ar",
+  "password": "kakaroto"
+}
+
+para probar comandas
+
+
+{         
+            "codcli": "66b2817d3e63000033e0cdf9",
+            "codestado": "62200265c811f41820d8bda9",          
+            "items": [
+                {
+                    "lista": "672b8332fd5469003395daea",
+                     "codprod": "672b83c1fd5469003395db0b",
+                     "cantidad": 20,
+                    "monto": 7000
+                }
+            ]
+                
+        }
+
+FRONT
+
+CREAR UN APP CON VITE y REACT:
+
+npm create vite@latest distripollovite -- --template react
+npm install
+npm run dev
+
+DISEÑO UI
+barra izq no tapar datos.
+filtros multiples
+idioma
+validación campos cargados mayuscul/minusc - teléfonos verificar.-
+
+NIVELES DE USUARIO:
+
+values: ["ADMIN_ROLE", "USER_ROLE", "USER_CAM", "USER_PREV"]
+
+Marcelo Zunino (Dino Menozzi a traves de un amigo).-
+
+
+

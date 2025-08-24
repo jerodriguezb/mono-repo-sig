@@ -1,0 +1,27 @@
+{
+  "name": "backend",
+  "version": "2.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server/server",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "ABETOTECH",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "connect-timeout": "^1.9.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwt-encode": "^1.0.1",
+    "mongodb": "^6.18.0",
+    "mongoose": "^8.16.5",
+    "mongoose-auto-increment": "^5.0.1",
+    "mongoose-sequence": "^6.0.1",
+    "mongoose-unique-validator": "^4.0.1",
+    "nodemon": "^3.1.10",
+    "underscore": "^1.13.7"
+  }
+}

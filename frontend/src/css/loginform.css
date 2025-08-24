@@ -1,0 +1,67 @@
+.form-group label {
+  font-size: 1.5rem;
+  font-family: "Quicksand", sans-serif;
+  color: #222; /* Gris oscuro */
+}
+
+.form-group input {
+  font-size: 1.5rem;
+  font-family: "Quicksand", sans-serif;
+  color: #000;
+}
+
+/* Estilos para inputs email y password */
+#email, #password,
+#form-control,
+.email-input {
+  background-color: #f0f0f0 !important; /* Gris claro */
+  border: 1px solid #ccc !important; /* Borde gris */
+  color: #000 !important; /* Texto negro */
+  padding: 10px;
+  font-size: 1rem;
+  border-radius: 5px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#email:focus, #password:focus,
+#form-control:focus,
+.email-input:focus {
+  border-color: #666 !important;
+  outline: none;
+  box-shadow: 0 0 5px rgba(100, 100, 100, 0.3);
+}
+
+/* Mensaje de alerta */
+.alert {
+  font-size: 1.5rem;
+  font-family: "Quicksand", sans-serif;
+  color: #a00;
+  background-color: #f8d7da; /* rojo claro */
+  border: 1px solid #f5c6cb;
+  padding: 10px;
+  border-radius: 4px;
+}
+
+/* Botón */
+#boton {
+  font-size: 1.5rem;
+  font-family: "Quicksand", sans-serif;
+  background-color: #222 !important; /* Gris muy oscuro / casi negro */
+  color: #fff !important;
+  border: 1px solid #444 !important;
+  padding: 10px 20px;
+  border-radius: 5px;
+  width: 100%;
+  transition: background-color 0.3s ease;
+}
+
+#boton:hover {
+  background-color: #444 !important;
+}
+
+/* Botón adicional si hay más de uno */
+.form-group button {
+  font-size: 3rem;
+  font-family: "Quicksand", sans-serif;
+}
