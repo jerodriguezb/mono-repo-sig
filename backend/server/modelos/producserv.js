@@ -69,4 +69,8 @@ producservSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
 
+// Índices para búsquedas frecuentes
+producservSchema.index({ codprod: 1 });
+producservSchema.index({ descripcion: 1 });
+
 module.exports = mongoose.model("Producserv", producservSchema);

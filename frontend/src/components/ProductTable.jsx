@@ -33,14 +33,22 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
   const pageSize = 10;
   const [page, setPage] = useState(0);         // 0-based
   const [rowCount, setRowCount] = useState(0); // total desde backend
+  const [filterModel, setFilterModel] = useState({ items: [] });
 
-  const fetchData = useCallback(async (p = 0) => {
+  const fetchData = useCallback(async (p = 0, model = filterModel) => {
     setLoading(true);
     try {
       const desde = p * pageSize;
-      const { data } = await api.get('/producservs', {
-        params: { desde, limite: pageSize, search }
-      });
+      const { field, value, operator } = model.items[0] || {};
+      const params = { desde, limite: pageSize, search };
+      if (field && value !== undefined) {
+        params.searchField = field;
+        params.searchValue = value;
+        params.operator = operator;
+      }
+
+      const { data } = await api.get('/producservs', { params });
+
 
       const flat = (data.producservs ?? []).map((x) => ({
         ...x,
@@ -63,7 +71,8 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
     } finally {
       setLoading(false);
     }
-  }, [pageSize, search]);
+
+  }, [pageSize, search, filterModel]);
 
   useEffect(() => {
     fetchData(0);
@@ -73,6 +82,12 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
   useImperativeHandle(ref, () => ({
     refresh: () => fetchData(page),
   }));
+
+  const handleFilterChange = (model) => {
+    setFilterModel(model);
+    setPage(0);
+    fetchData(0, model);
+  };
 
   const columns = [
     { field: 'codprod',      headerName: 'Código',     width: 120 },
@@ -117,6 +132,9 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
           pageSize={pageSize}
           rowCount={rowCount}
           onPageChange={(np) => goToPage(np)}
+          filterMode="server"
+          filterModel={filterModel}
+          onFilterModelChange={handleFilterChange}
           slots={{ footer: CustomFooter }}
           slotProps={{ footer: { totalCount: rowCount } }}
           hideFooterPagination

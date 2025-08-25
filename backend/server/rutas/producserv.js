@@ -10,21 +10,48 @@ const producPopulate = ['rubro', 'marca', 'unidaddemedida'];
 
 /** LISTAR (por defecto, sólo activos) */
 router.get('/producservs', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, search } = req.query;
 
-  // Filtro de búsqueda por código o descripción (case-insensitive)
-  const q = search
-    ? {
-        $or: [
-          { codprod: { $regex: search, $options: 'i' } },
-          { descripcion: { $regex: search, $options: 'i' } },
-        ],
-      }
-    : {};
+  const {
+    desde = 0,
+    limite = 10,
+    search,
+    searchField,
+    searchValue,
+    operator,
+  } = req.query;
+
+  const limit = Math.min(toNumber(limite, 10), 50); // tope por consulta
+
+  const conditions = [];
+
+  // Búsqueda global por código o descripción
+  if (search) {
+    conditions.push({
+      $or: [
+        { codprod: { $regex: search, $options: 'i' } },
+        { descripcion: { $regex: search, $options: 'i' } },
+      ],
+    });
+  }
+
+  // Filtro específico (desde la grilla MUI)
+  if (searchField && searchValue) {
+    const op = operator || 'contains';
+    let expr;
+    if (op === 'equals') expr = { [searchField]: searchValue };
+    else if (op === 'startsWith')
+      expr = { [searchField]: { $regex: `^${searchValue}`, $options: 'i' } };
+    else
+      expr = { [searchField]: { $regex: searchValue, $options: 'i' } };
+    conditions.push(expr);
+  }
+
+  const q = conditions.length ? { $and: conditions } : {};
+
 
   const producservs = await Producserv.find(q)
     .skip(toNumber(desde, 0))
-    .limit(toNumber(limite, 500))
+    .limit(limit)
     .sort('descripcion')
     .populate(producPopulate)
     .lean()
