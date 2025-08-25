@@ -1,5 +1,9 @@
 import React, {
-  useState, useEffect, forwardRef, useImperativeHandle
+  useState,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
 } from 'react';
 import {
   DataGrid, GridActionsCellItem
@@ -22,21 +26,28 @@ function CustomFooter({ totalCount = 0 }) {
   );
 }
 
-const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
+const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, ref) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const pageSize = 10;
   const [page, setPage] = useState(0);         // 0-based
   const [rowCount, setRowCount] = useState(0); // total desde backend
+  const [filterModel, setFilterModel] = useState({ items: [] });
 
-  const fetchData = async (p = page) => {
+  const fetchData = useCallback(async (p = 0, model = filterModel) => {
     setLoading(true);
     try {
       const desde = p * pageSize;
-      const { data } = await api.get('/producservs', {
-        params: { desde, limite: pageSize }
-      });
+      const { field, value, operator } = model.items[0] || {};
+      const params = { desde, limite: pageSize, search };
+      if (field && value !== undefined) {
+        params.searchField = field;
+        params.searchValue = value;
+        params.operator = operator;
+      }
+
+      const { data } = await api.get('/producservs', { params });
 
       const flat = (data.producservs ?? []).map((x) => ({
         ...x,
@@ -59,13 +70,22 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [pageSize, search, filterModel]);
 
-  useEffect(() => { fetchData(0); }, []);
+  useEffect(() => {
+    fetchData(0);
+    setPage(0);
+  }, [search, fetchData]);
 
   useImperativeHandle(ref, () => ({
     refresh: () => fetchData(page),
   }));
+
+  const handleFilterChange = (model) => {
+    setFilterModel(model);
+    setPage(0);
+    fetchData(0, model);
+  };
 
   const columns = [
     { field: 'codprod',      headerName: 'Código',     width: 120 },
@@ -110,6 +130,9 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
           pageSize={pageSize}
           rowCount={rowCount}
           onPageChange={(np) => goToPage(np)}
+          filterMode="server"
+          filterModel={filterModel}
+          onFilterModelChange={handleFilterChange}
           slots={{ footer: CustomFooter }}
           slotProps={{ footer: { totalCount: rowCount } }}
           hideFooterPagination
