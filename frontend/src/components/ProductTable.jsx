@@ -49,6 +49,7 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
 
       const { data } = await api.get('/producservs', { params });
 
+
       const flat = (data.producservs ?? []).map((x) => ({
         ...x,
         // nombres legibles si vienen objetos poblados
@@ -70,6 +71,7 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
     } finally {
       setLoading(false);
     }
+
   }, [pageSize, search, filterModel]);
 
   useEffect(() => {

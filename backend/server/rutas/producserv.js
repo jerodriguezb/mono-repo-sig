@@ -10,6 +10,7 @@ const producPopulate = ['rubro', 'marca', 'unidaddemedida'];
 
 /** LISTAR (por defecto, sólo activos) */
 router.get('/producservs', asyncHandler(async (req, res) => {
+
   const {
     desde = 0,
     limite = 10,
@@ -46,6 +47,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
   }
 
   const q = conditions.length ? { $and: conditions } : {};
+
 
   const producservs = await Producserv.find(q)
     .skip(toNumber(desde, 0))
