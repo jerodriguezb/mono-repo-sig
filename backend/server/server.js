@@ -30,8 +30,8 @@ async function startServer() {
     await mongoose.connect(URLDB);
     console.log('✅ Base de datos conectada:', URLDB);
 
-    // Crear índices necesarios
-    await Producserv.createIndexes();
+    // Sincronizar índices con la base de datos
+    await Producserv.syncIndexes();
 
     // Levantar el servidor SÓLO después de una conexión exitosa a la BD
     app.listen(PORT, () => {
