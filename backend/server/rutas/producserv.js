@@ -1,6 +1,8 @@
 // rutas/producserv.js — CRUD de Productos y Servicios (soft-delete)
 const express = require('express');
 const Producserv = require('../modelos/producserv');
+const Rubro = require('../modelos/rubro');
+const Marca = require('../modelos/marca');
 const { verificaToken, verificaAdmin_role } = require('../middlewares/autenticacion');
 
 const router = express.Router();
@@ -14,35 +16,44 @@ router.get('/producservs', asyncHandler(async (req, res) => {
   const {
     desde = 0,
     limite = 10,
-    search,
     searchField,
     searchValue,
     operator,
   } = req.query;
 
+  // Limita la cantidad de resultados para preservar el rendimiento
   const limit = Math.min(toNumber(limite, 10), 50); // tope por consulta
 
   const conditions = [];
-
-  // Búsqueda global por código o descripción
-  if (search) {
-    conditions.push({
-      $or: [
-        { codprod: { $regex: search, $options: 'i' } },
-        { descripcion: { $regex: search, $options: 'i' } },
-      ],
-    });
-  }
 
   // Filtro específico (desde la grilla MUI)
   if (searchField && searchValue) {
     const op = operator || 'contains';
     let expr;
-    if (op === 'equals') expr = { [searchField]: searchValue };
-    else if (op === 'startsWith')
-      expr = { [searchField]: { $regex: `^${searchValue}`, $options: 'i' } };
-    else
-      expr = { [searchField]: { $regex: searchValue, $options: 'i' } };
+    if (searchField === 'stkactual') {
+      const num = Number(searchValue);
+      if (op === '>') expr = { stkactual: { $gt: num } };
+      else if (op === '<') expr = { stkactual: { $lt: num } };
+      else expr = { stkactual: num };
+    } else if (searchField === 'rubroNombre' || searchField === 'marcaNombre') {
+      const Model = searchField === 'rubroNombre' ? Rubro : Marca;
+      const field = searchField === 'rubroNombre' ? 'rubro' : 'marca';
+      let nameQuery;
+      if (op === 'equals') nameQuery = { [field]: searchValue };
+      else if (op === 'startsWith')
+        nameQuery = { [field]: { $regex: `^${searchValue}`, $options: 'i' } };
+      else
+        nameQuery = { [field]: { $regex: searchValue, $options: 'i' } };
+      const docs = await Model.find(nameQuery).select('_id').lean();
+      const ids = docs.map(d => d._id);
+      expr = { [field]: { $in: ids } };
+    } else {
+      if (op === 'equals') expr = { [searchField]: searchValue };
+      else if (op === 'startsWith')
+        expr = { [searchField]: { $regex: `^${searchValue}`, $options: 'i' } };
+      else
+        expr = { [searchField]: { $regex: searchValue, $options: 'i' } };
+    }
     conditions.push(expr);
   }
 
