@@ -26,7 +26,7 @@ function CustomFooter({ totalCount = 0 }) {
   );
 }
 
-const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, ref) {
+const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,7 +40,7 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
     try {
       const desde = p * pageSize;
       const { field, value, operator } = model.items[0] || {};
-      const params = { desde, limite: pageSize, search };
+      const params = { desde, limite: pageSize };
       if (field && value !== undefined) {
         params.searchField = field;
         params.searchValue = value;
@@ -72,12 +72,12 @@ const ProductTable = forwardRef(function ProductTable({ onEdit, search = '' }, r
       setLoading(false);
     }
 
-  }, [pageSize, search, filterModel]);
+  }, [pageSize, filterModel]);
 
   useEffect(() => {
     fetchData(0);
     setPage(0);
-  }, [search, fetchData]);
+  }, [fetchData]);
 
   useImperativeHandle(ref, () => ({
     refresh: () => fetchData(page),
