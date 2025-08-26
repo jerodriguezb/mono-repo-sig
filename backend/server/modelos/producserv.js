@@ -72,5 +72,8 @@ producservSchema.plugin(uniqueValidator, {
 // Índices para búsquedas frecuentes
 producservSchema.index({ codprod: 1 });
 producservSchema.index({ descripcion: 1 });
+producservSchema.index({ rubro: 1 });
+producservSchema.index({ marca: 1 });
+producservSchema.index({ stkactual: 1 });
 
 module.exports = mongoose.model("Producserv", producservSchema);

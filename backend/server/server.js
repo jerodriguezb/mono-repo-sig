@@ -5,6 +5,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const Producserv = require('./modelos/producserv');
 
 // Carga de variables de entorno, configuraciones globales, etc.
 require('./config/config');
@@ -28,6 +29,9 @@ async function startServer() {
     // Conectar a MongoDB — Mongoose 8 ya no acepta callbacks ni necesita las opciones legacy
     await mongoose.connect(URLDB);
     console.log('✅ Base de datos conectada:', URLDB);
+
+    // Crear índices necesarios
+    await Producserv.createIndexes();
 
     // Levantar el servidor SÓLO después de una conexión exitosa a la BD
     app.listen(PORT, () => {
