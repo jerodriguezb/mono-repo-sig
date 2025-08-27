@@ -34,8 +34,13 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
   const [page, setPage] = useState(0);         // 0-based
   const [rowCount, setRowCount] = useState(0); // total desde backend
   const [filterModel, setFilterModel] = useState({ items: [] });
+  const [sortModel, setSortModel] = useState([]);
 
-  const fetchData = useCallback(async (p = 0, model = filterModel) => {
+  const fetchData = useCallback(async (
+    p = 0,
+    model = filterModel,
+    sModel = sortModel,
+  ) => {
     setLoading(true);
     try {
       const desde = p * pageSize;
@@ -45,6 +50,12 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
         params.searchField = field;
         params.searchValue = value;
         params.operator = operator;
+      }
+
+      const [sort] = sModel;
+      if (sort?.field) {
+        params.sortField = sort.field;
+        params.sortOrder = sort.sort;
       }
 
       const { data } = await api.get('/producservs', { params });
@@ -72,7 +83,7 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
       setLoading(false);
     }
 
-  }, [pageSize, filterModel]);
+  }, [pageSize, filterModel, sortModel]);
 
   useEffect(() => {
     fetchData(0);
@@ -86,7 +97,13 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
   const handleFilterChange = (model) => {
     setFilterModel(model);
     setPage(0);
-    fetchData(0, model);
+    fetchData(0, model, sortModel);
+  };
+
+  const handleSortModelChange = (model) => {
+    setSortModel(model);
+    setPage(0);
+    fetchData(0, filterModel, model);
   };
 
   const columns = [
@@ -116,7 +133,7 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
   ];
 
   const totalPages = Math.ceil(rowCount / pageSize);
-  const goToPage = (np) => { setPage(np); fetchData(np); };
+  const goToPage = (np) => { setPage(np); fetchData(np, filterModel, sortModel); };
 
   return (
     <Stack spacing={1}>
@@ -132,6 +149,9 @@ const ProductTable = forwardRef(function ProductTable({ onEdit }, ref) {
           pageSize={pageSize}
           rowCount={rowCount}
           onPageChange={(np) => goToPage(np)}
+          sortingMode="server"
+          sortModel={sortModel}
+          onSortModelChange={handleSortModelChange}
           filterMode="server"
           filterModel={filterModel}
           onFilterModelChange={handleFilterChange}
