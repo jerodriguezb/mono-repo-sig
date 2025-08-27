@@ -69,6 +69,10 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     'rubroNombre',
     'marcaNombre',
     'unidaddemedidaNombre',
+    'unidadNombre',
+    'tipo',
+    'iva',
+    'activo',
   ];
   const sf = allowedSortFields.includes(sortField) ? sortField : 'descripcion';
   const sortOpt = { [sf]: sortOrder === 'desc' ? -1 : 1 };
@@ -93,6 +97,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
         rubroNombre: '$rubro.rubro',
         marcaNombre: '$marca.marca',
         unidaddemedidaNombre: '$unidaddemedida.unidaddemedida',
+        unidadNombre: '$unidaddemedida.unidaddemedida',
       },
     },
     { $sort: sortOpt },
