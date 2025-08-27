@@ -19,6 +19,8 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     searchField,
     searchValue,
     operator,
+    sortField,
+    sortOrder,
   } = req.query;
 
   // Limita la cantidad de resultados para preservar el rendimiento
@@ -59,14 +61,46 @@ router.get('/producservs', asyncHandler(async (req, res) => {
 
   const q = conditions.length ? { $and: conditions } : {};
 
+  // Validación y opciones de ordenamiento
+  const allowedSortFields = [
+    'descripcion',
+    'codprod',
+    'stkactual',
+    'rubroNombre',
+    'marcaNombre',
+    'unidaddemedidaNombre',
+  ];
+  const sf = allowedSortFields.includes(sortField) ? sortField : 'descripcion';
+  const sortOpt = { [sf]: sortOrder === 'desc' ? -1 : 1 };
 
-  const producservs = await Producserv.find(q)
-    .skip(toNumber(desde, 0))
-    .limit(limit)
-    .sort('descripcion')
-    .populate(producPopulate)
-    .lean()
-    .exec();
+  const pipeline = [
+    { $match: q },
+    { $lookup: { from: 'rubros', localField: 'rubro', foreignField: '_id', as: 'rubro' } },
+    { $unwind: { path: '$rubro', preserveNullAndEmptyArrays: true } },
+    { $lookup: { from: 'marcas', localField: 'marca', foreignField: '_id', as: 'marca' } },
+    { $unwind: { path: '$marca', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'unidaddemedidas',
+        localField: 'unidaddemedida',
+        foreignField: '_id',
+        as: 'unidaddemedida',
+      },
+    },
+    { $unwind: { path: '$unidaddemedida', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        rubroNombre: '$rubro.rubro',
+        marcaNombre: '$marca.marca',
+        unidaddemedidaNombre: '$unidaddemedida.unidaddemedida',
+      },
+    },
+    { $sort: sortOpt },
+    { $skip: toNumber(desde, 0) },
+    { $limit: limit },
+  ];
+
+  const producservs = await Producserv.aggregate(pipeline).exec();
 
   const cantidad = await Producserv.countDocuments(q);
   res.json({ ok: true, producservs, cantidad });
