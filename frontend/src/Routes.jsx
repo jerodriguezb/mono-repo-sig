@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import DashboardLayout from './layouts/DashboardLayout';
 import ClientsPage from './pages/ClientsPage';
 import ProductsPage from './pages/ProductsPage.jsx';
+import ComandasPage from './pages/ComandasPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 
@@ -19,6 +20,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
       >
         <Route path="clients" element={<ClientsPage />} />
         <Route path="/products" element={<ProductsPage />} />
+        <Route path="comandas" element={<ComandasPage />} />
         {/* Otras rutas aquí */}
       </Route>
     </Routes>
