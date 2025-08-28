@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Stack, Typography, TextField, Select, MenuItem, Grid, Box } from '@mui/material';
+import { Stack, Typography, TextField, Select, MenuItem, Grid, Box, Pagination } from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
 import api from '../api/axios.js';
 
@@ -10,6 +10,9 @@ export default function ComandasPage() {
   const [busqueda, setBusqueda] = useState('');
   const [rubroSel, setRubroSel] = useState('');
   const [listaSel, setListaSel] = useState('');
+  const [page, setPage] = useState(1); // 1-based
+  const [pageSize] = useState(10);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     const fetchFilters = async () => {
@@ -30,26 +33,25 @@ export default function ComandasPage() {
   useEffect(() => {
     const fetchProductos = async () => {
       try {
-        const params = { limite: 100 };
+        const params = {
+          limite: pageSize,
+          desde: (page - 1) * pageSize,
+        };
         if (busqueda) {
           params.searchField = 'descripcion';
           params.searchValue = busqueda;
         }
+        if (rubroSel) params.rubro = rubroSel;
+        if (listaSel) params.lista = listaSel;
         const { data } = await api.get('/producservs', { params });
-        let prods = data.producservs || [];
-        if (rubroSel) {
-          prods = prods.filter((p) => {
-            const rId = p.rubro?._id ?? p.rubro;
-            return rId === rubroSel;
-          });
-        }
-        setProductos(prods);
+        setProductos(data.producservs || []);
+        setTotal(data.cantidad || 0);
       } catch (err) {
         console.error('Error obteniendo productos', err);
       }
     };
     fetchProductos();
-  }, [busqueda, rubroSel]);
+  }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
   const handleAdd = (item) => {
     console.log('Producto agregado', item);
@@ -62,12 +64,18 @@ export default function ComandasPage() {
         <TextField
           label="Buscar"
           value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
+          onChange={(e) => {
+            setBusqueda(e.target.value);
+            setPage(1);
+          }}
         />
         <Select
           value={rubroSel}
           displayEmpty
-          onChange={(e) => setRubroSel(e.target.value)}
+          onChange={(e) => {
+            setRubroSel(e.target.value);
+            setPage(1);
+          }}
           sx={{ minWidth: 160 }}
         >
           <MenuItem value=""><em>Todos los rubros</em></MenuItem>
@@ -78,7 +86,10 @@ export default function ComandasPage() {
         <Select
           value={listaSel}
           displayEmpty
-          onChange={(e) => setListaSel(e.target.value)}
+          onChange={(e) => {
+            setListaSel(e.target.value);
+            setPage(1);
+          }}
           sx={{ minWidth: 160 }}
         >
           <MenuItem value=""><em>Lista de precios</em></MenuItem>
@@ -102,6 +113,12 @@ export default function ComandasPage() {
           ))}
         </Grid>
       </Box>
+      <Pagination
+        count={Math.max(1, Math.ceil(total / pageSize))}
+        page={page}
+        onChange={(_, val) => setPage(val)}
+        sx={{ alignSelf: 'center' }}
+      />
     </Stack>
   );
 }
