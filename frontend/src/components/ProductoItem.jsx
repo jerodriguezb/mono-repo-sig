@@ -1,0 +1,89 @@
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardMedia, Typography, TextField, Select, MenuItem, Button, Box } from '@mui/material';
+import ImageIcon from '@mui/icons-material/Image';
+import api from '../api/axios.js';
+
+export default function ProductoItem({ producto, listas = [], defaultLista = '', onAdd }) {
+  const [cantidad, setCantidad] = useState(1);
+  const [listaId, setListaId] = useState(defaultLista);
+  const [precio, setPrecio] = useState(null);
+
+  useEffect(() => {
+    setListaId(defaultLista);
+  }, [defaultLista]);
+
+  useEffect(() => {
+    const fetchPrecio = async () => {
+      if (!listaId) {
+        setPrecio(null);
+        return;
+      }
+      try {
+        const params = { codproducto: producto._id, lista: listaId };
+        const { data } = await api.get('/precios', { params });
+        const item = (data.precios || []).find((p) => {
+          const prodId = p.codproducto?._id ?? p.codproducto;
+          const lista = p.lista?._id ?? p.lista;
+          return prodId === producto._id && lista === listaId;
+        });
+        setPrecio(item?.preciototalventa ?? null);
+      } catch (err) {
+        console.error('Error al obtener precio', err);
+        setPrecio(null);
+      }
+    };
+    fetchPrecio();
+  }, [listaId, producto._id]);
+
+  const handleAdd = () => {
+    const qty = Number(cantidad);
+    if (qty > producto.stkactual) {
+      alert('Stock insuficiente');
+      return;
+    }
+    onAdd && onAdd({ producto, cantidad: qty, lista: listaId, precio });
+  };
+
+  return (
+    <Card>
+      {producto.imagen ? (
+        <CardMedia component="img" height="140" image={producto.imagen} alt={producto.descripcion} />
+      ) : (
+        <Box sx={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'grey.200' }}>
+          <ImageIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
+        </Box>
+      )}
+      <CardContent>
+        <Typography variant="subtitle1" gutterBottom>{producto.descripcion}</Typography>
+        <TextField
+          label="Cantidad"
+          type="number"
+          size="small"
+          value={cantidad}
+          onChange={(e) => setCantidad(e.target.value)}
+          inputProps={{ min: 1 }}
+          sx={{ mb: 1 }}
+        />
+        <Select
+          size="small"
+          value={listaId}
+          displayEmpty
+          onChange={(e) => setListaId(e.target.value)}
+          sx={{ mb: 1, minWidth: 120 }}
+        >
+          <MenuItem value=""><em>Lista</em></MenuItem>
+          {listas.map((l) => (
+            <MenuItem key={l._id} value={l._id}>{l.lista || l.nombre}</MenuItem>
+          ))}
+        </Select>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          Precio: {precio != null ? `$${precio}` : '-'}
+        </Typography>
+        <Button variant="contained" onClick={handleAdd} disabled={!listaId || precio == null}>
+          Agregar
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
