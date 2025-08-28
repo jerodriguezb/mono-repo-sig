@@ -27,6 +27,7 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt';   // 👈 NUEVO ícon
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -36,6 +37,7 @@ const navItems = [
   { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
   { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
+  { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
 ];
