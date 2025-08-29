@@ -79,6 +79,9 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
         <Typography variant="body2" sx={{ mb: 1 }}>
           Precio: {precio != null ? `$${precio}` : '-'}
         </Typography>
+        <Typography variant="body2" sx={{ mb: 1 }}>
+          Stock: {producto.stkactual}
+        </Typography>
         <Button variant="contained" onClick={handleAdd} disabled={!listaId || precio == null}>
           Agregar
         </Button>
