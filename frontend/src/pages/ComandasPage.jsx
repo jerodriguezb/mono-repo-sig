@@ -10,6 +10,7 @@ export default function ComandasPage() {
   const [busqueda, setBusqueda] = useState('');
   const [rubroSel, setRubroSel] = useState('');
   const [listaSel, setListaSel] = useState('');
+  const [pageSize] = useState(8);
 
   useEffect(() => {
     const fetchFilters = async () => {
@@ -30,7 +31,7 @@ export default function ComandasPage() {
   useEffect(() => {
     const fetchProductos = async () => {
       try {
-        const params = { limite: 100 };
+        const params = { limite: pageSize };
         if (busqueda) {
           params.searchField = 'descripcion';
           params.searchValue = busqueda;
@@ -49,7 +50,7 @@ export default function ComandasPage() {
       }
     };
     fetchProductos();
-  }, [busqueda, rubroSel]);
+  }, [busqueda, rubroSel, pageSize]);
 
   const handleAdd = (item) => {
     console.log('Producto agregado', item);
