@@ -7,6 +7,7 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
   const [cantidad, setCantidad] = useState(1);
   const [listaId, setListaId] = useState(defaultLista);
   const [precio, setPrecio] = useState(null);
+  const [stock, setStock] = useState(producto?.stkactual);
 
   useEffect(() => {
     setListaId(defaultLista);
@@ -35,9 +36,23 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
     fetchPrecio();
   }, [listaId, producto._id]);
 
+  useEffect(() => {
+    const fetchStock = async () => {
+      try {
+        const { data } = await api.get(`/producservs/${producto._id}`);
+        setStock(data.producserv?.stkactual ?? 0);
+      } catch (err) {
+        console.error('Error al obtener stock', err);
+        setStock(producto?.stkactual ?? 0);
+      }
+    };
+    if (producto?.stkactual == null) fetchStock();
+    else setStock(producto.stkactual);
+  }, [producto._id, producto.stkactual]);
+
   const handleAdd = () => {
     const qty = Number(cantidad);
-    if (qty > producto.stkactual) {
+    if (qty > stock) {
       alert('Stock insuficiente');
       return;
     }
@@ -55,6 +70,16 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
       )}
       <CardContent>
         <Typography variant="subtitle1" gutterBottom>{producto.descripcion}</Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            mb: 1,
+            fontWeight: 'bold',
+            color: stock <= 0 ? 'error.main' : 'text.primary',
+          }}
+        >
+          Stock: {stock ?? '-'}
+        </Typography>
         <TextField
           label="Cantidad"
           type="number"
