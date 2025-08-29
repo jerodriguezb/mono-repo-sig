@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useReducer, useState } from 'react';
 import { Stack, Typography, TextField, Select, MenuItem, Grid, Box, Pagination } from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
+import ResumenComanda from '../components/ResumenComanda.jsx';
 import api from '../api/axios.js';
 
 export default function ComandasPage() {
@@ -13,6 +14,31 @@ export default function ComandasPage() {
   const [page, setPage] = useState(1); // 1-based
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
+  const itemsReducer = (state, action) => {
+    switch (action.type) {
+      case 'add': {
+        const { codprod, lista, cantidad, precio, descripcion } = action.payload;
+        const idx = state.findIndex((i) => i.codprod === codprod && i.lista === lista);
+        if (idx > -1) {
+          return state.map((i, n) => (n === idx ? { ...i, cantidad: i.cantidad + cantidad } : i));
+        }
+        return [...state, { codprod, lista, cantidad, precio, descripcion }];
+      }
+      case 'update': {
+        const { codprod, lista, cantidad } = action.payload;
+        return state.map((i) =>
+          i.codprod === codprod && i.lista === lista ? { ...i, cantidad } : i,
+        );
+      }
+      case 'remove': {
+        const { codprod, lista } = action.payload;
+        return state.filter((i) => !(i.codprod === codprod && i.lista === lista));
+      }
+      default:
+        return state;
+    }
+  };
+  const [items, dispatch] = useReducer(itemsReducer, []);
 
   useEffect(() => {
     const fetchFilters = async () => {
@@ -53,8 +79,17 @@ export default function ComandasPage() {
     fetchProductos();
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
-  const handleAdd = (item) => {
-    console.log('Producto agregado', item);
+  const handleAdd = ({ producto, cantidad, lista, precio }) => {
+    dispatch({
+      type: 'add',
+      payload: {
+        codprod: producto._id,
+        lista,
+        cantidad,
+        precio,
+        descripcion: producto.descripcion,
+      },
+    });
   };
 
   return (
@@ -99,26 +134,29 @@ export default function ComandasPage() {
         </Select>
       </Stack>
 
-      <Box>
-        <Grid container spacing={2}>
-          {productos.map((p) => (
-            <Grid item xs={12} sm={6} md={4} lg={3} key={p._id}>
-              <ProductoItem
-                producto={p}
-                listas={listas}
-                defaultLista={listaSel}
-                onAdd={handleAdd}
-              />
-            </Grid>
-          ))}
-        </Grid>
-      </Box>
-      <Pagination
-        count={Math.max(1, Math.ceil(total / pageSize))}
-        page={page}
-        onChange={(_, val) => setPage(val)}
-        sx={{ alignSelf: 'center' }}
-      />
+      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
+        <Box sx={{ flex: 1 }}>
+          <Grid container spacing={2}>
+            {productos.map((p) => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={p._id}>
+                <ProductoItem
+                  producto={p}
+                  listas={listas}
+                  defaultLista={listaSel}
+                  onAdd={handleAdd}
+                />
+              </Grid>
+            ))}
+          </Grid>
+          <Pagination
+            count={Math.max(1, Math.ceil(total / pageSize))}
+            page={page}
+            onChange={(_, val) => setPage(val)}
+            sx={{ mt: 2, alignSelf: 'center' }}
+          />
+        </Box>
+        <ResumenComanda items={items} dispatch={dispatch} />
+      </Stack>
     </Stack>
   );
 }
