@@ -10,9 +10,6 @@ import {
   TableRow,
   TextField,
   IconButton,
-  Checkbox,
-  Select,
-  MenuItem,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -27,18 +24,9 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
     }
   };
 
-  const handleListaChange = (codprod, lista, nuevaLista) => {
-    dispatch({
-      type: 'update',
-      payload: { codprod, lista, changes: { lista: nuevaLista } },
-    });
-  };
-
-  const handleEntregadoChange = (codprod, lista, entregado) => {
-    dispatch({
-      type: 'update',
-      payload: { codprod, lista, changes: { entregado } },
-    });
+  const getListaNombre = (id) => {
+    const found = listas.find((l) => l._id === id);
+    return found ? found.lista || found.nombre : id;
   };
 
   const handleRemove = (codprod, lista) => {
@@ -58,7 +46,6 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
               <TableCell>Lista</TableCell>
               <TableCell>Cantidad</TableCell>
               <TableCell>Monto</TableCell>
-              <TableCell>Entregado</TableCell>
               <TableCell></TableCell>
             </TableRow>
           </TableHead>
@@ -66,21 +53,7 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
             {items.map((item) => (
               <TableRow key={`${item.codprod}-${item.lista}`}>
                 <TableCell>{item.descripcion || item.codprod}</TableCell>
-                <TableCell>
-                  <Select
-                    size="small"
-                    value={item.lista}
-                    onChange={(e) =>
-                      handleListaChange(item.codprod, item.lista, e.target.value)
-                    }
-                  >
-                    {listas.map((l) => (
-                      <MenuItem key={l._id} value={l._id}>
-                        {l.lista || l.nombre}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </TableCell>
+                <TableCell>{getListaNombre(item.lista)}</TableCell>
                 <TableCell>
                   <TextField
                     type="number"
@@ -94,18 +67,6 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
                   />
                 </TableCell>
                 <TableCell>{item.monto}</TableCell>
-                <TableCell>
-                  <Checkbox
-                    checked={item.entregado}
-                    onChange={(e) =>
-                      handleEntregadoChange(
-                        item.codprod,
-                        item.lista,
-                        e.target.checked,
-                      )
-                    }
-                  />
-                </TableCell>
                 <TableCell>
                   <IconButton
                     edge="end"
