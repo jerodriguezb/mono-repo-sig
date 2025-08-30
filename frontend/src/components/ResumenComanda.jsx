@@ -7,7 +7,11 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
     const qty = Number(cantidad);
     const item = items.find((i) => i.codprod === codprod && i.lista === lista);
     if (!item) return;
-    if (qty > item.stock) {
+    const otros = items
+      .filter((i) => i.codprod === codprod && i.lista !== lista)
+      .reduce((sum, i) => sum + i.cantidad, 0);
+    const total = otros + qty;
+    if (total > item.stock) {
       alert('Stock insuficiente');
       return;
     }

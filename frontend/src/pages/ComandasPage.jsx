@@ -95,10 +95,12 @@ export default function ComandasPage() {
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
   const handleAdd = ({ producto, cantidad, lista, precio }) => {
-    const existing = items.find((i) => i.codprod === producto._id && i.lista === lista);
     const stock = producto.stkactual;
-    const newQty = (existing?.cantidad || 0) + cantidad;
-    if (newQty > stock) {
+    const existingTotal = items
+      .filter((i) => i.codprod === producto._id)
+      .reduce((sum, i) => sum + i.cantidad, 0);
+    const newTotal = existingTotal + cantidad;
+    if (newTotal > stock) {
       alert('Stock insuficiente');
       return;
     }
@@ -134,10 +136,12 @@ export default function ComandasPage() {
           alert('Precio no disponible');
           return;
         }
-        const existing = items.find((i) => i.codprod === producto._id && i.lista === listaSel);
         const stock = producto.stkactual;
-        const newQty = (existing?.cantidad || 0) + 1;
-        if (newQty > stock) {
+        const existingTotal = items
+          .filter((i) => i.codprod === producto._id)
+          .reduce((sum, i) => sum + i.cantidad, 0);
+        const newTotal = existingTotal + 1;
+        if (newTotal > stock) {
           alert('Stock insuficiente');
           return;
         }
@@ -249,50 +253,62 @@ export default function ComandasPage() {
           </ToggleButtonGroup>
           {viewMode === 'grid' ? (
             <Grid container spacing={2}>
-              {productos.map((p) => (
-                <Grid
-                  item
-                  xs={12}
-                  sm={6}
-                  md={4}
-                  lg={3}
-                  key={p._id}
-                  id={`prod-${p._id}`}
-                >
-                  <ProductoItem
-                    producto={p}
-                    listas={listas}
-                    defaultLista={listaSel}
-                    onAdd={handleAdd}
-                    focused={focusedProdId === p._id}
-                  />
-                </Grid>
-              ))}
+              {productos.map((p) => {
+                const agregado = items
+                  .filter((i) => i.codprod === p._id)
+                  .reduce((sum, i) => sum + i.cantidad, 0);
+                return (
+                  <Grid
+                    item
+                    xs={12}
+                    sm={6}
+                    md={4}
+                    lg={3}
+                    key={p._id}
+                    id={`prod-${p._id}`}
+                  >
+                    <ProductoItem
+                      producto={p}
+                      listas={listas}
+                      defaultLista={listaSel}
+                      onAdd={handleAdd}
+                      focused={focusedProdId === p._id}
+                      stockDisponible={p.stkactual - agregado}
+                    />
+                  </Grid>
+                );
+              })}
             </Grid>
           ) : (
             <List>
-              {productos.map((p) => (
-                <ListItem
-                  key={p._id}
-                  id={`prod-${p._id}`}
-                  divider
-                  selected={focusedProdId === p._id}
-                  secondaryAction={
-                    <Button
-                      variant="contained"
-                      onClick={() => handleQuickAdd(p)}
-                      disabled={!listaSel}
-                    >
-                      Agregar
-                    </Button>
-                  }
-                >
-                  <ListItemText
-                    primary={p.descripcion}
-                    secondary={`Stock: ${p.stkactual}`}
-                  />
-                </ListItem>
-              ))}
+              {productos.map((p) => {
+                const agregado = items
+                  .filter((i) => i.codprod === p._id)
+                  .reduce((sum, i) => sum + i.cantidad, 0);
+                const stockDisp = p.stkactual - agregado;
+                return (
+                  <ListItem
+                    key={p._id}
+                    id={`prod-${p._id}`}
+                    divider
+                    selected={focusedProdId === p._id}
+                    secondaryAction={
+                      <Button
+                        variant="contained"
+                        onClick={() => handleQuickAdd(p)}
+                        disabled={!listaSel || stockDisp <= 0}
+                      >
+                        Agregar
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={p.descripcion}
+                      secondary={`Stock: ${stockDisp}`}
+                    />
+                  </ListItem>
+                );
+              })}
             </List>
           )}
           <Pagination
