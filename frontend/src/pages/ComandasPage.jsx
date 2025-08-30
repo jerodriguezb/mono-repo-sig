@@ -64,8 +64,9 @@ export default function ComandasPage() {
           desde: (page - 1) * pageSize,
         };
         if (busqueda) {
-          params.searchField = 'descripcion';
-          params.searchValue = busqueda;
+          const searchTerm = busqueda.trim();
+          params.searchField = /^\d+$/.test(searchTerm) ? 'codprod' : 'descripcion';
+          params.searchValue = searchTerm;
         }
         if (rubroSel) params.rubro = rubroSel;
         if (listaSel) params.lista = listaSel;
