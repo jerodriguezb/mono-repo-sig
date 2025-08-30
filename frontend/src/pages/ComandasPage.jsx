@@ -286,7 +286,7 @@ export default function ComandasPage() {
             sx={{ mt: 2, alignSelf: 'center' }}
           />
         </Box>
-        <ResumenComanda items={items} dispatch={dispatch} />
+        <ResumenComanda items={items} listas={listas} dispatch={dispatch} />
       </Stack>
     </Stack>
   );
