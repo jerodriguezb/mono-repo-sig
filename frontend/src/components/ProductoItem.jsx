@@ -55,6 +55,13 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
       )}
       <CardContent>
         <Typography variant="subtitle1" gutterBottom>{producto.descripcion}</Typography>
+        <Typography
+          variant="body2"
+          color={producto.stkactual === 0 ? 'warning.main' : 'text.secondary'}
+          sx={{ mb: 1 }}
+        >
+          Stock: {producto.stkactual}
+        </Typography>
         <TextField
           label="Cantidad"
           type="number"
