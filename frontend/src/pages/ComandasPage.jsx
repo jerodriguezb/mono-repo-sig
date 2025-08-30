@@ -38,15 +38,55 @@ export default function ComandasPage() {
         const { codprod, lista, cantidad, precio, descripcion } = action.payload;
         const idx = state.findIndex((i) => i.codprod === codprod && i.lista === lista);
         if (idx > -1) {
-          return state.map((i, n) => (n === idx ? { ...i, cantidad: i.cantidad + cantidad } : i));
+          return state.map((i, n) =>
+            n === idx
+              ? {
+                  ...i,
+                  cantidad: i.cantidad + cantidad,
+                  monto: (i.cantidad + cantidad) * i.precio,
+                }
+              : i,
+          );
         }
-        return [...state, { codprod, lista, cantidad, precio, descripcion }];
+        return [
+          ...state,
+          {
+            codprod,
+            lista,
+            cantidad,
+            precio,
+            descripcion,
+            entregado: false,
+            monto: cantidad * precio,
+          },
+        ];
       }
       case 'update': {
-        const { codprod, lista, cantidad } = action.payload;
-        return state.map((i) =>
-          i.codprod === codprod && i.lista === lista ? { ...i, cantidad } : i,
+        const { codprod, lista, changes } = action.payload;
+        let updated = state.map((i) =>
+          i.codprod === codprod && i.lista === lista
+            ? { ...i, ...changes, monto: (changes.cantidad ?? i.cantidad) * i.precio }
+            : i,
         );
+        const seen = {};
+        updated.forEach((item, idx) => {
+          const key = `${item.codprod}-${item.lista}`;
+          if (seen[key] !== undefined) {
+            const existingIdx = seen[key];
+            const existing = updated[existingIdx];
+            const cantidad = existing.cantidad + item.cantidad;
+            updated[existingIdx] = {
+              ...existing,
+              cantidad,
+              monto: cantidad * existing.precio,
+              entregado: existing.entregado || item.entregado,
+            };
+            updated[idx] = null;
+          } else {
+            seen[key] = idx;
+          }
+        });
+        return updated.filter(Boolean);
       }
       case 'remove': {
         const { codprod, lista } = action.payload;
@@ -286,7 +326,7 @@ export default function ComandasPage() {
             sx={{ mt: 2, alignSelf: 'center' }}
           />
         </Box>
-        <ResumenComanda items={items} dispatch={dispatch} />
+        <ResumenComanda items={items} listas={listas} dispatch={dispatch} />
       </Stack>
     </Stack>
   );
