@@ -19,6 +19,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     searchField,
     searchValue,
     operator,
+    search,
     sortField,
     sortOrder,
   } = req.query;
@@ -27,6 +28,17 @@ router.get('/producservs', asyncHandler(async (req, res) => {
   const limit = Math.min(toNumber(limite, 10), 50); // tope por consulta
 
   const conditions = [];
+
+  // Búsqueda general por descripción o código
+  if (search) {
+    const regex = new RegExp(search, 'i');
+    conditions.push({
+      $or: [
+        { descripcion: { $regex: regex } },
+        { codprod: search },
+      ],
+    });
+  }
 
   // Filtro específico (desde la grilla MUI)
   if (searchField && searchValue) {
