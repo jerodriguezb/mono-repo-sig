@@ -5,6 +5,16 @@ import DeleteIcon from '@mui/icons-material/Delete';
 export default function ResumenComanda({ items = [], listas = [], dispatch }) {
   const handleQtyChange = (codprod, lista, cantidad) => {
     const qty = Number(cantidad);
+    const item = items.find((i) => i.codprod === codprod && i.lista === lista);
+    if (!item) return;
+    const otros = items
+      .filter((i) => i.codprod === codprod && i.lista !== lista)
+      .reduce((sum, i) => sum + i.cantidad, 0);
+    const total = otros + qty;
+    if (total > item.stock) {
+      alert('Stock insuficiente');
+      return;
+    }
     if (qty > 0) {
       dispatch({ type: 'update', payload: { codprod, lista, cantidad: qty } });
     }
@@ -39,7 +49,7 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
                   size="small"
                   value={item.cantidad}
                   onChange={(e) => handleQtyChange(item.codprod, item.lista, e.target.value)}
-                  inputProps={{ min: 1 }}
+                  inputProps={{ min: 1, max: item.stock }}
                   sx={{ width: 64 }}
                 />
               </TableCell>

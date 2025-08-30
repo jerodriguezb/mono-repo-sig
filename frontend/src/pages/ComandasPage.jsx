@@ -35,12 +35,12 @@ export default function ComandasPage() {
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
-        const { codprod, lista, cantidad, precio, descripcion } = action.payload;
+        const { codprod, lista, cantidad, precio, descripcion, stock } = action.payload;
         const idx = state.findIndex((i) => i.codprod === codprod && i.lista === lista);
         if (idx > -1) {
           return state.map((i, n) => (n === idx ? { ...i, cantidad: i.cantidad + cantidad } : i));
         }
-        return [...state, { codprod, lista, cantidad, precio, descripcion }];
+        return [...state, { codprod, lista, cantidad, precio, descripcion, stock }];
       }
       case 'update': {
         const { codprod, lista, cantidad } = action.payload;
@@ -95,6 +95,15 @@ export default function ComandasPage() {
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
   const handleAdd = ({ producto, cantidad, lista, precio }) => {
+    const stock = producto.stkactual;
+    const existingTotal = items
+      .filter((i) => i.codprod === producto._id)
+      .reduce((sum, i) => sum + i.cantidad, 0);
+    const newTotal = existingTotal + cantidad;
+    if (newTotal > stock) {
+      alert('Stock insuficiente');
+      return;
+    }
     dispatch({
       type: 'add',
       payload: {
@@ -103,6 +112,7 @@ export default function ComandasPage() {
         cantidad,
         precio,
         descripcion: producto.descripcion,
+        stock,
       },
     });
   };
@@ -126,6 +136,15 @@ export default function ComandasPage() {
           alert('Precio no disponible');
           return;
         }
+        const stock = producto.stkactual;
+        const existingTotal = items
+          .filter((i) => i.codprod === producto._id)
+          .reduce((sum, i) => sum + i.cantidad, 0);
+        const newTotal = existingTotal + 1;
+        if (newTotal > stock) {
+          alert('Stock insuficiente');
+          return;
+        }
         dispatch({
           type: 'add',
           payload: {
@@ -134,13 +153,14 @@ export default function ComandasPage() {
             cantidad: 1,
             precio,
             descripcion: producto.descripcion,
+            stock,
           },
         });
       } catch (err) {
         console.error('Error obteniendo precio', err);
       }
     },
-    [listaSel, dispatch],
+    [listaSel, dispatch, items],
   );
 
   useEffect(() => {
@@ -233,50 +253,62 @@ export default function ComandasPage() {
           </ToggleButtonGroup>
           {viewMode === 'grid' ? (
             <Grid container spacing={2}>
-              {productos.map((p) => (
-                <Grid
-                  item
-                  xs={12}
-                  sm={6}
-                  md={4}
-                  lg={3}
-                  key={p._id}
-                  id={`prod-${p._id}`}
-                >
-                  <ProductoItem
-                    producto={p}
-                    listas={listas}
-                    defaultLista={listaSel}
-                    onAdd={handleAdd}
-                    focused={focusedProdId === p._id}
-                  />
-                </Grid>
-              ))}
+              {productos.map((p) => {
+                const agregado = items
+                  .filter((i) => i.codprod === p._id)
+                  .reduce((sum, i) => sum + i.cantidad, 0);
+                return (
+                  <Grid
+                    item
+                    xs={12}
+                    sm={6}
+                    md={4}
+                    lg={3}
+                    key={p._id}
+                    id={`prod-${p._id}`}
+                  >
+                    <ProductoItem
+                      producto={p}
+                      listas={listas}
+                      defaultLista={listaSel}
+                      onAdd={handleAdd}
+                      focused={focusedProdId === p._id}
+                      stockDisponible={p.stkactual - agregado}
+                    />
+                  </Grid>
+                );
+              })}
             </Grid>
           ) : (
             <List>
-              {productos.map((p) => (
-                <ListItem
-                  key={p._id}
-                  id={`prod-${p._id}`}
-                  divider
-                  selected={focusedProdId === p._id}
-                  secondaryAction={
-                    <Button
-                      variant="contained"
-                      onClick={() => handleQuickAdd(p)}
-                      disabled={!listaSel}
-                    >
-                      Agregar
-                    </Button>
-                  }
-                >
-                  <ListItemText
-                    primary={p.descripcion}
-                    secondary={`Stock: ${p.stkactual}`}
-                  />
-                </ListItem>
-              ))}
+              {productos.map((p) => {
+                const agregado = items
+                  .filter((i) => i.codprod === p._id)
+                  .reduce((sum, i) => sum + i.cantidad, 0);
+                const stockDisp = p.stkactual - agregado;
+                return (
+                  <ListItem
+                    key={p._id}
+                    id={`prod-${p._id}`}
+                    divider
+                    selected={focusedProdId === p._id}
+                    secondaryAction={
+                      <Button
+                        variant="contained"
+                        onClick={() => handleQuickAdd(p)}
+                        disabled={!listaSel || stockDisp <= 0}
+                      >
+                        Agregar
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={p.descripcion}
+                      secondary={`Stock: ${stockDisp}`}
+                    />
+                  </ListItem>
+                );
+              })}
             </List>
           )}
           <Pagination
