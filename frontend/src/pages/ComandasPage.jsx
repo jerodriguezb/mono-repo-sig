@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useState } from 'react';
+import React, { useEffect, useReducer, useState, useRef, useCallback } from 'react';
 import {
   Stack,
   Typography,
@@ -30,6 +30,8 @@ export default function ComandasPage() {
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
   const [viewMode, setViewMode] = useState('grid');
+  const [focusedProdId, setFocusedProdId] = useState(null);
+  const scanBufferRef = useRef('');
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
@@ -105,38 +107,70 @@ export default function ComandasPage() {
     });
   };
 
-  const handleQuickAdd = async (producto) => {
-    if (!listaSel) {
-      alert('Seleccione lista');
-      return;
-    }
-    try {
-      const params = { codproducto: producto._id, lista: listaSel };
-      const { data } = await api.get('/precios', { params });
-      const item = (data.precios || []).find((p) => {
-        const prodId = p.codproducto?._id ?? p.codproducto;
-        const lista = p.lista?._id ?? p.lista;
-        return prodId === producto._id && lista === listaSel;
-      });
-      const precio = item?.preciototalventa ?? null;
-      if (precio == null) {
-        alert('Precio no disponible');
+  const handleQuickAdd = useCallback(
+    async (producto) => {
+      if (!listaSel) {
+        alert('Seleccione lista');
         return;
       }
-      dispatch({
-        type: 'add',
-        payload: {
-          codprod: producto._id,
-          lista: listaSel,
-          cantidad: 1,
-          precio,
-          descripcion: producto.descripcion,
-        },
-      });
-    } catch (err) {
-      console.error('Error obteniendo precio', err);
-    }
-  };
+      try {
+        const params = { codproducto: producto._id, lista: listaSel };
+        const { data } = await api.get('/precios', { params });
+        const item = (data.precios || []).find((p) => {
+          const prodId = p.codproducto?._id ?? p.codproducto;
+          const lista = p.lista?._id ?? p.lista;
+          return prodId === producto._id && lista === listaSel;
+        });
+        const precio = item?.preciototalventa ?? null;
+        if (precio == null) {
+          alert('Precio no disponible');
+          return;
+        }
+        dispatch({
+          type: 'add',
+          payload: {
+            codprod: producto._id,
+            lista: listaSel,
+            cantidad: 1,
+            precio,
+            descripcion: producto.descripcion,
+          },
+        });
+      } catch (err) {
+        console.error('Error obteniendo precio', err);
+      }
+    },
+    [listaSel, dispatch],
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        const code = scanBufferRef.current.trim();
+        if (code) {
+          const producto = productos.find((p) => p._id === code);
+          if (producto) {
+            setFocusedProdId(producto._id);
+            const el = document.getElementById(`prod-${producto._id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            if (viewMode === 'list') {
+              handleQuickAdd(producto);
+            }
+            setTimeout(() => setFocusedProdId(null), 2000);
+          } else {
+            alert('Código inexistente');
+          }
+        }
+        scanBufferRef.current = '';
+      } else if (e.key.length === 1) {
+        scanBufferRef.current += e.key;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [productos, viewMode, handleQuickAdd]);
 
   const handleViewModeChange = (_, mode) => {
     if (mode !== null) {
@@ -200,12 +234,21 @@ export default function ComandasPage() {
           {viewMode === 'grid' ? (
             <Grid container spacing={2}>
               {productos.map((p) => (
-                <Grid item xs={12} sm={6} md={4} lg={3} key={p._id}>
+                <Grid
+                  item
+                  xs={12}
+                  sm={6}
+                  md={4}
+                  lg={3}
+                  key={p._id}
+                  id={`prod-${p._id}`}
+                >
                   <ProductoItem
                     producto={p}
                     listas={listas}
                     defaultLista={listaSel}
                     onAdd={handleAdd}
+                    focused={focusedProdId === p._id}
                   />
                 </Grid>
               ))}
@@ -215,7 +258,9 @@ export default function ComandasPage() {
               {productos.map((p) => (
                 <ListItem
                   key={p._id}
+                  id={`prod-${p._id}`}
                   divider
+                  selected={focusedProdId === p._id}
                   secondaryAction={
                     <Button
                       variant="contained"
