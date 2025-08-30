@@ -63,10 +63,7 @@ export default function ComandasPage() {
           limite: pageSize,
           desde: (page - 1) * pageSize,
         };
-        if (busqueda) {
-          params.searchField = 'descripcion';
-          params.searchValue = busqueda;
-        }
+        if (busqueda) params.search = busqueda;
         if (rubroSel) params.rubro = rubroSel;
         if (listaSel) params.lista = listaSel;
         const { data } = await api.get('/producservs', { params });
