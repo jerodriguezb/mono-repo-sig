@@ -35,12 +35,12 @@ export default function ComandasPage() {
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
-        const { codprod, lista, cantidad, precio, descripcion } = action.payload;
+        const { codprod, lista, cantidad, precio, descripcion, stock } = action.payload;
         const idx = state.findIndex((i) => i.codprod === codprod && i.lista === lista);
         if (idx > -1) {
           return state.map((i, n) => (n === idx ? { ...i, cantidad: i.cantidad + cantidad } : i));
         }
-        return [...state, { codprod, lista, cantidad, precio, descripcion }];
+        return [...state, { codprod, lista, cantidad, precio, descripcion, stock }];
       }
       case 'update': {
         const { codprod, lista, cantidad } = action.payload;
@@ -95,6 +95,13 @@ export default function ComandasPage() {
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
   const handleAdd = ({ producto, cantidad, lista, precio }) => {
+    const existing = items.find((i) => i.codprod === producto._id && i.lista === lista);
+    const stock = producto.stkactual;
+    const newQty = (existing?.cantidad || 0) + cantidad;
+    if (newQty > stock) {
+      alert('Stock insuficiente');
+      return;
+    }
     dispatch({
       type: 'add',
       payload: {
@@ -103,6 +110,7 @@ export default function ComandasPage() {
         cantidad,
         precio,
         descripcion: producto.descripcion,
+        stock,
       },
     });
   };
@@ -126,6 +134,13 @@ export default function ComandasPage() {
           alert('Precio no disponible');
           return;
         }
+        const existing = items.find((i) => i.codprod === producto._id && i.lista === listaSel);
+        const stock = producto.stkactual;
+        const newQty = (existing?.cantidad || 0) + 1;
+        if (newQty > stock) {
+          alert('Stock insuficiente');
+          return;
+        }
         dispatch({
           type: 'add',
           payload: {
@@ -134,13 +149,14 @@ export default function ComandasPage() {
             cantidad: 1,
             precio,
             descripcion: producto.descripcion,
+            stock,
           },
         });
       } catch (err) {
         console.error('Error obteniendo precio', err);
       }
     },
-    [listaSel, dispatch],
+    [listaSel, dispatch, items],
   );
 
   useEffect(() => {
@@ -286,7 +302,7 @@ export default function ComandasPage() {
             sx={{ mt: 2, alignSelf: 'center' }}
           />
         </Box>
-        <ResumenComanda items={items} dispatch={dispatch} />
+        <ResumenComanda items={items} listas={listas} dispatch={dispatch} />
       </Stack>
     </Stack>
   );

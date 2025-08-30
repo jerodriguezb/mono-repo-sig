@@ -86,7 +86,7 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
           value={cantidad}
           onChange={(e) => setCantidad(e.target.value)}
           inputRef={qtyRef}
-          inputProps={{ min: 1 }}
+          inputProps={{ min: 1, max: producto.stkactual }}
           sx={{ mb: 1 }}
         />
         <Select
