@@ -1,12 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardMedia, Typography, TextField, Select, MenuItem, Button, Box } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Card,
+  CardContent,
+  CardMedia,
+  Typography,
+  TextField,
+  Select,
+  MenuItem,
+  Button,
+  Box,
+} from '@mui/material';
 import ImageIcon from '@mui/icons-material/Image';
 import api from '../api/axios.js';
 
-export default function ProductoItem({ producto, listas = [], defaultLista = '', onAdd }) {
+export default function ProductoItem({ producto, listas = [], defaultLista = '', onAdd, focused = false }) {
   const [cantidad, setCantidad] = useState(1);
   const [listaId, setListaId] = useState(defaultLista);
   const [precio, setPrecio] = useState(null);
+  const qtyRef = useRef(null);
 
   useEffect(() => {
     setListaId(defaultLista);
@@ -44,8 +55,14 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
     onAdd && onAdd({ producto, cantidad: qty, lista: listaId, precio });
   };
 
+  useEffect(() => {
+    if (focused && qtyRef.current) {
+      qtyRef.current.focus();
+    }
+  }, [focused]);
+
   return (
-    <Card>
+    <Card sx={focused ? { outline: '2px solid', outlineColor: 'primary.main' } : undefined}>
       {producto.imagen ? (
         <CardMedia component="img" height="140" image={producto.imagen} alt={producto.descripcion} />
       ) : (
@@ -68,6 +85,7 @@ export default function ProductoItem({ producto, listas = [], defaultLista = '',
           size="small"
           value={cantidad}
           onChange={(e) => setCantidad(e.target.value)}
+          inputRef={qtyRef}
           inputProps={{ min: 1 }}
           sx={{ mb: 1 }}
         />
