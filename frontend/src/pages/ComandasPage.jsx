@@ -1,5 +1,20 @@
 import React, { useEffect, useReducer, useState } from 'react';
-import { Stack, Typography, TextField, Select, MenuItem, Grid, Box, Pagination } from '@mui/material';
+import {
+  Stack,
+  Typography,
+  TextField,
+  Select,
+  MenuItem,
+  Grid,
+  Box,
+  Pagination,
+  ToggleButtonGroup,
+  ToggleButton,
+  List,
+  ListItem,
+  ListItemText,
+  Button,
+} from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import api from '../api/axios.js';
@@ -14,6 +29,7 @@ export default function ComandasPage() {
   const [page, setPage] = useState(1); // 1-based
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
+  const [viewMode, setViewMode] = useState('grid');
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
@@ -89,6 +105,45 @@ export default function ComandasPage() {
     });
   };
 
+  const handleQuickAdd = async (producto) => {
+    if (!listaSel) {
+      alert('Seleccione lista');
+      return;
+    }
+    try {
+      const params = { codproducto: producto._id, lista: listaSel };
+      const { data } = await api.get('/precios', { params });
+      const item = (data.precios || []).find((p) => {
+        const prodId = p.codproducto?._id ?? p.codproducto;
+        const lista = p.lista?._id ?? p.lista;
+        return prodId === producto._id && lista === listaSel;
+      });
+      const precio = item?.preciototalventa ?? null;
+      if (precio == null) {
+        alert('Precio no disponible');
+        return;
+      }
+      dispatch({
+        type: 'add',
+        payload: {
+          codprod: producto._id,
+          lista: listaSel,
+          cantidad: 1,
+          precio,
+          descripcion: producto.descripcion,
+        },
+      });
+    } catch (err) {
+      console.error('Error obteniendo precio', err);
+    }
+  };
+
+  const handleViewModeChange = (_, mode) => {
+    if (mode !== null) {
+      setViewMode(mode);
+    }
+  };
+
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
@@ -133,18 +188,52 @@ export default function ComandasPage() {
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
         <Box sx={{ flex: 1 }}>
-          <Grid container spacing={2}>
-            {productos.map((p) => (
-              <Grid item xs={12} sm={6} md={4} lg={3} key={p._id}>
-                <ProductoItem
-                  producto={p}
-                  listas={listas}
-                  defaultLista={listaSel}
-                  onAdd={handleAdd}
-                />
-              </Grid>
-            ))}
-          </Grid>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={handleViewModeChange}
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="grid">Grid</ToggleButton>
+            <ToggleButton value="list">List</ToggleButton>
+          </ToggleButtonGroup>
+          {viewMode === 'grid' ? (
+            <Grid container spacing={2}>
+              {productos.map((p) => (
+                <Grid item xs={12} sm={6} md={4} lg={3} key={p._id}>
+                  <ProductoItem
+                    producto={p}
+                    listas={listas}
+                    defaultLista={listaSel}
+                    onAdd={handleAdd}
+                  />
+                </Grid>
+              ))}
+            </Grid>
+          ) : (
+            <List>
+              {productos.map((p) => (
+                <ListItem
+                  key={p._id}
+                  divider
+                  secondaryAction={
+                    <Button
+                      variant="contained"
+                      onClick={() => handleQuickAdd(p)}
+                      disabled={!listaSel}
+                    >
+                      Agregar
+                    </Button>
+                  }
+                >
+                  <ListItemText
+                    primary={p.descripcion}
+                    secondary={`Stock: ${p.stkactual}`}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          )}
           <Pagination
             count={Math.max(1, Math.ceil(total / pageSize))}
             page={page}
