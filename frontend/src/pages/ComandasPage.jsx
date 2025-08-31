@@ -20,6 +20,8 @@ import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import api from '../api/axios.js';
 
+const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
+
 export default function ComandasPage() {
   const [productos, setProductos] = useState([]);
   const [rubros, setRubros] = useState([]);
@@ -61,6 +63,8 @@ export default function ComandasPage() {
         const { codprod, lista } = action.payload;
         return state.filter((i) => !(i.codprod === codprod && i.lista === lista));
       }
+      case 'clear':
+        return [];
       default:
         return state;
     }
@@ -251,13 +255,39 @@ export default function ComandasPage() {
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
+    if (items.length === 0) {
+      alert('Agrega productos a la comanda');
+      return;
+    }
     if (!clienteSel) {
       alert('Seleccione un cliente');
       return;
     }
-    // Aquí iría la lógica real de confirmación
-    console.log('Confirmar comanda', { cliente: clienteSel, items });
+    const payload = {
+      codcli: clienteSel._id,
+      fecha: new Date().toISOString(),
+      codestado: ESTADO_A_PREPARAR,
+      items: items.map(({ codprod, lista, cantidad, precio }) => ({
+        codprod,
+        lista,
+        cantidad,
+        monto: precio,
+      })),
+    };
+    try {
+      await api.post('/comandas', payload);
+      dispatch({ type: 'clear' });
+      setBusqueda('');
+      setRubroSel('');
+      setListaSel('');
+      setClienteSel(null);
+      setClienteInput('');
+      setPage(1);
+    } catch (err) {
+      console.error('Error confirmando comanda', err);
+      alert('Error al confirmar la comanda');
+    }
   };
 
   return (
@@ -398,9 +428,11 @@ export default function ComandasPage() {
           listas={listas}
           dispatch={dispatch}
           clienteSel={clienteSel}
-          onConfirm={handleConfirm}
         />
       </Stack>
+      <Button variant="contained" onClick={handleConfirm}>
+        Confirmar Comanda
+      </Button>
     </Stack>
   );
 }
