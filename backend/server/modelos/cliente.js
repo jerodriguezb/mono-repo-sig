@@ -67,6 +67,8 @@ let clienteSchema = new Schema({
   },
 });
 
+clienteSchema.index({ razonsocial: 1 });
+
 clienteSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
