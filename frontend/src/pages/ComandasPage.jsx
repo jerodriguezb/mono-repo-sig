@@ -30,6 +30,11 @@ export default function ComandasPage() {
   const [clienteSel, setClienteSel] = useState(null);
   const [clienteInput, setClienteInput] = useState('');
   const [clienteOpts, setClienteOpts] = useState([]);
+  const clienteCache = useRef(new Map());
+  const [clienteLoading, setClienteLoading] = useState(false);
+  const [clienteNoOpts, setClienteNoOpts] = useState('Escribí al menos 3 caracteres…');
+  const clienteAbort = useRef(null);
+  const clienteTimer = useRef(null);
   const [page, setPage] = useState(1); // 1-based
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
@@ -98,23 +103,49 @@ export default function ComandasPage() {
     fetchProductos();
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
 
-  useEffect(() => {
-    const fetchClientes = async () => {
-      try {
-        const { data } = await api.get('/clientes/buscar', {
-          params: { nombre: clienteInput },
-        });
-        setClienteOpts(data.clientes || []);
-      } catch (err) {
-        console.error('Error buscando clientes', err);
+  const handleClienteInput = useCallback((_, val) => {
+    setClienteInput(val);
+    if (clienteTimer.current) clearTimeout(clienteTimer.current);
+
+    clienteTimer.current = setTimeout(async () => {
+      if (clienteAbort.current) clienteAbort.current.abort();
+
+      if (!val || val.length < 3) {
+        setClienteOpts([]);
+        setClienteLoading(false);
+        setClienteNoOpts('Escribí al menos 3 caracteres…');
+        return;
       }
-    };
-    if (clienteInput) {
-      fetchClientes();
-    } else {
-      setClienteOpts([]);
-    }
-  }, [clienteInput]);
+
+      if (clienteCache.current.has(val)) {
+        setClienteOpts(clienteCache.current.get(val));
+        setClienteLoading(false);
+        setClienteNoOpts('Sin resultados');
+        return;
+      }
+
+      setClienteLoading(true);
+      setClienteNoOpts('Buscando…');
+      const controller = new AbortController();
+      clienteAbort.current = controller;
+      try {
+        const { data } = await api.get('/clientes/autocomplete', {
+          params: { term: val },
+          signal: controller.signal,
+        });
+        const clientes = (data.clientes || []).slice(0, 20);
+        clienteCache.current.set(val, clientes);
+        setClienteOpts(clientes);
+        setClienteNoOpts('Sin resultados');
+      } catch (err) {
+        if (err.name !== 'CanceledError' && err.code !== 'ERR_CANCELED') {
+          console.error('Error buscando clientes', err);
+        }
+      } finally {
+        setClienteLoading(false);
+      }
+    }, 300);
+  }, []);
 
   const handleAdd = ({ producto, cantidad, lista, precio }) => {
     const stock = producto.stkactual;
@@ -273,10 +304,12 @@ export default function ComandasPage() {
           value={clienteSel}
           onChange={(_, val) => setClienteSel(val)}
           inputValue={clienteInput}
-          onInputChange={(_, val) => setClienteInput(val)}
+          onInputChange={handleClienteInput}
           options={clienteOpts}
           getOptionLabel={(option) => option?.razonsocial || ''}
           isOptionEqualToValue={(opt, val) => opt._id === val._id}
+          loading={clienteLoading}
+          noOptionsText={clienteNoOpts}
           renderInput={(params) => <TextField {...params} label="Cliente" />}
           sx={{ minWidth: 240 }}
         />
