@@ -14,6 +14,7 @@ import {
   ListItem,
   ListItemText,
   Button,
+  Autocomplete,
 } from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
@@ -26,6 +27,9 @@ export default function ComandasPage() {
   const [busqueda, setBusqueda] = useState('');
   const [rubroSel, setRubroSel] = useState('');
   const [listaSel, setListaSel] = useState('');
+  const [clienteSel, setClienteSel] = useState(null);
+  const [clienteInput, setClienteInput] = useState('');
+  const [clienteOpts, setClienteOpts] = useState([]);
   const [page, setPage] = useState(1); // 1-based
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
@@ -93,6 +97,24 @@ export default function ComandasPage() {
     };
     fetchProductos();
   }, [busqueda, rubroSel, listaSel, page, pageSize]);
+
+  useEffect(() => {
+    const fetchClientes = async () => {
+      try {
+        const { data } = await api.get('/clientes/buscar', {
+          params: { nombre: clienteInput },
+        });
+        setClienteOpts(data.clientes || []);
+      } catch (err) {
+        console.error('Error buscando clientes', err);
+      }
+    };
+    if (clienteInput) {
+      fetchClientes();
+    } else {
+      setClienteOpts([]);
+    }
+  }, [clienteInput]);
 
   const handleAdd = ({ producto, cantidad, lista, precio }) => {
     const stock = producto.stkactual;
@@ -198,6 +220,15 @@ export default function ComandasPage() {
     }
   };
 
+  const handleConfirm = () => {
+    if (!clienteSel) {
+      alert('Seleccione un cliente');
+      return;
+    }
+    // Aquí iría la lógica real de confirmación
+    console.log('Confirmar comanda', { cliente: clienteSel, items });
+  };
+
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
@@ -238,6 +269,17 @@ export default function ComandasPage() {
             <MenuItem key={l._id} value={l._id}>{l.lista || l.nombre}</MenuItem>
           ))}
         </Select>
+        <Autocomplete
+          value={clienteSel}
+          onChange={(_, val) => setClienteSel(val)}
+          inputValue={clienteInput}
+          onInputChange={(_, val) => setClienteInput(val)}
+          options={clienteOpts}
+          getOptionLabel={(option) => option?.razonsocial || ''}
+          isOptionEqualToValue={(opt, val) => opt._id === val._id}
+          renderInput={(params) => <TextField {...params} label="Cliente" />}
+          sx={{ minWidth: 240 }}
+        />
       </Stack>
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="flex-start">
@@ -318,7 +360,13 @@ export default function ComandasPage() {
             sx={{ mt: 2, alignSelf: 'center' }}
           />
         </Box>
-        <ResumenComanda items={items} listas={listas} dispatch={dispatch} />
+        <ResumenComanda
+          items={items}
+          listas={listas}
+          dispatch={dispatch}
+          clienteSel={clienteSel}
+          onConfirm={handleConfirm}
+        />
       </Stack>
     </Stack>
   );
