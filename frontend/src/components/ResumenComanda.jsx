@@ -1,5 +1,7 @@
 import React from 'react';
-import { Box, Typography, Table, TableHead, TableBody, TableRow, TableCell, TextField, IconButton } from '@mui/material';
+import {
+  Box, Typography, Table, TableHead, TableBody, TableRow, TableCell, TextField, IconButton,
+} from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 
 export default function ResumenComanda({ items = [], listas = [], dispatch }) {
@@ -24,6 +26,11 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
     dispatch({ type: 'remove', payload: { codprod, lista } });
   };
 
+  const totalGeneral = items.reduce(
+    (sum, item) => sum + item.precio * item.cantidad,
+    0,
+  );
+
   return (
     <Box sx={{ minWidth: 260 }}>
       <Typography variant="h6" gutterBottom>Resumen</Typography>
@@ -34,6 +41,7 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
             <TableCell>Lista</TableCell>
             <TableCell align="right">Precio</TableCell>
             <TableCell align="right">Cantidad</TableCell>
+            <TableCell align="right">Subtotal</TableCell>
             <TableCell align="right">Acciones</TableCell>
           </TableRow>
         </TableHead>
@@ -53,6 +61,7 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
                   sx={{ width: 64 }}
                 />
               </TableCell>
+              <TableCell align="right">${item.precio * item.cantidad}</TableCell>
               <TableCell align="right">
                 <IconButton edge="end" onClick={() => handleRemove(item.codprod, item.lista)}>
                   <DeleteIcon />
@@ -62,6 +71,14 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
           ))}
         </TableBody>
       </Table>
+      <Box mt={2} display="flex" justifyContent="flex-end">
+        <TextField
+          label="Monto"
+          value={`$${totalGeneral}`}
+          size="small"
+          InputProps={{ readOnly: true }}
+        />
+      </Box>
     </Box>
   );
 }
