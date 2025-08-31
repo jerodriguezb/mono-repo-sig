@@ -1,10 +1,25 @@
 import React from 'react';
 import {
-  Box, Typography, Table, TableHead, TableBody, TableRow, TableCell, TextField, IconButton,
+  Box,
+  Typography,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TextField,
+  IconButton,
+  Button,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 
-export default function ResumenComanda({ items = [], listas = [], dispatch }) {
+export default function ResumenComanda({
+  items = [],
+  listas = [],
+  dispatch,
+  clienteSel,
+  onConfirm,
+}) {
   const handleQtyChange = (codprod, lista, cantidad) => {
     const qty = Number(cantidad);
     const item = items.find((i) => i.codprod === codprod && i.lista === lista);
@@ -34,6 +49,11 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
   return (
     <Box sx={{ minWidth: 260 }}>
       <Typography variant="h6" gutterBottom>Resumen</Typography>
+      {clienteSel && (
+        <Typography variant="subtitle1" gutterBottom>
+          Cliente: {clienteSel.razonsocial}
+        </Typography>
+      )}
       <Table size="small">
         <TableHead>
           <TableRow>
@@ -79,6 +99,9 @@ export default function ResumenComanda({ items = [], listas = [], dispatch }) {
           InputProps={{ readOnly: true }}
         />
       </Box>
+      <Button variant="contained" fullWidth sx={{ mt: 2 }} onClick={onConfirm}>
+        Confirmar
+      </Button>
     </Box>
   );
 }
