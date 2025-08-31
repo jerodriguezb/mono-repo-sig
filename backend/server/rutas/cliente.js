@@ -161,6 +161,26 @@ router.get(
 );
 
 /* ---------------------------------------------------------------------------
+   2.a AUTOCOMPLETE CLIENTES POR NOMBRE
+--------------------------------------------------------------------------- */
+router.get(
+  '/clientes/autocomplete',
+  asyncHandler(async (req, res) => {
+    const { term = '' } = req.query;
+    if (term.length < 3)
+      return res.status(400).json({ ok: false, error: 'El término debe tener al menos 3 caracteres' });
+
+    const clientes = await Cliente.find({ razonsocial: { $regex: term, $options: 'i' } })
+      .limit(20)
+      .sort('razonsocial')
+      .select('_id razonsocial cuit')
+      .exec();
+
+    res.json({ ok: true, clientes });
+  })
+);
+
+/* ---------------------------------------------------------------------------
    3. OBTENER CLIENTE POR ID (sin cambios)
 --------------------------------------------------------------------------- */
 router.get(
