@@ -99,7 +99,13 @@ export default function ResumenComanda({
           InputProps={{ readOnly: true }}
         />
       </Box>
-      <Button variant="contained" fullWidth sx={{ mt: 2 }} onClick={onConfirm}>
+      <Button
+        variant="contained"
+        fullWidth
+        sx={{ mt: 2 }}
+        onClick={onConfirm}
+        disabled={!clienteSel}
+      >
         Confirmar
       </Button>
     </Box>
