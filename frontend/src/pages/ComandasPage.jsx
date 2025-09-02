@@ -26,6 +26,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import api from '../api/axios.js';
+import ComandaPrintView from '../components/ComandaPrintView.jsx';
+import { useNavigate } from 'react-router-dom';
 
 const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
 
@@ -54,6 +56,7 @@ export default function ComandasPage() {
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [savedComanda, setSavedComanda] = useState(null);
   const scanBufferRef = useRef('');
+  const navigate = useNavigate();
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
@@ -505,21 +508,11 @@ export default function ComandasPage() {
             <CircularProgress />
           )}
           {!isSaving && savedComanda && (
-            <Stack spacing={2} sx={{ mt: 1 }}>
-              <Typography variant="subtitle1">
-                Nº de comanda: {savedComanda.nrodecomanda}
-              </Typography>
-              <List>
-                {(savedComanda.items || []).map((item, idx) => (
-                  <ListItem key={idx} disablePadding>
-                    <ListItemText
-                      primary={item.descripcion || item.codprod}
-                      secondary={`Cantidad: ${item.cantidad}`}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Stack>
+            <ComandaPrintView
+              nrodecomanda={savedComanda.nrodecomanda}
+              cliente={savedComanda.cliente}
+              items={savedComanda.items || []}
+            />
           )}
           {!isSaving && !savedComanda && !saveError && (
             <Typography sx={{ mt: 1 }}>
@@ -530,7 +523,7 @@ export default function ComandasPage() {
         <DialogActions>
           <Button onClick={() => setPrintDialogOpen(false)}>Cerrar</Button>
           <Button
-            onClick={() => window.print()}
+            onClick={() => navigate('/historial-comandas')}
             disabled={isSaving || !savedComanda?.nrodecomanda}
           >
             Imprimir
