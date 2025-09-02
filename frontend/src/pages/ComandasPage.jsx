@@ -505,21 +505,26 @@ export default function ComandasPage() {
             <CircularProgress />
           )}
           {!isSaving && savedComanda && (
-            <Stack spacing={2} sx={{ mt: 1 }}>
-              <Typography variant="subtitle1">
-                Nº de comanda: {savedComanda.nrodecomanda}
-              </Typography>
-              <List>
-                {(savedComanda.items || []).map((item, idx) => (
-                  <ListItem key={idx} disablePadding>
-                    <ListItemText
-                      primary={item.descripcion || item.codprod}
-                      secondary={`Cantidad: ${item.cantidad}`}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Stack>
+            <Box className="print-area">
+              <Stack spacing={2} sx={{ mt: 1 }}>
+                <Typography variant="subtitle1">
+                  Nº de comanda: {savedComanda.nrodecomanda}
+                </Typography>
+                <Typography variant="subtitle1">
+                  Cliente: {savedComanda?.cliente?.razonsocial || clienteSel?.razonsocial}
+                </Typography>
+                <List>
+                  {(savedComanda.items || []).map((item, idx) => (
+                    <ListItem key={idx} disablePadding>
+                      <ListItemText
+                        primary={item.descripcion || item.codprod}
+                        secondary={`Cantidad: ${item.cantidad}`}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Stack>
+            </Box>
           )}
           {!isSaving && !savedComanda && !saveError && (
             <Typography sx={{ mt: 1 }}>
