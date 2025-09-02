@@ -509,6 +509,9 @@ export default function ComandasPage() {
               <Typography variant="subtitle1">
                 Nº de comanda: {savedComanda.nrodecomanda}
               </Typography>
+              <Typography variant="subtitle1">
+                Cliente: {savedComanda?.cliente?.razonsocial || 'Consumidor Final'}
+              </Typography>
               <List>
                 {(savedComanda.items || []).map((item, idx) => (
                   <ListItem key={idx} disablePadding>
