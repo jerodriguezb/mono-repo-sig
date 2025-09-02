@@ -12,6 +12,7 @@ import {
   Button,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ResumenComanda({
   items = [],
@@ -65,30 +66,43 @@ export default function ResumenComanda({
             <TableCell align="right">Acciones</TableCell>
           </TableRow>
         </TableHead>
-        <TableBody>
-          {items.map((item) => (
-            <TableRow key={`${item.codprod}-${item.lista}`}>
-              <TableCell>{item.descripcion || item.codprod}</TableCell>
-              <TableCell>{listas.find((l) => l._id === item.lista)?.lista || item.lista}</TableCell>
-              <TableCell align="right">${item.precio}</TableCell>
-              <TableCell align="right">
-                <TextField
-                  type="number"
-                  size="small"
-                  value={item.cantidad}
-                  onChange={(e) => handleQtyChange(item.codprod, item.lista, e.target.value)}
-                  inputProps={{ min: 1, max: item.stock }}
-                  sx={{ width: 64 }}
-                />
-              </TableCell>
-              <TableCell align="right">${item.precio * item.cantidad}</TableCell>
-              <TableCell align="right">
-                <IconButton edge="end" onClick={() => handleRemove(item.codprod, item.lista)}>
-                  <DeleteIcon />
-                </IconButton>
-              </TableCell>
-            </TableRow>
-          ))}
+        <TableBody component={motion.tbody}>
+          <AnimatePresence>
+            {items.map((item) => (
+              <TableRow
+                key={`${item.codprod}-${item.lista}`}
+                component={motion.tr}
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                transition={{ duration: 0.2 }}
+              >
+                <TableCell>{item.descripcion || item.codprod}</TableCell>
+                <TableCell>
+                  {listas.find((l) => l._id === item.lista)?.lista || item.lista}
+                </TableCell>
+                <TableCell align="right">${item.precio}</TableCell>
+                <TableCell align="right">
+                  <TextField
+                    type="number"
+                    size="small"
+                    value={item.cantidad}
+                    onChange={(e) => handleQtyChange(item.codprod, item.lista, e.target.value)}
+                    inputProps={{ min: 1, max: item.stock }}
+                    sx={{ width: 64 }}
+                  />
+                </TableCell>
+                <TableCell align="right">
+                  ${item.precio * item.cantidad}
+                </TableCell>
+                <TableCell align="right">
+                  <IconButton edge="end" onClick={() => handleRemove(item.codprod, item.lista)}>
+                    <DeleteIcon />
+                  </IconButton>
+                </TableCell>
+              </TableRow>
+            ))}
+          </AnimatePresence>
         </TableBody>
       </Table>
       <Box mt={2} display="flex" justifyContent="flex-end">
