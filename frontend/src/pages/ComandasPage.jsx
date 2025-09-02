@@ -22,6 +22,7 @@ import {
   CircularProgress,
   Snackbar,
 } from '@mui/material';
+import { motion, AnimatePresence } from 'framer-motion';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import api from '../api/axios.js';
@@ -391,62 +392,76 @@ export default function ComandasPage() {
           </ToggleButtonGroup>
           {viewMode === 'grid' ? (
             <Grid container spacing={2}>
-              {productos.map((p) => {
-                const agregado = items
-                  .filter((i) => i.codprod === p._id)
-                  .reduce((sum, i) => sum + i.cantidad, 0);
-                return (
-                  <Grid
-                    item
-                    xs={12}
-                    sm={6}
-                    md={4}
-                    lg={3}
-                    key={p._id}
-                    id={`prod-${p._id}`}
-                  >
-                    <ProductoItem
-                      producto={p}
-                      listas={listas}
-                      defaultLista={listaSel}
-                      onAdd={handleAdd}
-                      focused={focusedProdId === p._id}
-                      stockDisponible={p.stkactual - agregado}
-                    />
-                  </Grid>
-                );
-              })}
+              <AnimatePresence>
+                {productos.map((p) => {
+                  const agregado = items
+                    .filter((i) => i.codprod === p._id)
+                    .reduce((sum, i) => sum + i.cantidad, 0);
+                  return (
+                    <Grid
+                      item
+                      xs={12}
+                      sm={6}
+                      md={4}
+                      lg={3}
+                      key={p._id}
+                      id={`prod-${p._id}`}
+                      component={motion.div}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <ProductoItem
+                        producto={p}
+                        listas={listas}
+                        defaultLista={listaSel}
+                        onAdd={handleAdd}
+                        focused={focusedProdId === p._id}
+                        stockDisponible={p.stkactual - agregado}
+                      />
+                    </Grid>
+                  );
+                })}
+              </AnimatePresence>
             </Grid>
           ) : (
             <List>
-              {productos.map((p) => {
-                const agregado = items
-                  .filter((i) => i.codprod === p._id)
-                  .reduce((sum, i) => sum + i.cantidad, 0);
-                const stockDisp = p.stkactual - agregado;
-                return (
-                  <ListItem
-                    key={p._id}
-                    id={`prod-${p._id}`}
-                    divider
-                    selected={focusedProdId === p._id}
-                    secondaryAction={
-                      <Button
-                        variant="contained"
-                        onClick={() => handleQuickAdd(p)}
-                        disabled={!listaSel || stockDisp <= 0}
-                      >
-                        Agregar
-                      </Button>
-                    }
-                  >
-                    <ListItemText
-                      primary={p.descripcion}
-                      secondary={`Stock: ${stockDisp}`}
-                    />
-                  </ListItem>
-                );
-              })}
+              <AnimatePresence>
+                {productos.map((p) => {
+                  const agregado = items
+                    .filter((i) => i.codprod === p._id)
+                    .reduce((sum, i) => sum + i.cantidad, 0);
+                  const stockDisp = p.stkactual - agregado;
+                  return (
+                    <ListItem
+                      key={p._id}
+                      id={`prod-${p._id}`}
+                      divider
+                      selected={focusedProdId === p._id}
+                      secondaryAction={
+                        <Button
+                          variant="contained"
+                          onClick={() => handleQuickAdd(p)}
+                          disabled={!listaSel || stockDisp <= 0}
+                        >
+                          Agregar
+                        </Button>
+                      }
+                      component={motion.li}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <ListItemText
+                        primary={p.descripcion}
+                        secondary={`Stock: ${stockDisp}`}
+                      />
+                    </ListItem>
+                  );
+                })}
+              </AnimatePresence>
             </List>
           )}
           <Pagination
@@ -456,12 +471,24 @@ export default function ComandasPage() {
             sx={{ mt: 2, alignSelf: 'center' }}
           />
         </Box>
-        <ResumenComanda
-          items={items}
-          listas={listas}
-          dispatch={dispatch}
-          clienteSel={clienteSel}
-        />
+        <AnimatePresence>
+          {items.length > 0 && (
+            <motion.div
+              key="resumen"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ResumenComanda
+                items={items}
+                listas={listas}
+                dispatch={dispatch}
+                clienteSel={clienteSel}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </Stack>
       <Button
         variant="contained"
