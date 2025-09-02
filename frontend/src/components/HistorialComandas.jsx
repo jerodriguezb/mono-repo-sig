@@ -135,7 +135,13 @@ export default function HistorialComandas() {
       <Dialog open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
         <DialogTitle>Comanda {selected?.nrodecomanda}</DialogTitle>
         <DialogContent>
-          {selected && <ComandaPrintView items={toPrintItems(selected)} />}
+          {selected && (
+            <ComandaPrintView
+              nrodecomanda={selected.nrodecomanda}
+              cliente={selected.cliente}
+              items={toPrintItems(selected)}
+            />
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => window.print()} startIcon={<PrintIcon />}>Imprimir</Button>
