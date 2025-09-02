@@ -81,6 +81,8 @@ export default function ComandasPage() {
   };
   const [items, dispatch] = useReducer(itemsReducer, []);
 
+  const canSubmit = items.length > 0 && clienteSel && !isSaving;
+
   useEffect(() => {
     const fetchFilters = async () => {
       try {
@@ -464,7 +466,7 @@ export default function ComandasPage() {
       <Button
         variant="contained"
         onClick={handlePrintClick}
-        disabled={isSaving}
+        disabled={!canSubmit}
       >
         Imprimir Comanda
       </Button>
