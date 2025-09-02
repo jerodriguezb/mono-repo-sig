@@ -15,6 +15,12 @@ import {
   ListItemText,
   Button,
   Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  CircularProgress,
+  Snackbar,
 } from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
@@ -42,6 +48,10 @@ export default function ComandasPage() {
   const [total, setTotal] = useState(0);
   const [viewMode, setViewMode] = useState('grid');
   const [focusedProdId, setFocusedProdId] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [savedComanda, setSavedComanda] = useState(null);
   const scanBufferRef = useRef('');
   const itemsReducer = (state, action) => {
     switch (action.type) {
@@ -255,7 +265,7 @@ export default function ComandasPage() {
     }
   };
 
-  const handleConfirm = async () => {
+  const saveComanda = async () => {
     if (items.length === 0) {
       alert('Agrega productos a la comanda');
       return;
@@ -276,7 +286,9 @@ export default function ComandasPage() {
       })),
     };
     try {
-      await api.post('/comandas', payload);
+      setIsSaving(true);
+      const { data } = await api.post('/comandas', payload);
+      setSavedComanda(data.comanda);
       dispatch({ type: 'clear' });
       setBusqueda('');
       setRubroSel('');
@@ -286,8 +298,27 @@ export default function ComandasPage() {
       setPage(1);
     } catch (err) {
       console.error('Error confirmando comanda', err);
-      alert('Error al confirmar la comanda');
+      setSaveError(true);
+    } finally {
+      setIsSaving(false);
     }
+  };
+
+  const handlePrintClick = () => {
+    setSavedComanda(null);
+    setPrintDialogOpen(true);
+    saveComanda();
+  };
+
+  const handleRetry = () => {
+    setSaveError(false);
+    saveComanda();
+  };
+
+  const handleCancel = () => {
+    setSaveError(false);
+    setPrintDialogOpen(false);
+    setSavedComanda(null);
   };
 
   return (
@@ -430,9 +461,69 @@ export default function ComandasPage() {
           clienteSel={clienteSel}
         />
       </Stack>
-      <Button variant="contained" onClick={handleConfirm}>
-        Confirmar Comanda
+      <Button
+        variant="contained"
+        onClick={handlePrintClick}
+        disabled={isSaving}
+      >
+        Imprimir Comanda
       </Button>
+
+      <Dialog open={printDialogOpen} onClose={() => setPrintDialogOpen(false)}>
+        <DialogTitle>Comanda</DialogTitle>
+        <DialogContent>
+          {isSaving && (
+            <CircularProgress />
+          )}
+          {!isSaving && savedComanda && (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Typography variant="subtitle1">
+                Nº de comanda: {savedComanda.nrodecomanda}
+              </Typography>
+              <List>
+                {(savedComanda.items || []).map((item, idx) => (
+                  <ListItem key={idx} disablePadding>
+                    <ListItemText
+                      primary={item.descripcion || item.codprod}
+                      secondary={`Cantidad: ${item.cantidad}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Stack>
+          )}
+          {!isSaving && !savedComanda && !saveError && (
+            <Typography sx={{ mt: 1 }}>
+              Cargando información de la comanda…
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPrintDialogOpen(false)}>Cerrar</Button>
+          <Button
+            onClick={() => window.print()}
+            disabled={isSaving || !savedComanda?.nrodecomanda}
+          >
+            Imprimir
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={saveError}
+        onClose={() => setSaveError(false)}
+        message="No se pudo grabar la comanda. Intente nuevamente."
+        action={
+          <>
+            <Button color="secondary" size="small" onClick={handleRetry}>
+              Reintentar
+            </Button>
+            <Button color="secondary" size="small" onClick={handleCancel}>
+              Cancelar
+            </Button>
+          </>
+        }
+      />
     </Stack>
   );
 }
