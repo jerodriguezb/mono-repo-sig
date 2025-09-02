@@ -291,7 +291,7 @@ export default function ComandasPage() {
     try {
       setIsSaving(true);
       const { data } = await api.post('/comandas', payload);
-      setSavedComanda(data.comanda);
+      setSavedComanda({ ...data.comanda, cliente: clienteSel });
       dispatch({ type: 'clear' });
       setBusqueda('');
       setRubroSel('');
