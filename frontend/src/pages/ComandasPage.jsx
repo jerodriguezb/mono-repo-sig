@@ -25,6 +25,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
+import ComandaPrintView from '../components/ComandaPrintView.jsx';
 import api from '../api/axios.js';
 
 const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
@@ -513,16 +514,7 @@ export default function ComandasPage() {
                 <Typography variant="subtitle1">
                   Cliente: {savedComanda?.cliente?.razonsocial || clienteSel?.razonsocial}
                 </Typography>
-                <List>
-                  {(savedComanda.items || []).map((item, idx) => (
-                    <ListItem key={idx} disablePadding>
-                      <ListItemText
-                        primary={item.descripcion || item.codprod}
-                        secondary={`Cantidad: ${item.cantidad}`}
-                      />
-                    </ListItem>
-                  ))}
-                </List>
+                <ComandaPrintView items={savedComanda.items || []} showTotal />
               </Stack>
             </Box>
           )}
