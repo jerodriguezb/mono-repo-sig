@@ -15,9 +15,13 @@ import {
   ListItemText,
   Button,
   Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogActions,
 } from '@mui/material';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
+import ComandaPrintView from '../components/ComandaPrintView.jsx';
 import api from '../api/axios.js';
 
 const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
@@ -43,6 +47,8 @@ export default function ComandasPage() {
   const [viewMode, setViewMode] = useState('grid');
   const [focusedProdId, setFocusedProdId] = useState(null);
   const scanBufferRef = useRef('');
+  const [printData, setPrintData] = useState(null);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const itemsReducer = (state, action) => {
     switch (action.type) {
       case 'add': {
@@ -276,7 +282,19 @@ export default function ComandasPage() {
       })),
     };
     try {
-      await api.post('/comandas', payload);
+      const { data } = await api.post('/comandas', payload);
+      const itemsToPrint = items.map((i) => ({
+        descripcion: i.descripcion,
+        cantidad: i.cantidad,
+        precio: i.precio,
+      }));
+      setPrintData({
+        nrodecomanda: data?.comanda?.nrodecomanda,
+        cliente: clienteSel,
+        fecha: payload.fecha,
+        items: itemsToPrint,
+      });
+      setPrintDialogOpen(true);
       dispatch({ type: 'clear' });
       setBusqueda('');
       setRubroSel('');
@@ -290,10 +308,16 @@ export default function ComandasPage() {
     }
   };
 
+  const handlePrint = () => {
+    setPrintDialogOpen(false);
+    window.print();
+  };
+
   return (
-    <Stack spacing={2}>
-      <Typography variant="h6">Comandas</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+    <>
+      <Stack spacing={2}>
+        <Typography variant="h6">Comandas</Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
         <TextField
           label="Buscar"
           value={busqueda}
@@ -434,6 +458,17 @@ export default function ComandasPage() {
         Confirmar Comanda
       </Button>
     </Stack>
-  );
+    <Dialog open={printDialogOpen} onClose={() => setPrintDialogOpen(false)}>
+        <DialogTitle>¿Desea imprimir la comanda?</DialogTitle>
+        <DialogActions>
+          <Button onClick={() => setPrintDialogOpen(false)}>No</Button>
+          <Button onClick={handlePrint} autoFocus>Imprimir</Button>
+        </DialogActions>
+    </Dialog>
+    <div id="printable" style={{ display: 'none' }}>
+      {printData && <ComandaPrintView comanda={printData} />}
+    </div>
+  </>
+);
 }
 
