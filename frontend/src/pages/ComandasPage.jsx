@@ -23,6 +23,7 @@ import {
   Snackbar,
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import ComandaPrintView from '../components/ComandaPrintView.jsx';
@@ -54,6 +55,7 @@ export default function ComandasPage() {
   const [saveError, setSaveError] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [savedComanda, setSavedComanda] = useState(null);
+  const navigate = useNavigate();
   const scanBufferRef = useRef('');
   const itemsReducer = (state, action) => {
     switch (action.type) {
@@ -325,6 +327,11 @@ export default function ComandasPage() {
     setSavedComanda(null);
   };
 
+  const handleFinish = () => {
+    setPrintDialogOpen(false);
+    navigate('/historial-comandas');
+  };
+
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
@@ -527,7 +534,7 @@ export default function ComandasPage() {
         <DialogActions>
           <Button onClick={() => setPrintDialogOpen(false)}>Cerrar</Button>
           <Button
-            onClick={() => window.print()}
+            onClick={handleFinish}
             disabled={isSaving || !savedComanda?.nrodecomanda}
           >
             Imprimir
