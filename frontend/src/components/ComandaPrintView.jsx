@@ -15,10 +15,11 @@ function ComandaPrintView({ items = [], showTotal = false }) {
     currency: 'ARS',
   });
 
-  const total = items.reduce(
-    (sum, item) => sum + Number(item.precio) * Number(item.cantidad),
-    0,
-  );
+  const total = items.reduce((sum, item) => {
+    const precio = Number(item.monto) || 0;
+    const cantidad = Number(item.cantidad) || 0;
+    return sum + precio * cantidad;
+  }, 0);
 
   return (
     <Box>
@@ -34,15 +35,19 @@ function ComandaPrintView({ items = [], showTotal = false }) {
         </TableHead>
         <TableBody>
           {items.map((item) => {
-            const subtotal = Number(item.precio) * Number(item.cantidad);
+            const codigo = item.codprod?.codprod || '';
+            const descripcion = item.codprod?.descripcion || '';
+            const precio = Number(item.monto) || 0;
+            const cantidad = Number(item.cantidad) || 0;
+            const subtotal = precio * cantidad;
             return (
-              <TableRow key={item.codigo ?? item.codprod}>
-                <TableCell>{item.codigo ?? item.codprod}</TableCell>
-                <TableCell>{item.descripcion || item.codprod}</TableCell>
+              <TableRow key={codigo}>
+                <TableCell>{codigo}</TableCell>
+                <TableCell>{descripcion}</TableCell>
                 <TableCell align="right">
-                  {currencyFormatter.format(Number(item.precio))}
+                  {currencyFormatter.format(precio)}
                 </TableCell>
-                <TableCell align="right">{item.cantidad}</TableCell>
+                <TableCell align="right">{cantidad}</TableCell>
                 <TableCell align="right">
                   {currencyFormatter.format(subtotal)}
                 </TableCell>
