@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Typography,
+} from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
@@ -59,14 +67,6 @@ export default function HistorialComandas() {
     handleView(row);
     setTimeout(() => window.print(), 100);
   };
-
-  const toPrintItems = (com) =>
-    com.items.map((i) => ({
-      codprod: i.codprod?._id ?? i.codprod,
-      descripcion: i.codprod?.descripcion ?? '',
-      precio: i.monto,
-      cantidad: i.cantidad,
-    }));
 
   const columns = [
     { field: 'nrodecomanda', headerName: 'Número', width: 100 },
@@ -135,7 +135,17 @@ export default function HistorialComandas() {
       <Dialog open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
         <DialogTitle>Comanda {selected?.nrodecomanda}</DialogTitle>
         <DialogContent>
-          {selected && <ComandaPrintView items={toPrintItems(selected)} />}
+          {selected && (
+            <Box>
+              <Typography variant="subtitle1">
+                Nº de comanda: {selected.nrodecomanda}
+              </Typography>
+              <Typography variant="subtitle1">
+                Cliente: {selected.codcli?.razonsocial || ''}
+              </Typography>
+              <ComandaPrintView items={selected.items || []} showTotal />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => window.print()} startIcon={<PrintIcon />}>Imprimir</Button>

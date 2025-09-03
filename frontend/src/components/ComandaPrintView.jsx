@@ -9,14 +9,15 @@ import {
   TableCell,
 } from '@mui/material';
 
-export default function ComandaPrintView({ items = [], showTotal = true }) {
+function ComandaPrintView({ items = [], showTotal = false }) {
   const currencyFormatter = new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
   });
 
   const total = items.reduce(
-    (sum, item) => sum + Number(item.precio) * Number(item.cantidad),
+    (sum, item) =>
+      sum + (Number(item.monto) || 0) * (Number(item.cantidad) || 0),
     0,
   );
 
@@ -33,16 +34,18 @@ export default function ComandaPrintView({ items = [], showTotal = true }) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {items.map((item) => {
-            const subtotal = Number(item.precio) * Number(item.cantidad);
+          {items.map((item, idx) => {
+            const precio = Number(item.monto) || 0;
+            const cantidad = Number(item.cantidad) || 0;
+            const subtotal = precio * cantidad;
             return (
-              <TableRow key={item.codigo ?? item.codprod}>
-                <TableCell>{item.codigo ?? item.codprod}</TableCell>
-                <TableCell>{item.descripcion || item.codprod}</TableCell>
+              <TableRow key={item.codprod?.codprod ?? idx}>
+                <TableCell>{item.codprod?.codprod ?? ''}</TableCell>
+                <TableCell>{item.codprod?.descripcion ?? ''}</TableCell>
                 <TableCell align="right">
-                  {currencyFormatter.format(Number(item.precio))}
+                  {currencyFormatter.format(precio)}
                 </TableCell>
-                <TableCell align="right">{item.cantidad}</TableCell>
+                <TableCell align="right">{cantidad}</TableCell>
                 <TableCell align="right">
                   {currencyFormatter.format(subtotal)}
                 </TableCell>
@@ -66,3 +69,5 @@ export default function ComandaPrintView({ items = [], showTotal = true }) {
     </Box>
   );
 }
+
+export default ComandaPrintView;
