@@ -16,7 +16,7 @@ function ComandaPrintView({ items = [], showTotal = false }) {
   });
 
   const total = items.reduce((sum, item) => {
-    const precio = Number(item.monto) || 0;
+    const precio = Number(item.monto ?? item.precio) || 0;
     const cantidad = Number(item.cantidad) || 0;
     return sum + precio * cantidad;
   }, 0);
@@ -35,13 +35,14 @@ function ComandaPrintView({ items = [], showTotal = false }) {
         </TableHead>
         <TableBody>
           {items.map((item) => {
-            const codigo = item.codprod?.codprod || '';
-            const descripcion = item.codprod?.descripcion || '';
-            const precio = Number(item.monto) || 0;
+            const codigo = item.codprod?.codprod || item.codprod || '';
+            const descripcion =
+              item.codprod?.descripcion || item.descripcion || '';
+            const precio = Number(item.monto ?? item.precio) || 0;
             const cantidad = Number(item.cantidad) || 0;
             const subtotal = precio * cantidad;
             return (
-              <TableRow key={codigo}>
+              <TableRow key={codigo || item._id}>
                 <TableCell>{codigo}</TableCell>
                 <TableCell>{descripcion}</TableCell>
                 <TableCell align="right">
