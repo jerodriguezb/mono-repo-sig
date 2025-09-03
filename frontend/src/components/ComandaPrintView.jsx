@@ -33,12 +33,20 @@ function ComandaPrintView({ items = [], showTotal = false }) {
           </TableRow>
         </TableHead>
         <TableBody>
-          {items.map((item) => {
+          {items.map((item, index) => {
+            const codigo =
+              typeof item.codprod === 'object'
+                ? item.codprod.codigo || ''
+                : item.codigo || '';
+            const descripcion =
+              typeof item.codprod === 'object'
+                ? item.codprod.descripcion || ''
+                : item.descripcion || '';
             const subtotal = Number(item.precio) * Number(item.cantidad);
             return (
-              <TableRow key={item.codigo ?? item.codprod}>
-                <TableCell>{item.codigo ?? item.codprod}</TableCell>
-                <TableCell>{item.descripcion || item.codprod}</TableCell>
+              <TableRow key={codigo || index}>
+                <TableCell>{codigo}</TableCell>
+                <TableCell>{descripcion}</TableCell>
                 <TableCell align="right">
                   {currencyFormatter.format(Number(item.precio))}
                 </TableCell>
