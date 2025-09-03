@@ -9,7 +9,7 @@ import {
   TableCell,
 } from '@mui/material';
 
-export default function ComandaPrintView({ items = [], showTotal = true }) {
+function ComandaPrintView({ items = [], showTotal = false }) {
   const currencyFormatter = new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -66,3 +66,5 @@ export default function ComandaPrintView({ items = [], showTotal = true }) {
     </Box>
   );
 }
+
+export default ComandaPrintView;
