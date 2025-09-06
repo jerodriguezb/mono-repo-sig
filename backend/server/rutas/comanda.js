@@ -168,8 +168,11 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   }
   const faltantes = [];
   for (const item of body.items) {
-    const prod = await Producserv.findById(item.codprod).select('descripcion stkactual').lean().exec();
-    if (!prod || prod.stkactual - item.cantidad < 1) {
+    const prod = await Producserv.findById(item.codprod)
+      .select('descripcion stkactual')
+      .lean()
+      .exec();
+    if (!prod || prod.stkactual - item.cantidad < 0) {
       faltantes.push({
         codprod: item.codprod,
         descripcion: prod ? prod.descripcion : 'Producto no encontrado',
@@ -187,12 +190,13 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
 
   const session = await Comanda.startSession();
   let comandaDB;
-  await session.withTransaction(async () => {
-    const comanda = new Comanda({
-      nrodecomanda: body.nrodecomanda,
-      codcli: body.codcli,
-      fecha: body.fecha,
-      codestado: body.codestado,
+  try {
+    await session.withTransaction(async () => {
+      const comanda = new Comanda({
+        nrodecomanda: body.nrodecomanda,
+        codcli: body.codcli,
+        fecha: body.fecha,
+        codestado: body.codestado,
       camion: body.camion,
       fechadeentrega: body.fechadeentrega,
       usuario: body.usuario,
@@ -200,15 +204,23 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
       activo: body.activo,
       items: body.items,
     });
-    comandaDB = await comanda.save({ session });
-    for (const item of body.items) {
-      await Producserv.updateOne(
-        { _id: item.codprod },
-        { $inc: { stkactual: -item.cantidad } },
-        { session }
-      );
-    }
-  });
+      comandaDB = await comanda.save({ session });
+      for (const item of body.items) {
+        const { modifiedCount } = await Producserv.updateOne(
+          { _id: item.codprod, stkactual: { $gte: item.cantidad } },
+          { $inc: { stkactual: -item.cantidad } },
+          { session }
+        );
+        if (modifiedCount === 0) {
+          throw new Error('Stock insuficiente para uno de los productos');
+        }
+      }
+    });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(400).json({ ok: false, err: { message: err.message } });
+  }
   session.endSession();
 
   res.json({ ok: true, comanda: comandaDB });
