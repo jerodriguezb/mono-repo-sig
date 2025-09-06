@@ -4,6 +4,7 @@
 
 const express = require('express');
 const Comanda = require('../modelos/comanda');
+const Producserv = require('../modelos/producserv');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -165,19 +166,51 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   if (!Array.isArray(body.items) || body.items.length === 0) {
     return res.status(400).json({ ok: false, err: { message: 'La comanda debe incluir al menos un ítem' } });
   }
-  const comanda = new Comanda({
-    nrodecomanda: body.nrodecomanda,
-    codcli: body.codcli,
-    fecha: body.fecha,
-    codestado: body.codestado,
-    camion: body.camion,
-    fechadeentrega: body.fechadeentrega,
-    usuario: body.usuario,
-    camionero: body.camionero,
-    activo: body.activo,
-    items: body.items,
+  const faltantes = [];
+  for (const item of body.items) {
+    const prod = await Producserv.findById(item.codprod).select('descripcion stkactual').lean().exec();
+    if (!prod || prod.stkactual - item.cantidad < 1) {
+      faltantes.push({
+        codprod: item.codprod,
+        descripcion: prod ? prod.descripcion : 'Producto no encontrado',
+        stkactual: prod ? prod.stkactual : 0,
+        solicitado: item.cantidad,
+      });
+    }
+  }
+  if (faltantes.length) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'Stock insuficiente para algunos productos', productos: faltantes },
+    });
+  }
+
+  const session = await Comanda.startSession();
+  let comandaDB;
+  await session.withTransaction(async () => {
+    const comanda = new Comanda({
+      nrodecomanda: body.nrodecomanda,
+      codcli: body.codcli,
+      fecha: body.fecha,
+      codestado: body.codestado,
+      camion: body.camion,
+      fechadeentrega: body.fechadeentrega,
+      usuario: body.usuario,
+      camionero: body.camionero,
+      activo: body.activo,
+      items: body.items,
+    });
+    comandaDB = await comanda.save({ session });
+    for (const item of body.items) {
+      await Producserv.updateOne(
+        { _id: item.codprod },
+        { $inc: { stkactual: -item.cantidad } },
+        { session }
+      );
+    }
   });
-  const comandaDB = await comanda.save();
+  session.endSession();
+
   res.json({ ok: true, comanda: comandaDB });
 }));
 
