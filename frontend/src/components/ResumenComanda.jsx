@@ -20,6 +20,7 @@ export default function ResumenComanda({
   dispatch,
   clienteSel,
   onConfirm,
+  onStockError,
 }) {
   const handleQtyChange = (codprod, lista, cantidad) => {
     const qty = Number(cantidad);
@@ -30,11 +31,12 @@ export default function ResumenComanda({
       .reduce((sum, i) => sum + i.cantidad, 0);
     const total = otros + qty;
     if (total > item.stock) {
-      alert('Stock insuficiente');
+      if (onStockError) onStockError('Stock insuficiente');
       return;
     }
     if (qty > 0) {
       dispatch({ type: 'update', payload: { codprod, lista, cantidad: qty } });
+      if (onStockError) onStockError(null);
     }
   };
 

@@ -54,6 +54,7 @@ export default function ComandasPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [missingProducts, setMissingProducts] = useState([]);
+  const [stockError, setStockError] = useState('');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [savedComanda, setSavedComanda] = useState(null);
   const navigate = useNavigate();
@@ -338,6 +339,10 @@ export default function ComandasPage() {
     navigate('/historial-comandas');
   };
 
+  const handleStockError = (msg) => {
+    setStockError(msg || '');
+  };
+
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
@@ -499,11 +504,15 @@ export default function ComandasPage() {
                 listas={listas}
                 dispatch={dispatch}
                 clienteSel={clienteSel}
+                onStockError={handleStockError}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </Stack>
+      {stockError && (
+        <Typography color="error">{stockError}</Typography>
+      )}
       <Button
         variant="contained"
         onClick={handlePrintClick}
