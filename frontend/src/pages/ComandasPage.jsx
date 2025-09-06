@@ -27,6 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import ComandaPrintView from '../components/ComandaPrintView.jsx';
+import StockInsuficienteDialog from '../components/StockInsuficienteDialog.jsx';
 import api from '../api/axios.js';
 
 const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
@@ -55,6 +56,8 @@ export default function ComandasPage() {
   const [saveError, setSaveError] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [savedComanda, setSavedComanda] = useState(null);
+  const [stockDialogOpen, setStockDialogOpen] = useState(false);
+  const [stockErrorItems, setStockErrorItems] = useState([]);
   const navigate = useNavigate();
   const scanBufferRef = useRef('');
   const itemsReducer = (state, action) => {
@@ -174,7 +177,13 @@ export default function ComandasPage() {
       .reduce((sum, i) => sum + i.cantidad, 0);
     const newTotal = existingTotal + cantidad;
     if (newTotal > stock) {
-      alert('Stock insuficiente');
+      setStockErrorItems([
+        {
+          descripcion: producto.descripcion,
+          disponible: stock - existingTotal,
+        },
+      ]);
+      setStockDialogOpen(true);
       return;
     }
     dispatch({
@@ -215,7 +224,13 @@ export default function ComandasPage() {
           .reduce((sum, i) => sum + i.cantidad, 0);
         const newTotal = existingTotal + 1;
         if (newTotal > stock) {
-          alert('Stock insuficiente');
+          setStockErrorItems([
+            {
+              descripcion: producto.descripcion,
+              disponible: stock - existingTotal,
+            },
+          ]);
+          setStockDialogOpen(true);
           return;
         }
         dispatch({
@@ -291,7 +306,7 @@ export default function ComandasPage() {
         monto: precio,
       })),
     };
-    try {
+  try {
       setIsSaving(true);
       const { data } = await api.post('/comandas', payload);
       setSavedComanda({ ...data.comanda, cliente: clienteSel });
@@ -303,8 +318,18 @@ export default function ComandasPage() {
       setClienteInput('');
       setPage(1);
     } catch (err) {
-      console.error('Error confirmando comanda', err);
-      setSaveError(true);
+      if (err.response?.status === 400 && err.response?.data?.err?.productos) {
+        const prods = err.response.data.err.productos.map((p) => ({
+          descripcion: p.descripcion,
+          disponible: p.stkactual,
+          solicitado: p.solicitado,
+        }));
+        setStockErrorItems(prods);
+        setStockDialogOpen(true);
+      } else {
+        console.error('Error confirmando comanda', err);
+        setSaveError(true);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -556,6 +581,11 @@ export default function ComandasPage() {
             </Button>
           </>
         }
+      />
+      <StockInsuficienteDialog
+        open={stockDialogOpen}
+        onClose={() => setStockDialogOpen(false)}
+        productos={stockErrorItems}
       />
     </Stack>
   );

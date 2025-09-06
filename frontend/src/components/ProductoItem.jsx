@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import ImageIcon from '@mui/icons-material/Image';
 import api from '../api/axios.js';
+import StockInsuficienteDialog from './StockInsuficienteDialog.jsx';
 
 export default function ProductoItem({
   producto,
@@ -26,6 +27,8 @@ export default function ProductoItem({
   const [precio, setPrecio] = useState(null);
   const qtyRef = useRef(null);
   const maxStock = stockDisponible ?? producto.stkactual;
+  const [stockDialogOpen, setStockDialogOpen] = useState(false);
+  const [stockProductos, setStockProductos] = useState([]);
 
   useEffect(() => {
     setListaId(defaultLista);
@@ -57,7 +60,10 @@ export default function ProductoItem({
   const handleAdd = () => {
     const qty = Number(cantidad);
     if (qty > maxStock) {
-      alert('Stock insuficiente');
+      setStockProductos([
+        { descripcion: producto.descripcion, disponible: maxStock },
+      ]);
+      setStockDialogOpen(true);
       return;
     }
     onAdd && onAdd({ producto, cantidad: qty, lista: listaId, precio });
@@ -70,58 +76,65 @@ export default function ProductoItem({
   }, [focused]);
 
   return (
-    <Card sx={focused ? { outline: '2px solid', outlineColor: 'primary.main' } : undefined}>
-      {producto.imagen ? (
-        <CardMedia component="img" height="140" image={producto.imagen} alt={producto.descripcion} />
-      ) : (
-        <Box sx={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'grey.200' }}>
-          <ImageIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
-        </Box>
-      )}
-      <CardContent>
-        <Typography variant="subtitle1" gutterBottom>{producto.descripcion}</Typography>
-        <Typography
-          variant="body2"
-          color={maxStock === 0 ? 'warning.main' : 'text.secondary'}
-          sx={{ mb: 1 }}
-        >
-          Stock: {maxStock}
-        </Typography>
-        <TextField
-          label="Cantidad"
-          type="number"
-          size="small"
-          value={cantidad}
-          onChange={(e) => setCantidad(e.target.value)}
-          inputRef={qtyRef}
-          inputProps={{ min: 1, max: maxStock }}
-          sx={{ mb: 1 }}
-          disabled={maxStock <= 0}
-        />
-        <Select
-          size="small"
-          value={listaId}
-          displayEmpty
-          onChange={(e) => setListaId(e.target.value)}
-          sx={{ mb: 1, minWidth: 120 }}
-        >
-          <MenuItem value=""><em>Lista</em></MenuItem>
-          {listas.map((l) => (
-            <MenuItem key={l._id} value={l._id}>{l.lista || l.nombre}</MenuItem>
-          ))}
-        </Select>
-        <Typography variant="body2" sx={{ mb: 1 }}>
-          Precio: {precio != null ? `$${precio}` : '-'}
-        </Typography>
-        <Button
-          variant="contained"
-          onClick={handleAdd}
-          disabled={!listaId || precio == null || maxStock <= 0}
-        >
-          Agregar
-        </Button>
-      </CardContent>
-    </Card>
+    <>
+      <Card sx={focused ? { outline: '2px solid', outlineColor: 'primary.main' } : undefined}>
+        {producto.imagen ? (
+          <CardMedia component="img" height="140" image={producto.imagen} alt={producto.descripcion} />
+        ) : (
+          <Box sx={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'grey.200' }}>
+            <ImageIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
+          </Box>
+        )}
+        <CardContent>
+          <Typography variant="subtitle1" gutterBottom>{producto.descripcion}</Typography>
+          <Typography
+            variant="body2"
+            color={maxStock === 0 ? 'warning.main' : 'text.secondary'}
+            sx={{ mb: 1 }}
+          >
+            Stock: {maxStock}
+          </Typography>
+          <TextField
+            label="Cantidad"
+            type="number"
+            size="small"
+            value={cantidad}
+            onChange={(e) => setCantidad(e.target.value)}
+            inputRef={qtyRef}
+            inputProps={{ min: 1, max: maxStock }}
+            sx={{ mb: 1 }}
+            disabled={maxStock <= 0}
+          />
+          <Select
+            size="small"
+            value={listaId}
+            displayEmpty
+            onChange={(e) => setListaId(e.target.value)}
+            sx={{ mb: 1, minWidth: 120 }}
+          >
+            <MenuItem value=""><em>Lista</em></MenuItem>
+            {listas.map((l) => (
+              <MenuItem key={l._id} value={l._id}>{l.lista || l.nombre}</MenuItem>
+            ))}
+          </Select>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Precio: {precio != null ? `$${precio}` : '-'}
+          </Typography>
+          <Button
+            variant="contained"
+            onClick={handleAdd}
+            disabled={!listaId || precio == null || maxStock <= 0}
+          >
+            Agregar
+          </Button>
+        </CardContent>
+      </Card>
+      <StockInsuficienteDialog
+        open={stockDialogOpen}
+        onClose={() => setStockDialogOpen(false)}
+        productos={stockProductos}
+      />
+    </>
   );
 }
 
