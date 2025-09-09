@@ -57,6 +57,7 @@ router.post('/stocks', /* [verificaToken, verificaAdmin_role], */ asyncHandler(a
   const body = req.body;
   const stock = new Stock({
     codprod: body.codprod,
+    nrodecomanda: body.nrodecomanda,
     movimiento: body.movimiento,
     cantidad: body.cantidad,
     fecha: body.fecha,
