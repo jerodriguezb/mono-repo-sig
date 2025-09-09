@@ -5,6 +5,8 @@
 const express = require('express');
 const Comanda = require('../modelos/comanda');
 const Producserv = require('../modelos/producserv');
+const Stock = require('../modelos/stock');
+const Tipomovimiento = require('../modelos/tipomovimiento');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -184,6 +186,10 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
       err: { message: 'Stock insuficiente para algunos productos', productos: faltantes },
     });
   }
+  const tipomovVenta = await Tipomovimiento.findOne({ codmov: 2 }).exec();
+  if (!tipomovVenta) {
+    return res.status(500).json({ ok: false, err: { message: 'Tipo de movimiento VENTA no encontrado' } });
+  }
 
   const session = await Comanda.startSession();
   let comandaDB;
@@ -208,6 +214,17 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
           { $inc: { stkactual: -item.cantidad } },
           { session }
         );
+      }
+      for (const item of body.items) {
+        const movStock = new Stock({
+          nrodecomanda: comandaDB.nrodecomanda,
+          codprod: item.codprod,
+          movimiento: tipomovVenta._id,
+          cantidad: item.cantidad,
+          fecha: body.fecha,
+          usuario: body.usuario,
+        });
+        await movStock.save({ session });
       }
     });
     return res.json({ ok: true, comanda: comandaDB });
