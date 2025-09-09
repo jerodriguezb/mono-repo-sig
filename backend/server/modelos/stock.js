@@ -9,6 +9,10 @@ let stockSchema = new Schema({
     ref: "Producserv",
   },
 
+  nrodecomanda: {
+    type: Number,
+  },
+
   movimiento: {
     type: Schema.Types.ObjectId,
     ref: "Tipomovimiento",
