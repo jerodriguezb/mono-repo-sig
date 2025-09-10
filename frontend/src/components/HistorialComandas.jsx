@@ -2,14 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import EditIcon from '@mui/icons-material/Edit';
-import CancelIcon from '@mui/icons-material/Cancel';
 import PrintIcon from '@mui/icons-material/Print';
 import api from '../api/axios.js';
 import ComandaPrintView from './ComandaPrintView.jsx';
-import { useNavigate } from 'react-router-dom';
-
-const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
 
 export default function HistorialComandas() {
   const [rows, setRows] = useState([]);
@@ -18,7 +13,6 @@ export default function HistorialComandas() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
-  const navigate = useNavigate();
 
   const currencyFormatter = new Intl.NumberFormat('es-AR', {
     style: 'currency',
@@ -50,16 +44,6 @@ export default function HistorialComandas() {
 
   const handleView = (row) => setSelected(row);
   const handleClose = () => setSelected(null);
-  const handleEdit = (row) => navigate(`/comandas/${row._id}`);
-  const handleCancel = async (row) => {
-    if (!window.confirm('¿Anular comanda?')) return;
-    try {
-      await api.delete(`/comandas/${row._id}`);
-      fetchData();
-    } catch (err) {
-      console.error('Error anulando comanda', err);
-    }
-  };
   const handlePrint = (row) => {
     handleView(row);
     setTimeout(() => window.print(), 100);
@@ -95,37 +79,20 @@ export default function HistorialComandas() {
       type: 'actions',
       headerName: 'Acciones',
       width: 120,
-      getActions: (params) => {
-        const actions = [
-          <GridActionsCellItem
-            key="view"
-            icon={<VisibilityIcon />}
-            label="Ver"
-            onClick={() => handleView(params.row)}
-          />, 
-          params.row.codestado?._id === ESTADO_A_PREPARAR && (
-            <GridActionsCellItem
-              key="edit"
-              icon={<EditIcon />}
-              label="Editar"
-              onClick={() => handleEdit(params.row)}
-            />
-          ),
-          <GridActionsCellItem
-            key="cancel"
-            icon={<CancelIcon />}
-            label="Anular"
-            onClick={() => handleCancel(params.row)}
-          />, 
-          <GridActionsCellItem
-            key="print"
-            icon={<PrintIcon />}
-            label="Imprimir"
-            onClick={() => handlePrint(params.row)}
-          />,
-        ];
-        return actions.filter(Boolean);
-      },
+      getActions: (params) => [
+        <GridActionsCellItem
+          key="view"
+          icon={<VisibilityIcon />}
+          label="Ver"
+          onClick={() => handleView(params.row)}
+        />,
+        <GridActionsCellItem
+          key="print"
+          icon={<PrintIcon />}
+          label="Imprimir"
+          onClick={() => handlePrint(params.row)}
+        />,
+      ],
     },
   ];
 
