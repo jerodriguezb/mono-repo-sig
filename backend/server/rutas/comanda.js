@@ -161,6 +161,36 @@ router.get('/comandasinformes', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
+// 8bis. HISTORIAL DE COMANDAS --------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/historial', asyncHandler(async (req, res) => {
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const pageSize = Math.max(toNumber(req.query.pageSize, 10), 1);
+  const skip = (page - 1) * pageSize;
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(),
+    Comanda.find()
+      .sort({ nrodecomanda: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .populate(['codcli', 'codestado'])
+      .lean()
+      .exec(),
+  ]);
+
+  const totalPages = Math.ceil(total / pageSize);
+  const data = comandas.map(c => ({
+    ...c,
+    total: Array.isArray(c.items)
+      ? c.items.reduce((sum, item) => sum + item.cantidad * item.monto, 0)
+      : 0,
+  }));
+
+  res.json({ ok: true, page, pageSize, total, totalPages, data });
+}));
+
+// -----------------------------------------------------------------------------
 // 9. CREAR COMANDA --------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.post('/comandas',  asyncHandler(async (req, res) => {
