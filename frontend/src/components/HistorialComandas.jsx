@@ -28,22 +28,21 @@ export default function HistorialComandas() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/comandas/historial', {
-        params: { page, pageSize },
-      });
-      const flat = (data.comandas ?? []).map((c) => ({
+      const { data: resp } = await api.get('/comandas/historial');
+      const flat = (resp.data ?? []).map((c) => ({
         ...c,
         estadoNombre: c.codestado?.estado ?? '',
         total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
+        clienteNombre: c.codcli?.razonsocial,
       }));
       setRows(flat);
-      setTotal(data.total ?? flat.length);
+      setTotal(resp.total ?? flat.length);
     } catch (err) {
       console.error('Error obteniendo comandas', err);
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -82,13 +81,7 @@ export default function HistorialComandas() {
       width: 140,
       valueGetter: (params) => new Date(params.value).toLocaleDateString('es-AR'),
     },
-    {
-      field: 'cliente',
-      headerName: 'Cliente',
-      flex: 1,
-      minWidth: 150,
-      valueGetter: (params) => params.row.codcli?.razonsocial ?? '',
-    },
+    { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
     { field: 'estadoNombre', headerName: 'Estado', width: 120 },
     {
       field: 'total',
