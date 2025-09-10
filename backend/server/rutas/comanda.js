@@ -124,44 +124,7 @@ router.get('/comandaspreparadas', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 6. COMANDA POR ID -------------------------------------------------------------
-// -----------------------------------------------------------------------------
-router.get('/comandas/:id', asyncHandler(async (req, res) => {
-  const comanda = await Comanda.findById(req.params.id).populate(commonPopulate).lean().exec();
-  if (!comanda) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
-  res.json({ ok: true, comanda });
-}));
-
-// -----------------------------------------------------------------------------
-// 7. FILTRAR POR RANGO DE FECHAS ------------------------------------------------
-// -----------------------------------------------------------------------------
-router.get('/comandasnro', asyncHandler(async (req, res) => {
-  const { fechaDesde, fechaHasta } = req.query;
-  const query = { activo: true, fecha: { $gte: fechaDesde, $lte: fechaHasta } };
-  const comandas = await Comanda.find(query)
-    .sort({ nrodecomanda: -1 })
-    .populate(commonPopulate)
-    .lean()
-    .exec();
-  res.json({ ok: true, comandas });
-}));
-
-// -----------------------------------------------------------------------------
-// 8. COMANDAS PARA INFORMES -----------------------------------------------------
-// -----------------------------------------------------------------------------
-router.get('/comandasinformes', asyncHandler(async (req, res) => {
-  const { fechaDesde, fechaHasta, limite = 1000 } = req.query;
-  const comandas = await Comanda.find({ activo: true, fecha: { $gte: fechaDesde, $lte: fechaHasta } })
-    .limit(toNumber(limite, 1000))
-    .sort({ nrodecomanda: -1 })
-    .populate(commonPopulate)
-    .lean()
-    .exec();
-  res.json({ ok: true, comandas });
-}));
-
-// -----------------------------------------------------------------------------
-// 8bis. HISTORIAL DE COMANDAS --------------------------------------------------
+// 6. HISTORIAL DE COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandas/historial', asyncHandler(async (req, res) => {
   const page = Math.max(toNumber(req.query.page, 1), 1);
@@ -191,7 +154,44 @@ router.get('/comandas/historial', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 9. CREAR COMANDA --------------------------------------------------------------
+// 7. COMANDA POR ID -------------------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/:id', asyncHandler(async (req, res) => {
+  const comanda = await Comanda.findById(req.params.id).populate(commonPopulate).lean().exec();
+  if (!comanda) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+  res.json({ ok: true, comanda });
+}));
+
+// -----------------------------------------------------------------------------
+// 8. FILTRAR POR RANGO DE FECHAS ------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandasnro', asyncHandler(async (req, res) => {
+  const { fechaDesde, fechaHasta } = req.query;
+  const query = { activo: true, fecha: { $gte: fechaDesde, $lte: fechaHasta } };
+  const comandas = await Comanda.find(query)
+    .sort({ nrodecomanda: -1 })
+    .populate(commonPopulate)
+    .lean()
+    .exec();
+  res.json({ ok: true, comandas });
+}));
+
+// -----------------------------------------------------------------------------
+// 9. COMANDAS PARA INFORMES -----------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandasinformes', asyncHandler(async (req, res) => {
+  const { fechaDesde, fechaHasta, limite = 1000 } = req.query;
+  const comandas = await Comanda.find({ activo: true, fecha: { $gte: fechaDesde, $lte: fechaHasta } })
+    .limit(toNumber(limite, 1000))
+    .sort({ nrodecomanda: -1 })
+    .populate(commonPopulate)
+    .lean()
+    .exec();
+  res.json({ ok: true, comandas });
+}));
+
+// -----------------------------------------------------------------------------
+// 10. CREAR COMANDA --------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.post('/comandas',  asyncHandler(async (req, res) => {
   const body = req.body;
@@ -264,7 +264,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 10. ACTUALIZAR COMANDA --------------------------------------------------------
+// 11. ACTUALIZAR COMANDA --------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
   const comandaDB = await Comanda.findByIdAndUpdate(req.params.id, req.body, {
@@ -277,7 +277,7 @@ router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler
 }));
 
 // -----------------------------------------------------------------------------
-// 11. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
+// 12. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
 // -----------------------------------------------------------------------------
 router.delete('/comandas/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
   const comandaBorrada = await Comanda.findByIdAndUpdate(req.params.id, { activo: false }, { new: true })
