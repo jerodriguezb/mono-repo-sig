@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -13,6 +13,9 @@ const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
 
 export default function HistorialComandas() {
   const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const navigate = useNavigate();
@@ -22,26 +25,29 @@ export default function HistorialComandas() {
     currency: 'ARS',
   });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/comandas');
+      const { data } = await api.get('/comandas/historial', {
+        params: { page, pageSize },
+      });
       const flat = (data.comandas ?? []).map((c) => ({
         ...c,
         estadoNombre: c.codestado?.estado ?? '',
         total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
       }));
       setRows(flat);
+      setTotal(data.total ?? flat.length);
     } catch (err) {
       console.error('Error obteniendo comandas', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, pageSize]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   const handleView = (row) => setSelected(row);
   const handleClose = () => setSelected(null);
@@ -76,7 +82,14 @@ export default function HistorialComandas() {
       width: 140,
       valueGetter: (params) => new Date(params.value).toLocaleDateString('es-AR'),
     },
-    { field: 'estadoNombre', headerName: 'Estado', flex: 1, minWidth: 120 },
+    {
+      field: 'cliente',
+      headerName: 'Cliente',
+      flex: 1,
+      minWidth: 150,
+      valueGetter: (params) => params.row.codcli?.razonsocial ?? '',
+    },
+    { field: 'estadoNombre', headerName: 'Estado', width: 120 },
     {
       field: 'total',
       headerName: 'Total',
@@ -129,6 +142,14 @@ export default function HistorialComandas() {
         rows={rows}
         columns={columns}
         loading={loading}
+        paginationMode="server"
+        rowCount={total}
+        paginationModel={{ page, pageSize }}
+        onPaginationModelChange={(m) => {
+          setPage(m.page);
+          setPageSize(m.pageSize);
+        }}
+        initialState={{ sorting: { sortModel: [{ field: 'nrodecomanda', sort: 'desc' }] } }}
         getRowId={(r) => r._id}
         disableRowSelectionOnClick
       />
