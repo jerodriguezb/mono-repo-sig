@@ -63,7 +63,16 @@ export default function HistorialComandas() {
       field: 'fecha',
       headerName: 'Fecha',
       width: 140,
-      valueGetter: (params) => new Date(params.value).toLocaleDateString('es-AR'),
+      valueGetter: (params) => {
+        const date =
+          params.value instanceof Date ? params.value : new Date(params.value);
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+          return '-';
+        }
+        return date.toLocaleDateString('es-AR', {
+          timeZone: 'America/Argentina/Tucuman',
+        });
+      },
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
     { field: 'estadoNombre', headerName: 'Estado', width: 120 },
