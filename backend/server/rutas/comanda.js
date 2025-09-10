@@ -137,6 +137,7 @@ router.get('/comandas/historial', asyncHandler(async (req, res) => {
       .sort({ nrodecomanda: -1 })
       .skip(skip)
       .limit(pageSize)
+      .select('nrodecomanda fecha codcli codestado items')
       .populate(['codcli', 'codestado'])
       .lean()
       .exec(),
@@ -144,7 +145,11 @@ router.get('/comandas/historial', asyncHandler(async (req, res) => {
 
   const totalPages = Math.ceil(total / pageSize);
   const data = comandas.map(c => ({
-    ...c,
+    _id: c._id,
+    nrodecomanda: c.nrodecomanda,
+    fecha: c.fecha,
+    codcli: c.codcli,
+    codestado: c.codestado,
     total: Array.isArray(c.items)
       ? c.items.reduce((sum, item) => sum + item.cantidad * item.monto, 0)
       : 0,
