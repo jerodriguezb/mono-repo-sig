@@ -63,15 +63,20 @@ export default function HistorialComandas() {
       field: 'fecha',
       headerName: 'Fecha',
       width: 140,
-      valueGetter: (params) => {
-        const date =
-          params.value instanceof Date ? params.value : new Date(params.value);
+      valueGetter: (params) => new Date(params.value),
+      valueFormatter: (params) => {
+        const date = params.value;
         if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
           return '-';
         }
-        return date.toLocaleDateString('es-AR', {
+        return new Intl.DateTimeFormat('es-AR', {
           timeZone: 'America/Argentina/Tucuman',
-        });
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        })
+          .format(date)
+          .replaceAll('/', '-');
       },
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
