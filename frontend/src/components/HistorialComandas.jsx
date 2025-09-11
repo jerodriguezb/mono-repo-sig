@@ -64,14 +64,17 @@ export default function HistorialComandas() {
       headerName: 'Fecha',
       width: 140,
       valueGetter: (params) => {
-        const date =
-          params.value instanceof Date ? params.value : new Date(params.value);
-        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-          return '-';
-        }
-        return date.toLocaleDateString('es-AR', {
-          timeZone: 'America/Argentina/Tucuman',
-        });
+        const raw = params.row.fecha;
+        const date = raw ? new Date(raw) : null;
+        if (!date || Number.isNaN(date.getTime())) return '-';
+        return date
+          .toLocaleDateString('es-AR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            timeZone: 'America/Argentina/Tucuman',
+          })
+          .replace(/\//g, '-');
       },
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
