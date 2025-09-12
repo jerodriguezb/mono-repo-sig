@@ -34,12 +34,18 @@ export default function HistorialComandas() {
         const { data: resp } = await api.get('/comandas/historial', {
           params: { page: pageParam, pageSize: pageSizeParam },
         });
-        const flat = (resp.data ?? []).map((c) => ({
-          ...c,
-          estadoNombre: c.codestado?.estado ?? '',
-          total: c.total ?? 0,
-          clienteNombre: c.codcli?.razonsocial,
-        }));
+        const flat = (resp.data ?? []).map((c) => {
+          const computedTotal = (c.items ?? []).reduce(
+            (s, i) => s + i.cantidad * i.monto,
+            0,
+          );
+          return {
+            ...c,
+            estadoNombre: c.codestado?.estado ?? '',
+            total: c.total ?? computedTotal,
+            clienteNombre: c.codcli?.razonsocial,
+          };
+        });
         setRows(flat);
         setPage((resp.page ?? pageParam) - 1);
         setPageSize(resp.pageSize ?? pageSizeParam);
