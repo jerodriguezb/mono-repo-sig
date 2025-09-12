@@ -137,7 +137,18 @@ router.get('/comandas/historial', asyncHandler(async (req, res) => {
       .sort({ nrodecomanda: -1 })
       .skip(skip)
       .limit(pageSize)
-      .populate(['codcli', 'codestado'])
+      .populate([
+        'codcli',
+        'codestado',
+        { path: 'items.lista' },
+        {
+          path: 'items.codprod',
+          populate: [
+            { path: 'marca' },
+            { path: 'unidaddemedida' },
+          ],
+        },
+      ])
       .lean()
       .exec(),
   ]);
