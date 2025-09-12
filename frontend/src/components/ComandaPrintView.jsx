@@ -9,7 +9,7 @@ import {
   TableCell,
 } from '@mui/material';
 
-function ComandaPrintView({ items = [], showTotal = false }) {
+function ComandaPrintView({ items = [], showTotal = false, cliente, fecha }) {
   const currencyFormatter = new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -21,8 +21,29 @@ function ComandaPrintView({ items = [], showTotal = false }) {
     return sum + precio * cantidad;
   }, 0);
 
+  const formattedDate =
+    fecha &&
+    (fecha instanceof Date ? fecha : new Date(fecha)).toLocaleDateString(
+      'es-AR',
+      {
+        timeZone: 'America/Argentina/Tucuman',
+      }
+    );
+
   return (
     <Box>
+      {(cliente || formattedDate) && (
+        <Box mb={2}>
+          {cliente && (
+            <Typography variant="subtitle2">Cliente: {cliente}</Typography>
+          )}
+          {formattedDate && (
+            <Typography variant="subtitle2">
+              Fecha: {formattedDate}
+            </Typography>
+          )}
+        </Box>
+      )}
       <Table size="small">
         <TableHead>
           <TableRow>
