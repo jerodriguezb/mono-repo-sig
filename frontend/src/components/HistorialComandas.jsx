@@ -19,28 +19,35 @@ export default function HistorialComandas() {
     currency: 'ARS',
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data: resp } = await api.get('/comandas/historial');
-      const flat = (resp.data ?? []).map((c) => ({
-        ...c,
-        estadoNombre: c.codestado?.estado ?? '',
-        total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
-        clienteNombre: c.codcli?.razonsocial,
-      }));
-      setRows(flat);
-      setTotal(resp.total ?? flat.length);
-    } catch (err) {
-      console.error('Error obteniendo comandas', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchData = useCallback(
+    async (pageParam = page + 1, pageSizeParam = pageSize) => {
+      setLoading(true);
+      try {
+        const { data: resp } = await api.get('/comandas/historial', {
+          params: { page: pageParam, pageSize: pageSizeParam },
+        });
+        const flat = (resp.data ?? []).map((c) => ({
+          ...c,
+          estadoNombre: c.codestado?.estado ?? '',
+          total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
+          clienteNombre: c.codcli?.razonsocial,
+        }));
+        setRows(flat);
+        setPage((resp.page ?? pageParam) - 1);
+        setPageSize(resp.pageSize ?? pageSizeParam);
+        setTotal(resp.total ?? flat.length);
+      } catch (err) {
+        console.error('Error obteniendo comandas', err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page, pageSize]
+  );
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData(page + 1, pageSize);
+  }, [fetchData, page, pageSize]);
 
   const handleView = (row) => setSelected(row);
   const handleClose = () => setSelected(null);
