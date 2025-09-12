@@ -154,12 +154,16 @@ router.get('/comandas/historial', asyncHandler(async (req, res) => {
   ]);
 
   const totalPages = Math.ceil(total / pageSize);
-  const data = comandas.map(c => ({
-    ...c,
-    total: Array.isArray(c.items)
-      ? c.items.reduce((sum, item) => sum + item.cantidad * item.monto, 0)
-      : 0,
-  }));
+  const data = comandas.map(c => {
+    const total = Array.isArray(c.items)
+      ? c.items.reduce((sum, item) => {
+          const cantidad = Number(item.cantidad) || 0;
+          const monto = Number(item.monto) || 0;
+          return sum + cantidad * monto;
+        }, 0)
+      : 0;
+    return { ...c, total };
+  });
 
   res.json({ ok: true, page, pageSize, total, totalPages, data });
 }));
