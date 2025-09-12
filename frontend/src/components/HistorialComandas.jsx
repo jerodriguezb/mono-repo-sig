@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Typography,
+} from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import PrintIcon from '@mui/icons-material/Print';
@@ -129,11 +137,32 @@ export default function HistorialComandas() {
         getRowId={(r) => r._id}
         disableRowSelectionOnClick
       />
-      <Dialog open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
+      <Dialog fullScreen open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
         <DialogTitle>Comanda {selected?.nrodecomanda}</DialogTitle>
         <DialogContent>
           {selected && (
-            <ComandaPrintView items={toPrintItems(selected)} showTotal />
+            <>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="h6">Comanda {selected.nrodecomanda}</Typography>
+                <Typography variant="subtitle1">
+                  Cliente: {selected.codcli?.razonsocial}
+                </Typography>
+                <Typography variant="subtitle1">
+                  Fecha:{' '}
+                  {selected.fecha
+                    ? new Date(selected.fecha).toLocaleDateString('es-AR', {
+                        timeZone: 'America/Argentina/Tucuman',
+                      })
+                    : ''}
+                </Typography>
+              </Box>
+              <ComandaPrintView
+                items={toPrintItems(selected)}
+                showTotal
+                cliente={selected.codcli?.razonsocial}
+                fecha={selected.fecha}
+              />
+            </>
           )}
         </DialogContent>
         <DialogActions>
