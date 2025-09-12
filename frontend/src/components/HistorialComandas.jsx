@@ -29,7 +29,7 @@ export default function HistorialComandas() {
         const flat = (resp.data ?? []).map((c) => ({
           ...c,
           estadoNombre: c.codestado?.estado ?? '',
-          total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
+          total: c.total ?? 0,
           clienteNombre: c.codcli?.razonsocial,
         }));
         setRows(flat);
@@ -60,8 +60,8 @@ export default function HistorialComandas() {
     com.items.map((i) => ({
       codprod: i.codprod?._id ?? i.codprod,
       descripcion: i.codprod?.descripcion ?? '',
-      precio: i.monto,
-      cantidad: i.cantidad,
+      precio: Number(i.monto) || 0,
+      cantidad: Number(i.cantidad) || 0,
     }));
 
   const columns = [
