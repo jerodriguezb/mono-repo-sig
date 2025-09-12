@@ -37,7 +37,16 @@ export default function HistorialComandas() {
         const flat = (resp.data ?? []).map((c) => ({
           ...c,
           estadoNombre: c.codestado?.estado ?? '',
-          total: c.total ?? 0,
+          total:
+            Number(c.total) ||
+            (Array.isArray(c.items)
+              ? c.items.reduce(
+                  (s, i) =>
+                    s +
+                    (Number(i.cantidad) || 0) * (Number(i.monto) || 0),
+                  0,
+                )
+              : 0),
           clienteNombre: c.codcli?.razonsocial,
         }));
         setRows(flat);
@@ -96,7 +105,9 @@ export default function HistorialComandas() {
       headerName: 'Total',
       width: 120,
       type: 'number',
-      valueFormatter: (p) => currencyFormatter.format(p.value),
+      valueGetter: (p) => Number(p.value) || 0,
+      valueFormatter: ({ value }) =>
+        currencyFormatter.format(Number(value) || 0),
     },
     {
       field: 'actions',
