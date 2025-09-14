@@ -241,6 +241,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   let comandaDB;
   try {
     await session.withTransaction(async () => {
+
       const counter = await Counter.findOneAndUpdate(
         {},
         { $inc: { nrodecomanda: 1 } },
@@ -248,6 +249,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
       );
       const comanda = new Comanda({
         nrodecomanda: counter.nrodecomanda,
+
         codcli: body.codcli,
         fecha: body.fecha,
         codestado: body.codestado,
