@@ -96,7 +96,8 @@ export default function HistorialComandas() {
       headerName: 'Total',
       width: 120,
       type: 'number',
-      valueFormatter: (p) => currencyFormatter.format(p.value),
+      valueFormatter: (p) =>
+        currencyFormatter.format(Number(p.value) || 0),
     },
     {
       field: 'actions',
