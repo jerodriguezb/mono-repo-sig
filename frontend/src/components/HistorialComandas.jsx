@@ -78,18 +78,13 @@ export default function HistorialComandas() {
       field: 'fecha',
       headerName: 'Fecha',
       width: 140,
-      valueGetter: (params) => {
-        const date =
-          params.value instanceof Date ? params.value : new Date(params.value);
-        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-          return '-';
-        }
-        return date.toLocaleDateString('es-AR', {
-          timeZone: 'America/Argentina/Tucuman',
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-        });
+      valueGetter: ({ row }) => {
+        const date = new Date(row.fecha);
+        if (Number.isNaN(date.getTime())) return '-';
+        const dd = String(date.getUTCDate()).padStart(2, '0');
+        const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const yyyy = date.getUTCFullYear();
+        return `${dd}-${mm}-${yyyy}`;
       },
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
