@@ -282,6 +282,8 @@ export default function ComandasPage() {
       alert('Seleccione un cliente');
       return;
     }
+    // El número de comanda se genera en el backend mediante mongoose-sequence,
+    // por lo que no se envía desde el cliente.
     const payload = {
       codcli: clienteSel._id,
       fecha: new Date().toISOString(),

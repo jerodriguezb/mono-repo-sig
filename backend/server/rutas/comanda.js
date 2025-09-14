@@ -240,8 +240,9 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   let comandaDB;
   try {
     await session.withTransaction(async () => {
+      // El número de comanda es asignado automáticamente por el plugin
+      // mongoose-sequence; no se debe enviar desde el cliente.
       const comanda = new Comanda({
-        nrodecomanda: body.nrodecomanda,
         codcli: body.codcli,
         fecha: body.fecha,
         codestado: body.codestado,
