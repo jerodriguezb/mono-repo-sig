@@ -22,11 +22,6 @@ export default function HistorialComandas() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
 
-  const currencyFormatter = new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-  });
-
   const fetchData = useCallback(
     async (pageParam = page + 1, pageSizeParam = pageSize) => {
       setLoading(true);
@@ -94,13 +89,6 @@ export default function HistorialComandas() {
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
     { field: 'estadoNombre', headerName: 'Estado', width: 120 },
-    {
-      field: 'total',
-      headerName: 'Total',
-      width: 120,
-      type: 'number',
-      valueFormatter: (p) => currencyFormatter.format(p.value),
-    },
     {
       field: 'actions',
       type: 'actions',
