@@ -73,18 +73,17 @@ export default function HistorialComandas() {
       field: 'fecha',
       headerName: 'Fecha',
       width: 140,
-      valueGetter: (params) => {
-        const date =
-          params.value instanceof Date ? params.value : new Date(params.value);
-        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-          return '-';
-        }
-        return date.toLocaleDateString('es-AR', {
-          timeZone: 'America/Argentina/Tucuman',
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-        });
+      renderCell: (params) => {
+        const iso = params.value;
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '-';
+        // Tomar la fecha en UTC para evitar saltos por zona horaria del navegador
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const year = d.getUTCFullYear();
+        const formatted = `${day}-${month}-${year}`;
+        // Usar <time> para accesibilidad
+        return <time dateTime={iso}>{formatted}</time>;
       },
     },
     { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
@@ -141,9 +140,13 @@ export default function HistorialComandas() {
                 <Typography variant="subtitle1">
                   Fecha:{' '}
                   {selected.fecha
-                    ? new Date(selected.fecha).toLocaleDateString('es-AR', {
-                        timeZone: 'America/Argentina/Tucuman',
-                      })
+                    ? (() => {
+                        const d = new Date(selected.fecha);
+                        const dd = String(d.getUTCDate()).padStart(2, '0');
+                        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+                        const yyyy = d.getUTCFullYear();
+                        return `${dd}-${mm}-${yyyy}`;
+                      })()
                     : ''}
                 </Typography>
               </Box>
