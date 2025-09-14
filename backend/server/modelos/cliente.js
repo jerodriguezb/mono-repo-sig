@@ -1,7 +1,5 @@
 const mongoose = require("mongoose");
 const uniqueValidator = require("mongoose-unique-validator");
-const autoIncrement = require("mongoose-auto-increment");
-
 const AutoIncrement = require("mongoose-sequence")(mongoose);
 let Schema = mongoose.Schema;
 
