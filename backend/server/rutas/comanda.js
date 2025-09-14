@@ -4,6 +4,9 @@
 
 const express = require('express');
 const Comanda = require('../modelos/comanda');
+const Producserv = require('../modelos/producserv');
+const Stock = require('../modelos/stock');
+const Tipomovimiento = require('../modelos/tipomovimiento');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -121,7 +124,52 @@ router.get('/comandaspreparadas', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 6. COMANDA POR ID -------------------------------------------------------------
+// 6. HISTORIAL DE COMANDAS --------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/historial', asyncHandler(async (req, res) => {
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const pageSize = Math.max(toNumber(req.query.pageSize, 10), 1);
+  const skip = (page - 1) * pageSize;
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(),
+    Comanda.find()
+      .sort({ nrodecomanda: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .populate([
+        'codcli',
+        'codestado',
+        { path: 'items.lista' },
+        {
+          path: 'items.codprod',
+          populate: [
+            { path: 'marca' },
+            { path: 'unidaddemedida' },
+          ],
+        },
+      ])
+      .lean()
+      .exec(),
+  ]);
+
+  const totalPages = Math.ceil(total / pageSize);
+  const data = comandas.map(c => {
+    const total = Array.isArray(c.items)
+      ? c.items.reduce((sum, item) => {
+          const cantidad = Number(item.cantidad) || 0;
+          const monto = Number(item.monto) || 0;
+          return sum + cantidad * monto;
+        }, 0)
+      : 0;
+    return { ...c, total };
+  });
+
+  res.json({ ok: true, page, pageSize, total, totalPages, data });
+}));
+
+// -----------------------------------------------------------------------------
+// 7. COMANDA POR ID -------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandas/:id', asyncHandler(async (req, res) => {
   const comanda = await Comanda.findById(req.params.id).populate(commonPopulate).lean().exec();
@@ -130,7 +178,7 @@ router.get('/comandas/:id', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 7. FILTRAR POR RANGO DE FECHAS ------------------------------------------------
+// 8. FILTRAR POR RANGO DE FECHAS ------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandasnro', asyncHandler(async (req, res) => {
   const { fechaDesde, fechaHasta } = req.query;
@@ -144,7 +192,7 @@ router.get('/comandasnro', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 8. COMANDAS PARA INFORMES -----------------------------------------------------
+// 9. COMANDAS PARA INFORMES -----------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandasinformes', asyncHandler(async (req, res) => {
   const { fechaDesde, fechaHasta, limite = 1000 } = req.query;
@@ -158,31 +206,80 @@ router.get('/comandasinformes', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
-// 9. CREAR COMANDA --------------------------------------------------------------
+// 10. CREAR COMANDA --------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.post('/comandas',  asyncHandler(async (req, res) => {
   const body = req.body;
   if (!Array.isArray(body.items) || body.items.length === 0) {
     return res.status(400).json({ ok: false, err: { message: 'La comanda debe incluir al menos un ítem' } });
   }
-  const comanda = new Comanda({
-    nrodecomanda: body.nrodecomanda,
-    codcli: body.codcli,
-    fecha: body.fecha,
-    codestado: body.codestado,
-    camion: body.camion,
-    fechadeentrega: body.fechadeentrega,
-    usuario: body.usuario,
-    camionero: body.camionero,
-    activo: body.activo,
-    items: body.items,
-  });
-  const comandaDB = await comanda.save();
-  res.json({ ok: true, comanda: comandaDB });
+  const faltantes = [];
+  for (const item of body.items) {
+    const prod = await Producserv.findById(item.codprod).select('descripcion stkactual').lean().exec();
+    if (!prod || prod.stkactual - item.cantidad < 0) {
+      faltantes.push({
+        codprod: item.codprod,
+        descripcion: prod ? prod.descripcion : 'Producto no encontrado',
+        stkactual: prod ? prod.stkactual : 0,
+        solicitado: item.cantidad,
+      });
+    }
+  }
+  if (faltantes.length) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'Stock insuficiente para algunos productos', productos: faltantes },
+    });
+  }
+  const tipomovVenta = await Tipomovimiento.findOne({ codmov: 2 }).exec();
+  if (!tipomovVenta) {
+    return res.status(500).json({ ok: false, err: { message: 'Tipo de movimiento VENTA no encontrado' } });
+  }
+
+  const session = await Comanda.startSession();
+  let comandaDB;
+  try {
+    await session.withTransaction(async () => {
+      const comanda = new Comanda({
+        nrodecomanda: body.nrodecomanda,
+        codcli: body.codcli,
+        fecha: body.fecha,
+        codestado: body.codestado,
+        camion: body.camion,
+        fechadeentrega: body.fechadeentrega,
+        usuario: body.usuario,
+        camionero: body.camionero,
+        activo: body.activo,
+        items: body.items,
+      });
+      comandaDB = await comanda.save({ session });
+      for (const item of body.items) {
+        await Producserv.updateOne(
+          { _id: item.codprod },
+          { $inc: { stkactual: -item.cantidad } },
+          { session }
+        );
+      }
+      for (const item of body.items) {
+        const movStock = new Stock({
+          nrodecomanda: comandaDB.nrodecomanda,
+          codprod: item.codprod,
+          movimiento: tipomovVenta._id,
+          cantidad: item.cantidad,
+          fecha: body.fecha,
+          usuario: body.usuario,
+        });
+        await movStock.save({ session });
+      }
+    });
+    return res.json({ ok: true, comanda: comandaDB });
+  } finally {
+    session.endSession();
+  }
 }));
 
 // -----------------------------------------------------------------------------
-// 10. ACTUALIZAR COMANDA --------------------------------------------------------
+// 11. ACTUALIZAR COMANDA --------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
   const comandaDB = await Comanda.findByIdAndUpdate(req.params.id, req.body, {
@@ -195,7 +292,7 @@ router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler
 }));
 
 // -----------------------------------------------------------------------------
-// 11. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
+// 12. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
 // -----------------------------------------------------------------------------
 router.delete('/comandas/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
   const comandaBorrada = await Comanda.findByIdAndUpdate(req.params.id, { activo: false }, { new: true })

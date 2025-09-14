@@ -20,13 +20,13 @@ import {
   DialogContent,
   DialogActions,
   CircularProgress,
-  Snackbar,
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import ProductoItem from '../components/ProductoItem.jsx';
 import ResumenComanda from '../components/ResumenComanda.jsx';
 import ComandaPrintView from '../components/ComandaPrintView.jsx';
+import MissingProductsDialog from '../components/MissingProductsDialog.jsx';
 import api from '../api/axios.js';
 
 const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
@@ -53,6 +53,8 @@ export default function ComandasPage() {
   const [focusedProdId, setFocusedProdId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [missingProducts, setMissingProducts] = useState([]);
+  const [stockError, setStockError] = useState('');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [savedComanda, setSavedComanda] = useState(null);
   const navigate = useNavigate();
@@ -304,6 +306,8 @@ export default function ComandasPage() {
       setPage(1);
     } catch (err) {
       console.error('Error confirmando comanda', err);
+      const productosErr = err?.response?.data?.err?.productos || [];
+      setMissingProducts(productosErr);
       setSaveError(true);
     } finally {
       setIsSaving(false);
@@ -312,12 +316,15 @@ export default function ComandasPage() {
 
   const handlePrintClick = () => {
     setSavedComanda(null);
+    setMissingProducts([]);
+    setSaveError(false);
     setPrintDialogOpen(true);
     saveComanda();
   };
 
   const handleRetry = () => {
     setSaveError(false);
+    setMissingProducts([]);
     saveComanda();
   };
 
@@ -330,6 +337,10 @@ export default function ComandasPage() {
   const handleFinish = () => {
     setPrintDialogOpen(false);
     navigate('/historial-comandas');
+  };
+
+  const handleStockError = (msg) => {
+    setStockError(msg || '');
   };
 
   return (
@@ -493,11 +504,15 @@ export default function ComandasPage() {
                 listas={listas}
                 dispatch={dispatch}
                 clienteSel={clienteSel}
+                onStockError={handleStockError}
               />
             </motion.div>
           )}
         </AnimatePresence>
       </Stack>
+      {stockError && (
+        <Typography color="error">{stockError}</Typography>
+      )}
       <Button
         variant="contained"
         onClick={handlePrintClick}
@@ -542,20 +557,11 @@ export default function ComandasPage() {
         </DialogActions>
       </Dialog>
 
-      <Snackbar
+      <MissingProductsDialog
         open={saveError}
-        onClose={() => setSaveError(false)}
-        message="No se pudo grabar la comanda. Intente nuevamente."
-        action={
-          <>
-            <Button color="secondary" size="small" onClick={handleRetry}>
-              Reintentar
-            </Button>
-            <Button color="secondary" size="small" onClick={handleCancel}>
-              Cancelar
-            </Button>
-          </>
-        }
+        products={missingProducts}
+        onRetry={handleRetry}
+        onCancel={handleCancel}
       />
     </Stack>
   );

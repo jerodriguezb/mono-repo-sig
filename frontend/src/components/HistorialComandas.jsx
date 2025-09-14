@@ -1,60 +1,59 @@
-import React, { useEffect, useState } from 'react';
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Typography,
+} from '@mui/material';
 import { DataGrid, GridActionsCellItem } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import EditIcon from '@mui/icons-material/Edit';
-import CancelIcon from '@mui/icons-material/Cancel';
 import PrintIcon from '@mui/icons-material/Print';
 import api from '../api/axios.js';
 import ComandaPrintView from './ComandaPrintView.jsx';
-import { useNavigate } from 'react-router-dom';
-
-const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
 
 export default function HistorialComandas() {
   const [rows, setRows] = useState([]);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
-  const navigate = useNavigate();
 
-  const currencyFormatter = new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-  });
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/comandas');
-      const flat = (data.comandas ?? []).map((c) => ({
-        ...c,
-        estadoNombre: c.codestado?.estado ?? '',
-        total: c.items.reduce((sum, i) => sum + i.cantidad * i.monto, 0),
-      }));
-      setRows(flat);
-    } catch (err) {
-      console.error('Error obteniendo comandas', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchData = useCallback(
+    async (pageParam = page + 1, pageSizeParam = pageSize) => {
+      setLoading(true);
+      try {
+        const { data: resp } = await api.get('/comandas/historial', {
+          params: { page: pageParam, pageSize: pageSizeParam },
+        });
+        const flat = (resp.data ?? []).map((c) => ({
+          ...c,
+          estadoNombre: c.codestado?.estado ?? '',
+          total: c.total ?? 0,
+          clienteNombre: c.codcli?.razonsocial,
+        }));
+        setRows(flat);
+        setPage((resp.page ?? pageParam) - 1);
+        setPageSize(resp.pageSize ?? pageSizeParam);
+        setTotal(resp.total ?? flat.length);
+      } catch (err) {
+        console.error('Error obteniendo comandas', err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page, pageSize]
+  );
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(page + 1, pageSize);
+  }, [fetchData, page, pageSize]);
 
   const handleView = (row) => setSelected(row);
   const handleClose = () => setSelected(null);
-  const handleEdit = (row) => navigate(`/comandas/${row._id}`);
-  const handleCancel = async (row) => {
-    if (!window.confirm('¿Anular comanda?')) return;
-    try {
-      await api.delete(`/comandas/${row._id}`);
-      fetchData();
-    } catch (err) {
-      console.error('Error anulando comanda', err);
-    }
-  };
   const handlePrint = (row) => {
     handleView(row);
     setTimeout(() => window.print(), 100);
@@ -64,8 +63,8 @@ export default function HistorialComandas() {
     com.items.map((i) => ({
       codprod: i.codprod?._id ?? i.codprod,
       descripcion: i.codprod?.descripcion ?? '',
-      precio: i.monto,
-      cantidad: i.cantidad,
+      precio: Number(i.monto) || 0,
+      cantidad: Number(i.cantidad) || 0,
     }));
 
   const columns = [
@@ -74,52 +73,40 @@ export default function HistorialComandas() {
       field: 'fecha',
       headerName: 'Fecha',
       width: 140,
-      valueGetter: (params) => new Date(params.value).toLocaleDateString('es-AR'),
+      renderCell: (params) => {
+        const iso = params.value;
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '-';
+        // Tomar la fecha en UTC para evitar saltos por zona horaria del navegador
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const year = d.getUTCFullYear();
+        const formatted = `${day}-${month}-${year}`;
+        // Usar <time> para accesibilidad
+        return <time dateTime={iso}>{formatted}</time>;
+      },
     },
-    { field: 'estadoNombre', headerName: 'Estado', flex: 1, minWidth: 120 },
-    {
-      field: 'total',
-      headerName: 'Total',
-      width: 120,
-      type: 'number',
-      valueFormatter: (p) => currencyFormatter.format(p.value),
-    },
+    { field: 'clienteNombre', headerName: 'Cliente', flex: 1 },
+    { field: 'estadoNombre', headerName: 'Estado', width: 120 },
     {
       field: 'actions',
       type: 'actions',
       headerName: 'Acciones',
       width: 120,
-      getActions: (params) => {
-        const actions = [
-          <GridActionsCellItem
-            key="view"
-            icon={<VisibilityIcon />}
-            label="Ver"
-            onClick={() => handleView(params.row)}
-          />, 
-          params.row.codestado?._id === ESTADO_A_PREPARAR && (
-            <GridActionsCellItem
-              key="edit"
-              icon={<EditIcon />}
-              label="Editar"
-              onClick={() => handleEdit(params.row)}
-            />
-          ),
-          <GridActionsCellItem
-            key="cancel"
-            icon={<CancelIcon />}
-            label="Anular"
-            onClick={() => handleCancel(params.row)}
-          />, 
-          <GridActionsCellItem
-            key="print"
-            icon={<PrintIcon />}
-            label="Imprimir"
-            onClick={() => handlePrint(params.row)}
-          />,
-        ];
-        return actions.filter(Boolean);
-      },
+      getActions: (params) => [
+        <GridActionsCellItem
+          key="view"
+          icon={<VisibilityIcon />}
+          label="Ver"
+          onClick={() => handleView(params.row)}
+        />,
+        <GridActionsCellItem
+          key="print"
+          icon={<PrintIcon />}
+          label="Imprimir"
+          onClick={() => handlePrint(params.row)}
+        />,
+      ],
     },
   ];
 
@@ -129,14 +116,47 @@ export default function HistorialComandas() {
         rows={rows}
         columns={columns}
         loading={loading}
+        paginationMode="server"
+        rowCount={total}
+        paginationModel={{ page, pageSize }}
+        onPaginationModelChange={(m) => {
+          setPage(m.page);
+          setPageSize(m.pageSize);
+        }}
+        initialState={{ sorting: { sortModel: [{ field: 'nrodecomanda', sort: 'desc' }] } }}
         getRowId={(r) => r._id}
         disableRowSelectionOnClick
       />
-      <Dialog open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
+      <Dialog fullScreen open={!!selected} onClose={handleClose} maxWidth="md" fullWidth>
         <DialogTitle>Comanda {selected?.nrodecomanda}</DialogTitle>
         <DialogContent>
           {selected && (
-            <ComandaPrintView items={toPrintItems(selected)} showTotal />
+            <>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="h6">Comanda {selected.nrodecomanda}</Typography>
+                <Typography variant="subtitle1">
+                  Cliente: {selected.codcli?.razonsocial}
+                </Typography>
+                <Typography variant="subtitle1">
+                  Fecha:{' '}
+                  {selected.fecha
+                    ? (() => {
+                        const d = new Date(selected.fecha);
+                        const dd = String(d.getUTCDate()).padStart(2, '0');
+                        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+                        const yyyy = d.getUTCFullYear();
+                        return `${dd}-${mm}-${yyyy}`;
+                      })()
+                    : ''}
+                </Typography>
+              </Box>
+              <ComandaPrintView
+                items={toPrintItems(selected)}
+                showTotal
+                cliente={selected.codcli?.razonsocial}
+                fecha={selected.fecha}
+              />
+            </>
           )}
         </DialogContent>
         <DialogActions>
