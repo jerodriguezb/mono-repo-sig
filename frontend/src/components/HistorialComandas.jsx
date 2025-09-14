@@ -86,6 +86,9 @@ export default function HistorialComandas() {
         }
         return date.toLocaleDateString('es-AR', {
           timeZone: 'America/Argentina/Tucuman',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
         });
       },
     },
