@@ -49,6 +49,23 @@ const normalizePrefijoInput = (prefijo) => {
   if (!/^\d{1,4}$/.test(cleaned)) return null;
   return cleaned.padStart(4, '0');
 };
+const parseNumeroDocumentoManual = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const raw = value.toString().trim();
+  if (!/^\d{1,8}$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+const parseSort = (sortRaw) => {
+  if (!sortRaw) return { fechaRegistro: -1 };
+  const [fieldRaw, dirRaw] = sortRaw.split(':');
+  const field = fieldRaw?.trim();
+  if (!field) return { fechaRegistro: -1 };
+  const direction = dirRaw?.toLowerCase() === 'asc' ? 1 : -1;
+  const allowed = new Set(['fechaRegistro', 'nroDocumento', 'secuencia', 'prefijo']);
+  return allowed.has(field) ? { [field]: direction } : { fechaRegistro: -1 };
+};
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
 const documentoPopulate = [
   {
@@ -118,6 +135,14 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const prefijo = normalizePrefijoInput(body.prefijo);
   if (prefijo === null) return badRequest(res, 'El prefijo debe ser numérico de hasta 4 dígitos.');
 
+  const nroDocumentoManual = parseNumeroDocumentoManual(body.nroDocumento);
+  if (tipo !== 'R' && nroDocumentoManual !== undefined) {
+    return badRequest(res, 'Sólo se puede asignar un número de documento manual para Remitos (tipo R).');
+  }
+  if (tipo === 'R' && body.nroDocumento !== undefined && nroDocumentoManual === null) {
+    return badRequest(res, 'El número de documento manual debe ser un entero positivo de hasta 8 dígitos.');
+  }
+
   if (!body.fechaRemito) return badRequest(res, 'La fecha de remito es obligatoria.');
 
   const proveedorId = body.proveedor;
@@ -145,6 +170,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     observaciones: body.observaciones,
   };
   if (prefijo) data.prefijo = prefijo;
+  if (tipo === 'R' && nroDocumentoManual !== undefined) {
+    data.nroDocumento = nroDocumentoManual;
+  }
 
   const documento = new Documento(data);
   const documentoDB = await documento.save();
@@ -157,7 +185,14 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 // 2. LISTAR DOCUMENTOS ----------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/documentos', [verificaToken], asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 50, tipo, proveedor, activo = 'true' } = req.query;
+  const {
+    desde = 0,
+    limite = 50,
+    tipo,
+    proveedor,
+    activo = 'true',
+    sort,
+  } = req.query;
   const query = {};
 
   if (tipo) {
@@ -180,10 +215,12 @@ router.get('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const safeSkip = Number.isFinite(desdeNumber) ? Math.max(desdeNumber, 0) : 0;
   const safeLimit = Number.isFinite(limiteNumber) ? Math.max(limiteNumber, 0) : 50;
 
+  const sortOption = parseSort(sort);
+
   const documentos = await Documento.find(query)
     .skip(safeSkip)
     .limit(safeLimit)
-    .sort({ fechaRegistro: -1 })
+    .sort(sortOption)
     .populate(documentoPopulate)
     .lean()
     .exec();
