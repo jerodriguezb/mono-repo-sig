@@ -29,41 +29,40 @@ import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import HistoryIcon from '@mui/icons-material/History';
+import DescriptionIcon from '@mui/icons-material/Description';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { useAuth } from '../context/AuthContextState.js';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
-  { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
-  { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
-  { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
+  { label: 'Clientes', path: '/clients', icon: <GroupIcon /> },
+  { label: 'Usuarios', path: '/users', icon: <PeopleAltIcon /> },
+  { label: 'Productos', path: '/products', icon: <Inventory2Icon /> },
+  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
-  { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Logística', path: '/logistics', icon: <LocalShippingIcon /> },
 ];
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [nombreUsuario, setNombreUsuario] = useState('');
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { token, userName, logout } = useAuth();
 
   /* -------- Verifica token cada render -------- */
   useEffect(() => {
-    const token = localStorage.getItem('token');
     if (!token) navigate('/login');
-
-    const storedUser = localStorage.getItem('usuario');
-    if (storedUser) setNombreUsuario(JSON.parse(storedUser));
-  }, [navigate]);
+  }, [navigate, token]);
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
   const handleLogoutConfirm = () => {
-    localStorage.clear();
+    logout();
     navigate('/login');
   };
   const handleLogoutCancel  = () => setConfirmLogoutOpen(false);
@@ -83,7 +82,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
           </Typography>
 
           <Typography variant="body1" sx={{ mr: 2 }}>
-            {nombreUsuario}
+            {userName}
           </Typography>
 
           <ThemeSelector themeName={themeName} setThemeName={setThemeName} />
