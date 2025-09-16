@@ -7,9 +7,13 @@ const { Schema } = mongoose;
 
 const ZONA_ARGENTINA = 'America/Argentina/Buenos_Aires';
 const TIPOS_DOCUMENTO = ['R', 'NR', 'AJ'];
+const CONTADOR_NRO_DOCUMENTO = 'Documento_nroDocumento';
+const CONTADOR_SECUENCIA = 'Documento_secuencia';
 
 const toArgDate = (value) => (value ? moment.tz(value, ZONA_ARGENTINA).toDate() : value);
-const padSecuencia = (value) => String(value ?? 0).padStart(8, '0');
+const padNumeroDocumento = (value, size = 8) => (value === undefined || value === null
+  ? undefined
+  : String(value).padStart(size, '0'));
 const padPrefijo = (value) => {
   if (value === undefined || value === null || value === '') return undefined;
   const str = String(value).trim();
@@ -56,11 +60,13 @@ const documentoSchema = new Schema({
       message: 'Tipo de documento inválido',
     },
   },
-  secuencia: Number,
-  NrodeDocumento: {
-    type: String,
-    unique: true,
-    index: true,
+  nroDocumento: {
+    type: Number,
+    min: [1, 'El número de documento debe ser mayor que cero'],
+  },
+  secuencia: {
+    type: Number,
+    min: [1, 'La secuencia debe ser mayor que cero'],
   },
   proveedor: {
     type: Schema.Types.ObjectId,
@@ -98,11 +104,22 @@ const documentoSchema = new Schema({
 }, {
   timestamps: false,
   versionKey: false,
+  toObject: { virtuals: true },
+  toJSON: { virtuals: true },
 });
 
 documentoSchema.plugin(AutoIncrement, {
+  id: CONTADOR_NRO_DOCUMENTO,
+  inc_field: 'nroDocumento',
+  reference_fields: ['tipo'],
+  start_seq: 1,
+});
+
+documentoSchema.plugin(AutoIncrement, {
+  id: CONTADOR_SECUENCIA,
   inc_field: 'secuencia',
   reference_fields: ['tipo'],
+  start_seq: 1,
 });
 
 documentoSchema.pre('validate', function(next) {
@@ -121,22 +138,30 @@ documentoSchema.pre('validate', function(next) {
 });
 
 documentoSchema.pre('save', function(next) {
-  const tipo = this.tipo;
-  if (!TIPOS_DOCUMENTO.includes(tipo)) {
+  if (!TIPOS_DOCUMENTO.includes(this.tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
-  this.NrodeDocumento = `${this.prefijo}${tipo}${padSecuencia(this.secuencia)}`;
   next();
 });
 
-documentoSchema.index({ tipo: 1, secuencia: 1 }, { unique: true });
+documentoSchema.index({ tipo: 1, nroDocumento: 1 }, { unique: true });
 
 documentoSchema.statics.TIPOS_DOCUMENTO = TIPOS_DOCUMENTO;
 documentoSchema.statics.ZONA_ARGENTINA = ZONA_ARGENTINA;
 
+documentoSchema.virtual('numeroVisible').get(function numeroVisible() {
+  if (typeof this.nroDocumento !== 'number') return null;
+  const padded = padNumeroDocumento(this.nroDocumento, 4);
+  return `${this.tipo ?? ''}${padded}`;
+});
+
+documentoSchema.virtual('prefijoVisible').get(function prefijoVisible() {
+  if (!this.prefijo) return null;
+  return `${this.tipo ?? ''}${this.prefijo}`;
+});
+
 documentoSchema.methods.toJSON = function() {
-  const obj = this.toObject();
-  return obj;
+  return this.toObject();
 };
 
 module.exports = mongoose.model('Documento', documentoSchema);
