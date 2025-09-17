@@ -47,7 +47,7 @@ export default function ComandasPage() {
   const clienteAbort = useRef(null);
   const clienteTimer = useRef(null);
   const [page, setPage] = useState(1); // 1-based
-  const [pageSize] = useState(10);
+  const [pageSize] = useState(8);
   const [total, setTotal] = useState(0);
   const [viewMode, setViewMode] = useState('grid');
   const [focusedProdId, setFocusedProdId] = useState(null);
