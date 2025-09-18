@@ -29,6 +29,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import HistoryIcon from '@mui/icons-material/History';
+import DescriptionIcon from '@mui/icons-material/Description';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -42,6 +43,7 @@ const navItems = [
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
 ];
 
 export default function DashboardLayout({ themeName, setThemeName }) {
