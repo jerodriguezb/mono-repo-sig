@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import App from './App.jsx';
 import { themes } from './themes.js';
+import { AuthProvider } from './context/AuthContext.jsx';
 
 export const Root = () => {
   // Intentamos recuperar el tema guardado, si no existe usamos 'blue'
@@ -18,10 +19,12 @@ export const Root = () => {
 
   return (
     <BrowserRouter>
-      <ThemeProvider theme={themes[themeName]}>
-        <CssBaseline />
-        <App themeName={themeName} setThemeName={setThemeName} />
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider theme={themes[themeName]}>
+          <CssBaseline />
+          <App themeName={themeName} setThemeName={setThemeName} />
+        </ThemeProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 };
