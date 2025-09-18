@@ -6,6 +6,7 @@ import ComandasPage from './pages/ComandasPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
+import DocumentsPage from './pages/DocumentsPage.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -23,6 +24,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/products" element={<ProductsPage />} />
         <Route path="comandas" element={<ComandasPage />} />
         <Route path="/historial-comandas" element={<HistorialComandas />} />
+        <Route path="documents" element={<DocumentsPage />} />
         {/* Otras rutas aquí */}
       </Route>
     </Routes>

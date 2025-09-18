@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { postLogin } from "../api/rutaUsuarios"; // tu helper original
+import { useAuth } from "../context/AuthContext.jsx";
 // import fondoLogo from "../assets/logo.png"; // 🖼 asegurate de tener esta imagen en src/assets/
 
 const LoginForm = () => {
@@ -16,16 +17,16 @@ const LoginForm = () => {
   const [formValues, setFormValues] = useState({ email: "", password: "" });
   const [user, setUser] = useState({ data: { ok: null }, loading: false });
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("token"));
+  const { setUser: setAuthUser } = useAuth();
 
   useEffect(() => {
     if (user.data.ok) {
       localStorage.setItem("token", user.data.token);
-      localStorage.setItem("id", user.data.usuario._id);
-      localStorage.setItem("usuario", JSON.stringify(user.data.usuario.nombres));
+      setAuthUser({ id: user.data.usuario._id, nombres: user.data.usuario.nombres });
       setIsLoggedIn(true);
       navigate("/");
     }
-  }, [user, navigate]);
+  }, [user, navigate, setAuthUser]);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -36,9 +37,10 @@ const LoginForm = () => {
 
   const logout = useCallback(() => {
     localStorage.clear();
+    setAuthUser(null);
     setIsLoggedIn(false);
     navigate("/login");
-  }, [navigate]);
+  }, [navigate, setAuthUser]);
 
   const resetTimer = useCallback(() => {
     clearTimeout(window.inactivityTimeout);
