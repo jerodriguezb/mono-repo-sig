@@ -59,7 +59,7 @@ const documentoSchema = new Schema({
   secuencia: Number,
   NrodeDocumento: {
     type: String,
-    unique: true,
+    // unique: true,
     index: true,
   },
   proveedor: {
@@ -102,7 +102,7 @@ const documentoSchema = new Schema({
 
 documentoSchema.plugin(AutoIncrement, {
   inc_field: 'secuencia',
-  reference_fields: ['tipo'],
+  // reference_fields: ['tipo'],
 });
 
 documentoSchema.pre('validate', function(next) {
