@@ -8,6 +8,7 @@ const { verificaToken, verificaAdmin_role } = require('../middlewares/autenticac
 const router = express.Router();
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const toNumber = (v, d) => Number(v ?? d);
+const escapeRegExp = (value) => value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 const producPopulate = ['rubro', 'marca', 'unidaddemedida'];
 
 /** LISTAR (por defecto, sólo activos) */
@@ -121,6 +122,62 @@ router.get('/producservs', asyncHandler(async (req, res) => {
 
   const cantidad = await Producserv.countDocuments(q);
   res.json({ ok: true, producservs, cantidad });
+}));
+
+/** BÚSQUEDA RÁPIDA PARA LOOKUP */
+router.get('/producservs/lookup', asyncHandler(async (req, res) => {
+  const rawTerm = typeof req.query.q === 'string' ? req.query.q : '';
+  const term = rawTerm.trim();
+
+  if (!term) {
+    return res.status(400).json({ ok: false, err: { message: 'El parámetro q es obligatorio.' } });
+  }
+
+  if (term.length < 3) {
+    return res.status(400).json({ ok: false, err: { message: 'Ingresá al menos 3 caracteres para buscar.' } });
+  }
+
+  const limitCandidate = toNumber(req.query.limit, 20);
+  const safeLimit = Number.isFinite(limitCandidate) ? limitCandidate : 20;
+  const limit = Math.min(Math.max(safeLimit, 1), 20);
+
+  const escaped = escapeRegExp(term);
+  const prefixRegex = new RegExp(`^${escaped}`, 'i');
+  const containsRegex = new RegExp(escaped, 'i');
+
+  const projection = { codprod: 1, descripcion: 1, stkactual: 1 };
+  const seen = new Set();
+  const results = [];
+
+  const runQuery = async (field, regex, sortField) => {
+    if (results.length >= limit) return;
+    const docs = await Producserv.find({ activo: true, [field]: { $regex: regex } })
+      .sort({ [sortField]: 1 })
+      .limit(limit - results.length)
+      .select(projection)
+      .lean()
+      .exec();
+
+    docs.forEach((doc) => {
+      const id = doc?._id?.toString();
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      results.push(doc);
+    });
+  };
+
+  await runQuery('codprod', prefixRegex, 'codprod');
+  await runQuery('descripcion', prefixRegex, 'descripcion');
+
+  if (results.length < limit) {
+    await runQuery('codprod', containsRegex, 'codprod');
+  }
+
+  if (results.length < limit) {
+    await runQuery('descripcion', containsRegex, 'descripcion');
+  }
+
+  res.json({ ok: true, producservs: results.slice(0, limit) });
 }));
 
 /** OBTENER POR ID */

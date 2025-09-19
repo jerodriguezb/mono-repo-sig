@@ -3,12 +3,16 @@ import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Divider,
   FormControl,
   FormHelperText,
   Grid,
   IconButton,
   InputLabel,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
   OutlinedInput,
   Paper,
@@ -72,8 +76,10 @@ export default function DocumentsPage() {
 
   const [providers, setProviders] = useState([]);
   const [providersLoading, setProvidersLoading] = useState(false);
-  const [products, setProducts] = useState([]);
-  const [productsLoading, setProductsLoading] = useState(false);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
+  const [productCache, setProductCache] = useState({});
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [documents, setDocuments] = useState([]);
@@ -105,6 +111,7 @@ export default function DocumentsPage() {
     [selectedType],
   );
   const previousBaseTypeRef = useRef(baseType);
+  const productSearchRequestIdRef = useRef(0);
 
   const isNumeroSugeridoValid = useMemo(() => {
     if (baseType !== 'R') return true;
@@ -140,19 +147,6 @@ export default function DocumentsPage() {
       updateDataError('providers', parseApiError(error, 'No se pudieron cargar los proveedores'));
     } finally {
       setProvidersLoading(false);
-    }
-  }, [updateDataError]);
-
-  const fetchProducts = useCallback(async () => {
-    setProductsLoading(true);
-    try {
-      const { data } = await api.get('/producservs', { params: { limite: 100 } });
-      setProducts(data?.producservs ?? []);
-      updateDataError('products', '');
-    } catch (error) {
-      updateDataError('products', parseApiError(error, 'No se pudieron cargar los productos'));
-    } finally {
-      setProductsLoading(false);
     }
   }, [updateDataError]);
 
@@ -203,10 +197,61 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     fetchProviders();
-    fetchProducts();
     fetchUsers();
     fetchDocuments();
-  }, [fetchProviders, fetchProducts, fetchUsers, fetchDocuments]);
+  }, [fetchProviders, fetchUsers, fetchDocuments]);
+
+  useEffect(() => {
+    const trimmedTerm = productSearchTerm.trim();
+    const requestId = productSearchRequestIdRef.current + 1;
+    productSearchRequestIdRef.current = requestId;
+
+    if (trimmedTerm.length < 3) {
+      setProductSearchLoading(false);
+      setProductSearchResults([]);
+      updateDataError('products', '');
+      return;
+    }
+
+    setProductSearchLoading(true);
+    const handler = setTimeout(() => {
+      api
+        .get('/producservs/lookup', { params: { q: trimmedTerm, limit: 20 } })
+        .then(({ data }) => {
+          if (productSearchRequestIdRef.current !== requestId) return;
+
+          const results = Array.isArray(data?.producservs)
+            ? data.producservs.slice(0, 20)
+            : [];
+
+          setProductSearchResults(results);
+          setProductCache((prev) => {
+            const next = { ...prev };
+            results.forEach((product) => {
+              if (!product?._id) return;
+              const id = product._id;
+              next[id] = { ...(prev[id] ?? {}), ...product };
+            });
+            return next;
+          });
+          updateDataError('products', '');
+        })
+        .catch((error) => {
+          if (productSearchRequestIdRef.current !== requestId) return;
+          setProductSearchResults([]);
+          updateDataError('products', parseApiError(error, 'No se pudieron cargar los productos'));
+        })
+        .finally(() => {
+          if (productSearchRequestIdRef.current === requestId) {
+            setProductSearchLoading(false);
+          }
+        });
+    }, 350);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [productSearchTerm, updateDataError]);
 
   useEffect(() => {
     if (selectedUserFromStorage && users.length > 0 && !usuarioResponsable) {
@@ -325,6 +370,18 @@ export default function DocumentsPage() {
     setPrefijo(value);
   };
 
+  const handleProductSearchChange = (event) => {
+    setProductSearchTerm(event.target.value ?? '');
+  };
+
+  const handleSelectProductFromLookup = (product) => {
+    if (!product?._id) return;
+    const id = product._id;
+    setItemDraft((prev) => ({ ...prev, productoId: id }));
+    setProductCache((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...product } }));
+    setItemDraftError('');
+  };
+
   const handleItemDraftChange = (event) => {
     const { name, value } = event.target;
     if (name === 'cantidad') {
@@ -368,11 +425,15 @@ export default function DocumentsPage() {
       return;
     }
     setItemDraftError('');
-    const product = products.find((prod) => prod._id === productId);
+    const product = productCache[productId] ?? productSearchResults.find((prod) => prod._id === productId);
     if (!product) {
       setAlert({ open: true, severity: 'error', message: 'El producto seleccionado no está disponible.' });
       return;
     }
+    setProductCache((prev) => ({
+      ...prev,
+      [productId]: { ...(prev[productId] ?? {}), ...product },
+    }));
     const draftItem = {
       productoId: productId,
       cantidad: quantity,
@@ -407,6 +468,15 @@ export default function DocumentsPage() {
     setItemDraft({ productoId: item.productoId, cantidad: String(item.cantidad ?? '') });
     setEditingIndex(index);
     setItemDraftError('');
+    setProductCache((prev) => ({
+      ...prev,
+      [item.productoId]: {
+        ...(prev[item.productoId] ?? {}),
+        codprod: item.codprod,
+        descripcion: item.descripcion,
+        stkactual: item.stkactual,
+      },
+    }));
   };
 
   const handleRemoveItem = (index) => {
@@ -430,6 +500,8 @@ export default function DocumentsPage() {
     setNumeroSugeridoError('');
     setAjusteOperacion('decrement');
     updateDataError('sequence', '');
+    setProductSearchTerm('');
+    setProductSearchResults([]);
   };
 
   const closeAlert = (_, reason) => {
@@ -498,7 +570,7 @@ export default function DocumentsPage() {
 
       items.forEach((item) => {
         if (updatesMap.has(item.productoId)) return;
-        const product = products.find((prod) => prod._id === item.productoId);
+        const product = productCache[item.productoId];
         const currentStock = Number(product?.stkactual ?? item.stkactual ?? 0);
         const adjustedCantidad = Number(item.cantidad ?? 0);
         const newStock =
@@ -509,10 +581,17 @@ export default function DocumentsPage() {
       });
 
       if (updatesMap.size > 0) {
-        setProducts((prevProducts) =>
-          prevProducts.map((prod) =>
-            updatesMap.has(prod._id) ? { ...prod, stkactual: updatesMap.get(prod._id) } : prod,
-          ),
+        setProductCache((prev) => {
+          const next = { ...prev };
+          updatesMap.forEach((value, key) => {
+            if (next[key]) {
+              next[key] = { ...next[key], stkactual: value };
+            }
+          });
+          return next;
+        });
+        setProductSearchResults((prev) =>
+          prev.map((prod) => (updatesMap.has(prod._id) ? { ...prod, stkactual: updatesMap.get(prod._id) } : prod)),
         );
       }
 
@@ -548,6 +627,11 @@ export default function DocumentsPage() {
   const totalCantidad = useMemo(
     () => items.reduce((acc, item) => acc + Number(item.cantidad ?? 0), 0),
     [items],
+  );
+
+  const selectedProduct = useMemo(
+    () => (itemDraft.productoId ? productCache[itemDraft.productoId] ?? null : null),
+    [itemDraft.productoId, productCache],
   );
 
   const renderStepContent = () => {
@@ -693,28 +777,69 @@ export default function DocumentsPage() {
             <Stack spacing={3}>
               <Grid container spacing={2} alignItems="center">
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel id="producto-label">Producto</InputLabel>
-                    <Select
-                      labelId="producto-label"
-                      label="Producto"
-                      name="productoId"
-                      value={itemDraft.productoId}
-                      onChange={handleItemDraftChange}
-                      disabled={productsLoading}
-                    >
-                      <MenuItem value="" disabled>
-                        Seleccione un producto
-                      </MenuItem>
-                      {products.map((product) => (
-                        <MenuItem key={product._id} value={product._id}>
-                          {product.descripcion}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    {productsLoading && <FormHelperText>Cargando productos...</FormHelperText>}
+                  <Stack spacing={1}>
+                    <TextField
+                      label="Buscar producto"
+                      value={productSearchTerm}
+                      onChange={handleProductSearchChange}
+                      placeholder="Ingresá al menos 3 caracteres"
+                      fullWidth
+                      autoComplete="off"
+                    />
+                    {productSearchLoading && (
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <CircularProgress size={16} />
+                        <Typography variant="caption" color="text.secondary">
+                          Buscando productos...
+                        </Typography>
+                      </Stack>
+                    )}
                     {dataError.products && <FormHelperText error>{dataError.products}</FormHelperText>}
-                  </FormControl>
+                    {!dataError.products &&
+                      productSearchTerm.trim().length > 0 &&
+                      productSearchTerm.trim().length < 3 && (
+                        <FormHelperText>Escribí al menos 3 caracteres para buscar.</FormHelperText>
+                      )}
+                    {(productSearchTerm.trim().length >= 3 || productSearchResults.length > 0) && (
+                      <Paper variant="outlined" sx={{ maxHeight: 240, overflowY: 'auto' }}>
+                        {productSearchResults.length === 0 && !productSearchLoading ? (
+                          <Box sx={{ p: 2 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              No se encontraron productos para la búsqueda.
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <List dense disablePadding>
+                            {productSearchResults.slice(0, 20).map((product) => {
+                              const primaryLabel = product.codprod
+                                ? `${product.codprod} – ${product.descripcion}`
+                                : product.descripcion;
+                              return (
+                                <ListItemButton
+                                  key={product._id}
+                                  onClick={() => handleSelectProductFromLookup(product)}
+                                  selected={itemDraft.productoId === product._id}
+                                >
+                                  <ListItemText
+                                    primary={primaryLabel}
+                                    secondary={`Stock actual: ${Number(product.stkactual ?? 0)}`}
+                                  />
+                                </ListItemButton>
+                              );
+                            })}
+                          </List>
+                        )}
+                      </Paper>
+                    )}
+                    {selectedProduct && (
+                      <Typography variant="body2" color="text.secondary">
+                        Seleccionaste:{' '}
+                        {selectedProduct.codprod
+                          ? `${selectedProduct.codprod} – ${selectedProduct.descripcion}`
+                          : selectedProduct.descripcion}
+                      </Typography>
+                    )}
+                  </Stack>
                 </Grid>
                 <Grid item xs={12} md={3}>
                   <TextField
