@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -101,6 +101,7 @@ export default function DocumentsPage() {
     () => (selectedType.startsWith('AJ') ? 'AJ' : selectedType),
     [selectedType],
   );
+  const previousBaseTypeRef = useRef(baseType);
 
   const canProceedStep0 = Boolean(selectedType && selectedProvider);
   const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4);
@@ -198,10 +199,13 @@ export default function DocumentsPage() {
   }, [users, usuarioResponsable, selectedUserFromStorage]);
 
   useEffect(() => {
+    const previousBaseType = previousBaseTypeRef.current;
+
     if (!baseType) {
       setNumeroSugerido('');
       setNextSequence(null);
       setAjusteOperacion('decrement');
+      previousBaseTypeRef.current = baseType;
       return;
     }
 
@@ -219,9 +223,13 @@ export default function DocumentsPage() {
       fetchNextSequenceForType(baseType, nextPrefijo).catch(() => {});
     } else {
       setNextSequence(null);
-      setNumeroSugerido('');
       updateDataError('sequence', '');
+      if (baseType !== 'R' || previousBaseType !== 'R') {
+        setNumeroSugerido('');
+      }
     }
+
+    previousBaseTypeRef.current = baseType;
   }, [baseType, selectedType, prefijo, fetchNextSequenceForType, updateDataError]);
 
   useEffect(() => {
@@ -245,6 +253,12 @@ export default function DocumentsPage() {
 
   const handleBack = () => {
     setActiveStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handleNumeroSugeridoChange = (event) => {
+    if (baseType === 'R') {
+      setNumeroSugerido(event.target.value);
+    }
   };
 
   const handlePrefijoChange = (event) => {
@@ -407,9 +421,12 @@ export default function DocumentsPage() {
           message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${stockErrors.join(' | ')}`,
         });
       } else {
+        const manualNumber = baseType === 'R' ? numeroSugerido.trim() : '';
         const successMessage = sequenceInfo
           ? `Documento ${sequenceInfo.numero} registrado correctamente.`
-          : 'Documento registrado correctamente.';
+          : manualNumber
+            ? `Documento ${manualNumber} registrado correctamente.`
+            : 'Documento registrado correctamente.';
         setAlert({ open: true, severity: 'success', message: successMessage });
         resetForm();
       }
@@ -521,8 +538,9 @@ export default function DocumentsPage() {
                 <TextField
                   label="Número sugerido"
                   value={numeroSugerido}
+                  onChange={handleNumeroSugeridoChange}
                   fullWidth
-                  InputProps={{ readOnly: true }}
+                  InputProps={{ readOnly: baseType !== 'R' }}
                   helperText={dataError.sequence || 'Se consulta el backend antes de grabar.'}
                 />
               </Grid>
