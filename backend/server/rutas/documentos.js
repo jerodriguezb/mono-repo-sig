@@ -49,6 +49,16 @@ const normalizePrefijoInput = (prefijo) => {
   if (!/^\d{1,4}$/.test(cleaned)) return null;
   return cleaned.padStart(4, '0');
 };
+const padSecuencia = (value) => String(value ?? 0).padStart(8, '0');
+const normalizeRemitoNumber = (numero) => {
+  if (numero === undefined || numero === null) return null;
+  const trimmed = numero.toString().trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return padSecuencia(parsed);
+};
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
 const documentoPopulate = [
   {
@@ -129,6 +139,20 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const userId = req.usuario?._id;
   if (!userId) return res.status(401).json({ ok: false, err: { message: 'Usuario no autenticado' } });
 
+  let remitoNumero = null;
+  if (tipo === 'R') {
+    const numeroCrudo =
+      body.nroDocumento ??
+      body.numeroSugerido ??
+      body.numero ??
+      body.numeroRemito ??
+      null;
+    remitoNumero = normalizeRemitoNumber(numeroCrudo);
+    if (!remitoNumero) {
+      return badRequest(res, 'El número de remito es obligatorio y debe ser un entero positivo.');
+    }
+  }
+
   let items;
   try {
     items = await parseItems(body.items);
@@ -136,6 +160,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
   }
 
+  const resolvedPrefijo = prefijo || '0001';
   const data = {
     tipo,
     proveedor: proveedorId,
@@ -145,6 +170,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     observaciones: body.observaciones,
   };
   if (prefijo) data.prefijo = prefijo;
+  if (tipo === 'R') {
+    data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
+  }
 
   const documento = new Documento(data);
   const documentoDB = await documento.save();

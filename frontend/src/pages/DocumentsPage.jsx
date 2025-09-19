@@ -88,6 +88,7 @@ export default function DocumentsPage() {
 
   const [nextSequence, setNextSequence] = useState(null);
   const [numeroSugerido, setNumeroSugerido] = useState('');
+  const [numeroSugeridoError, setNumeroSugeridoError] = useState('');
   const [ajusteOperacion, setAjusteOperacion] = useState('decrement');
 
   const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: 1 });
@@ -103,8 +104,15 @@ export default function DocumentsPage() {
   );
   const previousBaseTypeRef = useRef(baseType);
 
+  const isNumeroSugeridoValid = useMemo(() => {
+    if (baseType !== 'R') return true;
+    if (!numeroSugerido) return false;
+    const numericValue = Number(numeroSugerido);
+    return Number.isSafeInteger(numericValue) && numericValue > 0 && !numeroSugeridoError;
+  }, [baseType, numeroSugerido, numeroSugeridoError]);
+
   const canProceedStep0 = Boolean(selectedType && selectedProvider);
-  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4);
+  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4 && isNumeroSugeridoValid);
   const canSubmit = items.length > 0 && canProceedStep1;
 
   const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
@@ -220,12 +228,17 @@ export default function DocumentsPage() {
     if (baseType === 'NR' || baseType === 'AJ') {
       const nextPrefijo = '0001';
       if (prefijo !== nextPrefijo) setPrefijo(nextPrefijo);
-      fetchNextSequenceForType(baseType, nextPrefijo).catch(() => {});
+      fetchNextSequenceForType(baseType, nextPrefijo)
+        .then(() => {
+          setNumeroSugeridoError('');
+        })
+        .catch(() => {});
     } else {
       setNextSequence(null);
       updateDataError('sequence', '');
       if (baseType !== 'R' || previousBaseType !== 'R') {
         setNumeroSugerido('');
+        setNumeroSugeridoError('');
       }
     }
 
@@ -239,13 +252,36 @@ export default function DocumentsPage() {
     }
   }, [prefijo, baseType, nextSequence]);
 
+  const ensureNumeroSugeridoValido = useCallback(() => {
+    if (baseType !== 'R') return true;
+    if (!numeroSugerido) {
+      setNumeroSugeridoError((prev) => prev || 'Ingresá un número de documento antes de continuar.');
+      return false;
+    }
+    const numericValue = Number(numeroSugerido);
+    if (!Number.isSafeInteger(numericValue) || numericValue <= 0) {
+      setNumeroSugeridoError('El número de documento debe ser un entero positivo.');
+      return false;
+    }
+    if (numeroSugeridoError) return false;
+    return true;
+  }, [baseType, numeroSugerido, numeroSugeridoError]);
+
   const handleNext = () => {
     if (activeStep === 0 && !canProceedStep0) {
       setAlert({ open: true, severity: 'warning', message: 'Seleccioná el tipo de documento y el proveedor para continuar.' });
       return;
     }
     if (activeStep === 1 && !canProceedStep1) {
-      setAlert({ open: true, severity: 'warning', message: 'Completá los datos del documento antes de avanzar.' });
+      const numeroValido = ensureNumeroSugeridoValido();
+      setAlert({
+        open: true,
+        severity: 'warning',
+        message:
+          baseType === 'R' && !numeroValido
+            ? 'Verificá el número de remito antes de avanzar.'
+            : 'Completá los datos del documento antes de avanzar.',
+      });
       return;
     }
     setActiveStep((prev) => Math.min(prev + 1, steps.length - 1));
@@ -256,8 +292,22 @@ export default function DocumentsPage() {
   };
 
   const handleNumeroSugeridoChange = (event) => {
-    if (baseType === 'R') {
-      setNumeroSugerido(event.target.value);
+    if (baseType !== 'R') return;
+    const rawValue = event.target.value ?? '';
+    const digitsOnly = rawValue.toString().replace(/\D/g, '');
+    const limitedDigits = digitsOnly.length > 8 ? digitsOnly.slice(-8) : digitsOnly;
+    if (!limitedDigits) {
+      setNumeroSugerido('');
+      setNumeroSugeridoError('');
+      return;
+    }
+    const parsed = Number(limitedDigits);
+    const normalized = padSequence(parsed);
+    setNumeroSugerido(normalized);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      setNumeroSugeridoError('El número de documento debe ser un entero positivo.');
+    } else {
+      setNumeroSugeridoError('');
     }
   };
 
@@ -345,6 +395,7 @@ export default function DocumentsPage() {
     resetItemDraft();
     setNextSequence(null);
     setNumeroSugerido('');
+    setNumeroSugeridoError('');
     setAjusteOperacion('decrement');
     updateDataError('sequence', '');
   };
@@ -355,6 +406,10 @@ export default function DocumentsPage() {
   };
 
   const handleSubmit = async () => {
+    if (baseType === 'R' && !ensureNumeroSugeridoValido()) {
+      setAlert({ open: true, severity: 'warning', message: 'Verificá el número de remito antes de guardar.' });
+      return;
+    }
     if (!canSubmit) {
       setAlert({ open: true, severity: 'warning', message: 'Revisá el formulario: faltan datos obligatorios.' });
       return;
@@ -382,6 +437,9 @@ export default function DocumentsPage() {
         codprod: item.codprod,
       })),
     };
+    if (baseType === 'R') {
+      payload.nroDocumento = numeroSugerido;
+    }
     const obs = observaciones.trim();
     if (obs) payload.observaciones = obs;
 
@@ -541,7 +599,13 @@ export default function DocumentsPage() {
                   onChange={handleNumeroSugeridoChange}
                   fullWidth
                   InputProps={{ readOnly: baseType !== 'R' }}
-                  helperText={dataError.sequence || 'Se consulta el backend antes de grabar.'}
+                  inputProps={baseType === 'R' ? { inputMode: 'numeric', pattern: '[0-9]*' } : undefined}
+                  error={baseType === 'R' && Boolean(numeroSugeridoError)}
+                  helperText={
+                    baseType === 'R'
+                      ? numeroSugeridoError || 'Ingresá manualmente un número entero positivo (8 dígitos).'
+                      : dataError.sequence || 'Se consulta el backend antes de grabar.'
+                  }
                 />
               </Grid>
               <Grid item xs={12} md={6}>
