@@ -125,6 +125,9 @@ documentoSchema.pre('save', function(next) {
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
+  if (tipo === 'R' && this.isNew && this.NrodeDocumento) {
+    return next();
+  }
   this.NrodeDocumento = `${this.prefijo}${tipo}${padSecuencia(this.secuencia)}`;
   next();
 });
