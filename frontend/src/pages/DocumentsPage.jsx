@@ -10,6 +10,7 @@ import {
   IconButton,
   InputLabel,
   MenuItem,
+  OutlinedInput,
   Paper,
   Select,
   Snackbar,
@@ -117,6 +118,13 @@ export default function DocumentsPage() {
   const canSubmit = items.length > 0 && canProceedStep1;
 
   const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
+  const responsableDisplayName = useMemo(() => {
+    if (!usuarioResponsable) return 'Sin especificar';
+    const selectedUser = users.find((user) => user._id === usuarioResponsable);
+    if (!selectedUser) return 'Sin especificar';
+    const nombres = `${selectedUser.nombres ?? ''} ${selectedUser.apellidos ?? ''}`.trim();
+    return nombres || selectedUser.email || 'Sin especificar';
+  }, [usuarioResponsable, users]);
 
   const updateDataError = useCallback((key, message) => {
     setDataError((prev) => ({ ...prev, [key]: message }));
@@ -464,6 +472,10 @@ export default function DocumentsPage() {
     if (baseType === 'R') {
       payload.nroDocumento = numeroSugerido;
     }
+    const responsableId = usuarioResponsable || selectedUserFromStorage || '';
+    if (responsableId) {
+      payload.usuarioResponsable = responsableId;
+    }
     const obs = observaciones.trim();
     if (obs) payload.observaciones = obs;
 
@@ -648,23 +660,13 @@ export default function DocumentsPage() {
               </Grid>
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
-                  <InputLabel id="responsable-label">Responsable</InputLabel>
-                  <Select
-                    labelId="responsable-label"
+                  <InputLabel htmlFor="responsable-input">Responsable</InputLabel>
+                  <OutlinedInput
+                    id="responsable-input"
                     label="Responsable"
-                    value={usuarioResponsable}
-                    onChange={(event) => setUsuarioResponsable(event.target.value)}
-                    disabled={usersLoading}
-                  >
-                    <MenuItem value="">
-                      Sin especificar
-                    </MenuItem>
-                    {users.map((user) => (
-                      <MenuItem key={user._id} value={user._id}>
-                        {`${user.nombres ?? ''} ${user.apellidos ?? ''}`.trim() || user.email}
-                      </MenuItem>
-                    ))}
-                  </Select>
+                    value={responsableDisplayName}
+                    inputProps={{ readOnly: true, 'aria-readonly': true }}
+                  />
                   {usersLoading && <FormHelperText>Cargando usuarios...</FormHelperText>}
                   {dataError.users && <FormHelperText error>{dataError.users}</FormHelperText>}
                   <FormHelperText>
