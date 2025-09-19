@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -33,6 +33,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { AuthContext } from '../context/AuthContext.jsx';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
@@ -49,23 +50,29 @@ const navItems = [
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [nombreUsuario, setNombreUsuario] = useState('');
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { token, user, clearSession } = useContext(AuthContext) ?? {};
+
+  const nombreUsuario = useMemo(() => {
+    if (!user) return '';
+    if (typeof user === 'string') return user;
+    const nombres = user?.nombres ?? '';
+    const apellidos = user?.apellidos ?? '';
+    const fullName = `${nombres} ${apellidos}`.trim();
+    return fullName || user?.email || '';
+  }, [user]);
 
   /* -------- Verifica token cada render -------- */
   useEffect(() => {
-    const token = localStorage.getItem('token');
     if (!token) navigate('/login');
-
-    const storedUser = localStorage.getItem('usuario');
-    if (storedUser) setNombreUsuario(JSON.parse(storedUser));
-  }, [navigate]);
+  }, [navigate, token]);
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
   const handleLogoutConfirm = () => {
-    localStorage.clear();
+    setConfirmLogoutOpen(false);
+    clearSession?.();
     navigate('/login');
   };
   const handleLogoutCancel  = () => setConfirmLogoutOpen(false);

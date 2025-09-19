@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -32,6 +32,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import ReplayIcon from '@mui/icons-material/Replay';
 import SaveIcon from '@mui/icons-material/Save';
 import api from '../api/axios';
+import { AuthContext } from '../context/AuthContext.jsx';
 
 const steps = ['Tipo y proveedor', 'Datos del documento', 'Ítems'];
 
@@ -61,13 +62,14 @@ const parseApiError = (error, fallback) => {
 };
 
 export default function DocumentsPage() {
+  const { userId } = useContext(AuthContext) ?? {};
   const [activeStep, setActiveStep] = useState(0);
   const [selectedType, setSelectedType] = useState('');
   const [selectedProvider, setSelectedProvider] = useState('');
   const [prefijo, setPrefijo] = useState('0001');
   const [fechaRemito, setFechaRemito] = useState(DEFAULT_DATE);
   const [observaciones, setObservaciones] = useState('');
-  const [usuarioResponsable, setUsuarioResponsable] = useState('');
+  const [usuarioResponsable, setUsuarioResponsable] = useState(userId ?? '');
 
   const [providers, setProviders] = useState([]);
   const [providersLoading, setProvidersLoading] = useState(false);
@@ -106,8 +108,6 @@ export default function DocumentsPage() {
   const canProceedStep0 = Boolean(selectedType && selectedProvider);
   const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4);
   const canSubmit = items.length > 0 && canProceedStep1;
-
-  const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
 
   const updateDataError = useCallback((key, message) => {
     setDataError((prev) => ({ ...prev, [key]: message }));
@@ -192,11 +192,26 @@ export default function DocumentsPage() {
   }, [fetchProviders, fetchProducts, fetchUsers, fetchDocuments]);
 
   useEffect(() => {
-    if (selectedUserFromStorage && users.length > 0 && !usuarioResponsable) {
-      const exists = users.find((user) => user._id === selectedUserFromStorage);
-      if (exists) setUsuarioResponsable(selectedUserFromStorage);
+    if (!userId) {
+      setUsuarioResponsable('');
+      return;
     }
-  }, [users, usuarioResponsable, selectedUserFromStorage]);
+
+    setUsuarioResponsable((prev) => {
+      if (prev && prev !== userId) {
+        return prev;
+      }
+
+      if (users.length > 0) {
+        const exists = users.some((user) => user._id === userId);
+        if (!exists) {
+          return prev;
+        }
+      }
+
+      return userId;
+    });
+  }, [userId, users]);
 
   useEffect(() => {
     const previousBaseType = previousBaseTypeRef.current;
@@ -340,7 +355,7 @@ export default function DocumentsPage() {
     setPrefijo('0001');
     setFechaRemito(DEFAULT_DATE);
     setObservaciones('');
-    setUsuarioResponsable(selectedUserFromStorage || '');
+    setUsuarioResponsable(userId ?? '');
     setItems([]);
     resetItemDraft();
     setNextSequence(null);
@@ -382,6 +397,8 @@ export default function DocumentsPage() {
         codprod: item.codprod,
       })),
     };
+    const responsibleId = usuarioResponsable || userId || null;
+    if (responsibleId) payload.usuario = responsibleId;
     const obs = observaciones.trim();
     if (obs) payload.observaciones = obs;
 
@@ -566,7 +583,7 @@ export default function DocumentsPage() {
                   {usersLoading && <FormHelperText>Cargando usuarios...</FormHelperText>}
                   {dataError.users && <FormHelperText error>{dataError.users}</FormHelperText>}
                   <FormHelperText>
-                    El backend asignará el usuario autenticado automáticamente.
+                    Se selecciona automáticamente el usuario autenticado, podés cambiarlo si es necesario.
                   </FormHelperText>
                 </FormControl>
               </Grid>

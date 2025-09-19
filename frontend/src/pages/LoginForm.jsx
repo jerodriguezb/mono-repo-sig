@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useContext, useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -9,36 +9,37 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { postLogin } from "../api/rutaUsuarios"; // tu helper original
+import { AuthContext } from "../context/AuthContext.jsx";
 // import fondoLogo from "../assets/logo.png"; // 🖼 asegurate de tener esta imagen en src/assets/
 
 const LoginForm = () => {
   const navigate = useNavigate();
   const [formValues, setFormValues] = useState({ email: "", password: "" });
-  const [user, setUser] = useState({ data: { ok: null }, loading: false });
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("token"));
+  const [loginState, setLoginState] = useState({ data: { ok: null }, loading: false });
+  const { token, setSession, clearSession } = useContext(AuthContext) ?? {};
 
   useEffect(() => {
-    if (user.data.ok) {
-      localStorage.setItem("token", user.data.token);
-      localStorage.setItem("id", user.data.usuario._id);
-      localStorage.setItem("usuario", JSON.stringify(user.data.usuario.nombres));
-      setIsLoggedIn(true);
+    if (loginState.data.ok) {
+      const { token: sessionToken, usuario } = loginState.data;
+      setSession?.({
+        token: sessionToken,
+        userId: usuario?._id ?? null,
+        user: usuario ?? null,
+      });
       navigate("/");
     }
-  }, [user, navigate]);
+  }, [loginState, navigate, setSession]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
     if (token) {
       navigate("/");
     }
-  }, [navigate]);
+  }, [navigate, token]);
 
   const logout = useCallback(() => {
-    localStorage.clear();
-    setIsLoggedIn(false);
+    clearSession?.();
     navigate("/login");
-  }, [navigate]);
+  }, [clearSession, navigate]);
 
   const resetTimer = useCallback(() => {
     clearTimeout(window.inactivityTimeout);
@@ -61,14 +62,13 @@ const LoginForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setUser((prev) => ({ ...prev, loading: true }));
+    setLoginState((prev) => ({ ...prev, loading: true }));
     const result = await postLogin(formValues);
-    setUser(result);
+    setLoginState(result);
     setFormValues({ email: "", password: "" });
   };
 
-  if (isLoggedIn) {
-    navigate("/");
+  if (token) {
     return null;
   }
 
@@ -141,9 +141,9 @@ const LoginForm = () => {
               margin="normal"
               required
             />
-            {user.data.ok === false && (
+            {loginState.data.ok === false && (
               <Typography color="error" mt={1} textAlign="center">
-                {user.data.err?.message || "Error al iniciar sesión"}
+                {loginState.data.err?.message || "Error al iniciar sesión"}
               </Typography>
             )}
             <Button
@@ -151,9 +151,9 @@ const LoginForm = () => {
               fullWidth
               variant="contained"
               sx={{ mt: 3 }}
-              disabled={user.loading}
+              disabled={loginState.loading}
             >
-              {user.loading ? "Validando..." : "Iniciar sesión"}
+              {loginState.loading ? "Validando..." : "Iniciar sesión"}
             </Button>
           </form>
         </Paper>
