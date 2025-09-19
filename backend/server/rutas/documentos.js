@@ -174,11 +174,58 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
   }
 
-  const documento = new Documento(data);
-  const documentoDB = await documento.save();
+  const session = await mongoose.startSession();
+  let documentoDB;
+  const stockResult = { updates: [], errors: [] };
+
+  try {
+    await session.startTransaction();
+
+    const documento = new Documento(data);
+    documentoDB = await documento.save({ session });
+
+    if (tipo === 'R') {
+      for (const item of items) {
+        try {
+          const updatedProduct = await Producserv.findByIdAndUpdate(
+            item.producto,
+            { $inc: { stkactual: item.cantidad } },
+            { new: true, session },
+          );
+          if (!updatedProduct) {
+            stockResult.errors.push(`No se encontró el producto ${item.codprod} para actualizar el stock.`);
+            continue;
+          }
+          stockResult.updates.push({
+            producto: updatedProduct._id.toString(),
+            stkactual: Number(updatedProduct.stkactual ?? 0),
+          });
+        } catch (error) {
+          const message = error?.message || 'operación fallida';
+          stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+        }
+      }
+    }
+
+    await session.commitTransaction();
+  } catch (error) {
+    await session.abortTransaction();
+    return res.status(500).json({
+      ok: false,
+      err: { message: error?.message || 'No se pudo guardar el documento' },
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  if (!documentoDB) {
+    return res.status(500).json({ ok: false, err: { message: 'No se pudo guardar el documento' } });
+  }
+
   await documentoDB.populate(documentoPopulate);
 
-  res.status(201).json({ ok: true, documento: documentoDB });
+  const responsePayload = { ok: true, documento: documentoDB, stock: stockResult };
+  res.status(201).json(responsePayload);
 }));
 
 // -----------------------------------------------------------------------------

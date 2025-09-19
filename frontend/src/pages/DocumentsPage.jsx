@@ -219,7 +219,7 @@ export default function DocumentsPage() {
 
     if (baseType === 'AJ') {
       setAjusteOperacion(selectedType === 'AJ+' ? 'increment' : 'decrement');
-    } else if (baseType === 'NR') {
+    } else if (baseType === 'NR' || baseType === 'R') {
       setAjusteOperacion('increment');
     } else {
       setAjusteOperacion('decrement');
@@ -448,35 +448,49 @@ export default function DocumentsPage() {
       const { data } = await api.post('/documentos', payload);
       if (!data?.ok) throw new Error('La API no confirmó la creación del documento.');
 
-      const stockUpdates = [];
-      const stockErrors = [];
-      const sign = ajusteOperacion === 'increment' ? 1 : -1;
-      for (const item of items) {
+      const stockInfo = data?.stock ?? {};
+      const stockErrors = Array.isArray(stockInfo?.errors) ? stockInfo.errors : [];
+      const backendUpdates = Array.isArray(stockInfo?.updates) ? stockInfo.updates : [];
+
+      const updatesMap = new Map();
+      backendUpdates.forEach((update) => {
+        const key = update?.producto || update?.id || update?._id;
+        if (key) {
+          updatesMap.set(key.toString(), Number(update?.stkactual ?? 0));
+        }
+      });
+
+      items.forEach((item) => {
+        if (updatesMap.has(item.productoId)) return;
         const product = products.find((prod) => prod._id === item.productoId);
         const currentStock = Number(product?.stkactual ?? item.stkactual ?? 0);
-        const newStock = Math.max(currentStock + sign * item.cantidad, 0);
-        try {
-          await api.put(`/producservs/${item.productoId}`, { stkactual: newStock });
-          stockUpdates.push({ id: item.productoId, stkactual: newStock });
-        } catch (error) {
-          stockErrors.push(`${item.codprod}: ${parseApiError(error, 'error al actualizar stock')}`);
-        }
-      }
+        const adjustedCantidad = Number(item.cantidad ?? 0);
+        const newStock =
+          ajusteOperacion === 'increment'
+            ? currentStock + adjustedCantidad
+            : Math.max(currentStock - adjustedCantidad, 0);
+        updatesMap.set(item.productoId, newStock);
+      });
 
-      if (stockUpdates.length) {
-        setProducts((prevProducts) => prevProducts.map((prod) => {
-          const update = stockUpdates.find((item) => item.id === prod._id);
-          return update ? { ...prod, stkactual: update.stkactual } : prod;
-        }));
+      if (updatesMap.size > 0) {
+        setProducts((prevProducts) =>
+          prevProducts.map((prod) =>
+            updatesMap.has(prod._id) ? { ...prod, stkactual: updatesMap.get(prod._id) } : prod,
+          ),
+        );
       }
 
       await fetchDocuments();
 
-      if (stockErrors.length > 0) {
+      const formattedStockErrors = stockErrors.map((errorItem) =>
+        typeof errorItem === 'string' ? errorItem : String(errorItem?.message ?? errorItem),
+      );
+
+      if (formattedStockErrors.length > 0) {
         setAlert({
           open: true,
           severity: 'warning',
-          message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${stockErrors.join(' | ')}`,
+          message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${formattedStockErrors.join(' | ')}`,
         });
       } else {
         const manualNumber = baseType === 'R' ? numeroSugerido.trim() : '';
