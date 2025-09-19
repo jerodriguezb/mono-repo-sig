@@ -81,8 +81,8 @@ const parseItems = async (rawItems = []) => {
   const productosIds = new Set();
   rawItems.forEach((item, index) => {
     const cantidad = Number(item?.cantidad);
-    if (!Number.isFinite(cantidad) || cantidad <= 0) {
-      const error = new Error(`La cantidad del ítem ${index + 1} debe ser un número positivo`);
+    if (!Number.isFinite(cantidad) || !Number.isInteger(cantidad) || cantidad <= 0) {
+      const error = new Error(`La cantidad del ítem ${index + 1} debe ser un entero positivo`);
       error.status = 400;
       throw error;
     }

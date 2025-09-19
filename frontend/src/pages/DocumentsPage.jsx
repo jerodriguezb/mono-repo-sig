@@ -91,7 +91,8 @@ export default function DocumentsPage() {
   const [numeroSugeridoError, setNumeroSugeridoError] = useState('');
   const [ajusteOperacion, setAjusteOperacion] = useState('decrement');
 
-  const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: 1 });
+  const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: '1' });
+  const [itemDraftError, setItemDraftError] = useState('');
   const [editingIndex, setEditingIndex] = useState(-1);
   const [items, setItems] = useState([]);
 
@@ -318,12 +319,31 @@ export default function DocumentsPage() {
 
   const handleItemDraftChange = (event) => {
     const { name, value } = event.target;
-    setItemDraft((prev) => ({ ...prev, [name]: name === 'cantidad' ? value : value }));
+    if (name === 'cantidad') {
+      if (value === '') {
+        setItemDraft((prev) => ({ ...prev, cantidad: '' }));
+        setItemDraftError('');
+        return;
+      }
+      if (!/^\d+$/.test(value)) {
+        return;
+      }
+      const numericValue = Number(value);
+      setItemDraft((prev) => ({ ...prev, cantidad: value }));
+      if (!Number.isInteger(numericValue) || numericValue <= 0) {
+        setItemDraftError('La cantidad debe ser un entero positivo.');
+      } else {
+        setItemDraftError('');
+      }
+      return;
+    }
+    setItemDraft((prev) => ({ ...prev, [name]: value }));
   };
 
   const resetItemDraft = () => {
-    setItemDraft({ productoId: '', cantidad: 1 });
+    setItemDraft({ productoId: '', cantidad: '1' });
     setEditingIndex(-1);
+    setItemDraftError('');
   };
 
   const handleAddOrUpdateItem = () => {
@@ -333,10 +353,13 @@ export default function DocumentsPage() {
       setAlert({ open: true, severity: 'warning', message: 'Seleccioná un producto para agregarlo al detalle.' });
       return;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setAlert({ open: true, severity: 'warning', message: 'La cantidad debe ser un número positivo.' });
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+      const message = 'La cantidad debe ser un entero positivo.';
+      setItemDraftError(message);
+      setAlert({ open: true, severity: 'warning', message });
       return;
     }
+    setItemDraftError('');
     const product = products.find((prod) => prod._id === productId);
     if (!product) {
       setAlert({ open: true, severity: 'error', message: 'El producto seleccionado no está disponible.' });
@@ -373,8 +396,9 @@ export default function DocumentsPage() {
 
   const handleEditItem = (index) => {
     const item = items[index];
-    setItemDraft({ productoId: item.productoId, cantidad: item.cantidad });
+    setItemDraft({ productoId: item.productoId, cantidad: String(item.cantidad ?? '') });
     setEditingIndex(index);
+    setItemDraftError('');
   };
 
   const handleRemoveItem = (index) => {
@@ -698,7 +722,9 @@ export default function DocumentsPage() {
                     value={itemDraft.cantidad}
                     onChange={handleItemDraftChange}
                     fullWidth
-                    inputProps={{ min: 0, step: '0.01' }}
+                    inputProps={{ min: 1, step: 1, inputMode: 'numeric', pattern: '[0-9]*' }}
+                    error={Boolean(itemDraftError)}
+                    helperText={itemDraftError}
                   />
                 </Grid>
                 <Grid item xs={12} md={3}>
