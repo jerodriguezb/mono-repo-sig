@@ -47,7 +47,7 @@ export default function ComandasPage() {
   const clienteAbort = useRef(null);
   const clienteTimer = useRef(null);
   const [page, setPage] = useState(1); // 1-based
-  const [pageSize] = useState(10);
+  const [pageSize] = useState(8);
   const [total, setTotal] = useState(0);
   const [viewMode, setViewMode] = useState('grid');
   const [focusedProdId, setFocusedProdId] = useState(null);
@@ -282,6 +282,8 @@ export default function ComandasPage() {
       alert('Seleccione un cliente');
       return;
     }
+    // El número de comanda se genera en el backend mediante mongoose-sequence,
+    // por lo que no se envía desde el cliente.
     const payload = {
       codcli: clienteSel._id,
       fecha: new Date().toISOString(),

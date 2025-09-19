@@ -7,6 +7,7 @@ const Comanda = require('../modelos/comanda');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
+const Counter = require('../modelos/counter');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -240,8 +241,15 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   let comandaDB;
   try {
     await session.withTransaction(async () => {
+
+      const counter = await Counter.findOneAndUpdate(
+        {},
+        { $inc: { nrodecomanda: 1 } },
+        { new: true, upsert: true, session }
+      );
       const comanda = new Comanda({
-        nrodecomanda: body.nrodecomanda,
+        nrodecomanda: counter.nrodecomanda,
+
         codcli: body.codcli,
         fecha: body.fecha,
         codestado: body.codestado,

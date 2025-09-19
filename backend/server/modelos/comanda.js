@@ -1,8 +1,5 @@
 const mongoose = require("mongoose");
 const uniqueValidator = require("mongoose-unique-validator");
-const autoIncrement = require("mongoose-auto-increment");
-
-const AutoIncrement = require("mongoose-sequence")(mongoose);
 let Schema = mongoose.Schema;
 
 // Subdocumento para los ítems de la comanda
@@ -92,8 +89,5 @@ comandaSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
 
-comandaSchema.plugin(AutoIncrement, {
-  inc_field: "nrodecomanda",
-});
 
 module.exports = mongoose.model("Comanda", comandaSchema);

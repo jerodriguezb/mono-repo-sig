@@ -1,0 +1,761 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Divider,
+  FormControl,
+  FormHelperText,
+  Grid,
+  IconButton,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Snackbar,
+  Stack,
+  Step,
+  StepLabel,
+  Stepper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import AddCircleIcon from '@mui/icons-material/AddCircle';
+import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
+import ReplayIcon from '@mui/icons-material/Replay';
+import SaveIcon from '@mui/icons-material/Save';
+import api from '../api/axios';
+
+const steps = ['Tipo y proveedor', 'Datos del documento', 'Ítems'];
+
+const DOCUMENT_TYPE_OPTIONS = [
+  { value: 'R', label: 'Remito' },
+  { value: 'NR', label: 'Nota de recepción' },
+  { value: 'AJ+', label: 'Ajuste (+)' },
+  { value: 'AJ-', label: 'Ajuste (-)' },
+];
+
+const DEFAULT_DATE = new Date().toISOString().split('T')[0];
+
+const normalizePrefijo = (value) => {
+  if (!value) return '';
+  const digits = value.toString().replace(/\D/g, '').slice(0, 4);
+  return digits;
+};
+
+const padPrefijo = (value) => (value ? value.toString().padStart(4, '0') : '0001');
+
+const padSequence = (value) => String(value ?? 0).padStart(8, '0');
+
+const parseApiError = (error, fallback) => {
+  if (error?.response?.data?.err?.message) return error.response.data.err.message;
+  if (error?.response?.data?.message) return error.response.data.message;
+  return error?.message || fallback;
+};
+
+export default function DocumentsPage() {
+  const [activeStep, setActiveStep] = useState(0);
+  const [selectedType, setSelectedType] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState('');
+  const [prefijo, setPrefijo] = useState('0001');
+  const [fechaRemito, setFechaRemito] = useState(DEFAULT_DATE);
+  const [observaciones, setObservaciones] = useState('');
+  const [usuarioResponsable, setUsuarioResponsable] = useState('');
+
+  const [providers, setProviders] = useState([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+
+  const [dataError, setDataError] = useState({
+    providers: '',
+    products: '',
+    users: '',
+    documents: '',
+    sequence: '',
+  });
+
+  const [nextSequence, setNextSequence] = useState(null);
+  const [numeroSugerido, setNumeroSugerido] = useState('');
+  const [ajusteOperacion, setAjusteOperacion] = useState('decrement');
+
+  const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: 1 });
+  const [editingIndex, setEditingIndex] = useState(-1);
+  const [items, setItems] = useState([]);
+
+  const [saving, setSaving] = useState(false);
+  const [alert, setAlert] = useState({ open: false, severity: 'success', message: '' });
+
+  const baseType = useMemo(
+    () => (selectedType.startsWith('AJ') ? 'AJ' : selectedType),
+    [selectedType],
+  );
+  const previousBaseTypeRef = useRef(baseType);
+
+  const canProceedStep0 = Boolean(selectedType && selectedProvider);
+  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4);
+  const canSubmit = items.length > 0 && canProceedStep1;
+
+  const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
+
+  const updateDataError = useCallback((key, message) => {
+    setDataError((prev) => ({ ...prev, [key]: message }));
+  }, []);
+
+  const fetchProviders = useCallback(async () => {
+    setProvidersLoading(true);
+    try {
+      const { data } = await api.get('/proveedores');
+      setProviders(data?.proveedores ?? []);
+      updateDataError('providers', '');
+    } catch (error) {
+      updateDataError('providers', parseApiError(error, 'No se pudieron cargar los proveedores'));
+    } finally {
+      setProvidersLoading(false);
+    }
+  }, [updateDataError]);
+
+  const fetchProducts = useCallback(async () => {
+    setProductsLoading(true);
+    try {
+      const { data } = await api.get('/producservs', { params: { limite: 100 } });
+      setProducts(data?.producservs ?? []);
+      updateDataError('products', '');
+    } catch (error) {
+      updateDataError('products', parseApiError(error, 'No se pudieron cargar los productos'));
+    } finally {
+      setProductsLoading(false);
+    }
+  }, [updateDataError]);
+
+  const fetchUsers = useCallback(async () => {
+    setUsersLoading(true);
+    try {
+      const { data } = await api.get('/usuarios');
+      setUsers(data?.usuarios ?? []);
+      updateDataError('users', '');
+    } catch (error) {
+      updateDataError('users', parseApiError(error, 'No se pudieron cargar los usuarios activos'));
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [updateDataError]);
+
+  const fetchDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    try {
+      const { data } = await api.get('/documentos', { params: { limite: 25 } });
+      setDocuments(data?.documentos ?? []);
+      updateDataError('documents', '');
+    } catch (error) {
+      updateDataError('documents', parseApiError(error, 'No se pudo obtener el historial reciente de documentos'));
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [updateDataError]);
+
+  const fetchNextSequenceForType = useCallback(async (tipo, overridePrefijo) => {
+    const effectivePrefijo = padPrefijo(overridePrefijo ?? prefijo);
+    try {
+      const { data } = await api.get('/documentos', { params: { tipo, limite: 1 } });
+      const last = data?.documentos?.[0];
+      const next = (last?.secuencia ?? 0) + 1;
+      setNextSequence(next);
+      const suggestedNumber = `${effectivePrefijo}${tipo}${padSequence(next)}`;
+      setNumeroSugerido(suggestedNumber);
+      updateDataError('sequence', '');
+      return { next, numero: suggestedNumber };
+    } catch (error) {
+      const message = parseApiError(error, 'No se pudo obtener el número secuencial');
+      updateDataError('sequence', message);
+      setAlert({ open: true, severity: 'error', message });
+      throw error;
+    }
+  }, [prefijo, updateDataError]);
+
+  useEffect(() => {
+    fetchProviders();
+    fetchProducts();
+    fetchUsers();
+    fetchDocuments();
+  }, [fetchProviders, fetchProducts, fetchUsers, fetchDocuments]);
+
+  useEffect(() => {
+    if (selectedUserFromStorage && users.length > 0 && !usuarioResponsable) {
+      const exists = users.find((user) => user._id === selectedUserFromStorage);
+      if (exists) setUsuarioResponsable(selectedUserFromStorage);
+    }
+  }, [users, usuarioResponsable, selectedUserFromStorage]);
+
+  useEffect(() => {
+    const previousBaseType = previousBaseTypeRef.current;
+
+    if (!baseType) {
+      setNumeroSugerido('');
+      setNextSequence(null);
+      setAjusteOperacion('decrement');
+      previousBaseTypeRef.current = baseType;
+      return;
+    }
+
+    if (baseType === 'AJ') {
+      setAjusteOperacion(selectedType === 'AJ+' ? 'increment' : 'decrement');
+    } else if (baseType === 'NR') {
+      setAjusteOperacion('increment');
+    } else {
+      setAjusteOperacion('decrement');
+    }
+
+    if (baseType === 'NR' || baseType === 'AJ') {
+      const nextPrefijo = '0001';
+      if (prefijo !== nextPrefijo) setPrefijo(nextPrefijo);
+      fetchNextSequenceForType(baseType, nextPrefijo).catch(() => {});
+    } else {
+      setNextSequence(null);
+      updateDataError('sequence', '');
+      if (baseType !== 'R' || previousBaseType !== 'R') {
+        setNumeroSugerido('');
+      }
+    }
+
+    previousBaseTypeRef.current = baseType;
+  }, [baseType, selectedType, prefijo, fetchNextSequenceForType, updateDataError]);
+
+  useEffect(() => {
+    if (nextSequence && (baseType === 'NR' || baseType === 'AJ')) {
+      const effectivePrefijo = padPrefijo(prefijo);
+      setNumeroSugerido(`${effectivePrefijo}${baseType}${padSequence(nextSequence)}`);
+    }
+  }, [prefijo, baseType, nextSequence]);
+
+  const handleNext = () => {
+    if (activeStep === 0 && !canProceedStep0) {
+      setAlert({ open: true, severity: 'warning', message: 'Seleccioná el tipo de documento y el proveedor para continuar.' });
+      return;
+    }
+    if (activeStep === 1 && !canProceedStep1) {
+      setAlert({ open: true, severity: 'warning', message: 'Completá los datos del documento antes de avanzar.' });
+      return;
+    }
+    setActiveStep((prev) => Math.min(prev + 1, steps.length - 1));
+  };
+
+  const handleBack = () => {
+    setActiveStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handleNumeroSugeridoChange = (event) => {
+    if (baseType === 'R') {
+      setNumeroSugerido(event.target.value);
+    }
+  };
+
+  const handlePrefijoChange = (event) => {
+    const value = normalizePrefijo(event.target.value);
+    setPrefijo(value);
+  };
+
+  const handleItemDraftChange = (event) => {
+    const { name, value } = event.target;
+    setItemDraft((prev) => ({ ...prev, [name]: name === 'cantidad' ? value : value }));
+  };
+
+  const resetItemDraft = () => {
+    setItemDraft({ productoId: '', cantidad: 1 });
+    setEditingIndex(-1);
+  };
+
+  const handleAddOrUpdateItem = () => {
+    const productId = itemDraft.productoId;
+    const quantity = Number(itemDraft.cantidad);
+    if (!productId) {
+      setAlert({ open: true, severity: 'warning', message: 'Seleccioná un producto para agregarlo al detalle.' });
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setAlert({ open: true, severity: 'warning', message: 'La cantidad debe ser un número positivo.' });
+      return;
+    }
+    const product = products.find((prod) => prod._id === productId);
+    if (!product) {
+      setAlert({ open: true, severity: 'error', message: 'El producto seleccionado no está disponible.' });
+      return;
+    }
+    const draftItem = {
+      productoId: productId,
+      cantidad: quantity,
+      codprod: product.codprod,
+      descripcion: product.descripcion,
+      stkactual: Number(product.stkactual ?? 0),
+    };
+    setItems((prevItems) => {
+      const updated = [...prevItems];
+      if (editingIndex >= 0) {
+        updated[editingIndex] = draftItem;
+      } else {
+        const existingIndex = updated.findIndex((item) => item.productoId === productId);
+        if (existingIndex >= 0) {
+          updated[existingIndex] = { ...draftItem, cantidad: quantity };
+        } else {
+          updated.push(draftItem);
+        }
+      }
+      return updated;
+    });
+    setAlert({
+      open: true,
+      severity: 'success',
+      message: editingIndex >= 0 ? 'Ítem actualizado correctamente.' : 'Ítem agregado al documento.',
+    });
+    resetItemDraft();
+  };
+
+  const handleEditItem = (index) => {
+    const item = items[index];
+    setItemDraft({ productoId: item.productoId, cantidad: item.cantidad });
+    setEditingIndex(index);
+  };
+
+  const handleRemoveItem = (index) => {
+    setItems((prevItems) => prevItems.filter((_, i) => i !== index));
+    resetItemDraft();
+    setAlert({ open: true, severity: 'info', message: 'Ítem eliminado del documento.' });
+  };
+
+  const resetForm = () => {
+    setActiveStep(0);
+    setSelectedType('');
+    setSelectedProvider('');
+    setPrefijo('0001');
+    setFechaRemito(DEFAULT_DATE);
+    setObservaciones('');
+    setUsuarioResponsable(selectedUserFromStorage || '');
+    setItems([]);
+    resetItemDraft();
+    setNextSequence(null);
+    setNumeroSugerido('');
+    setAjusteOperacion('decrement');
+    updateDataError('sequence', '');
+  };
+
+  const closeAlert = (_, reason) => {
+    if (reason === 'clickaway') return;
+    setAlert((prev) => ({ ...prev, open: false }));
+  };
+
+  const handleSubmit = async () => {
+    if (!canSubmit) {
+      setAlert({ open: true, severity: 'warning', message: 'Revisá el formulario: faltan datos obligatorios.' });
+      return;
+    }
+    const effectivePrefijo = padPrefijo(prefijo);
+    let sequenceInfo = null;
+    if (baseType === 'NR' || baseType === 'AJ') {
+      try {
+        sequenceInfo = await fetchNextSequenceForType(baseType, effectivePrefijo);
+      } catch {
+        return;
+      }
+    } else {
+      updateDataError('sequence', '');
+    }
+
+    const payload = {
+      tipo: baseType,
+      prefijo: effectivePrefijo,
+      fechaRemito,
+      proveedor: selectedProvider,
+      items: items.map((item) => ({
+        producto: item.productoId,
+        cantidad: item.cantidad,
+        codprod: item.codprod,
+      })),
+    };
+    const obs = observaciones.trim();
+    if (obs) payload.observaciones = obs;
+
+    setSaving(true);
+    try {
+      const { data } = await api.post('/documentos', payload);
+      if (!data?.ok) throw new Error('La API no confirmó la creación del documento.');
+
+      const stockUpdates = [];
+      const stockErrors = [];
+      const sign = ajusteOperacion === 'increment' ? 1 : -1;
+      for (const item of items) {
+        const product = products.find((prod) => prod._id === item.productoId);
+        const currentStock = Number(product?.stkactual ?? item.stkactual ?? 0);
+        const newStock = Math.max(currentStock + sign * item.cantidad, 0);
+        try {
+          await api.put(`/producservs/${item.productoId}`, { stkactual: newStock });
+          stockUpdates.push({ id: item.productoId, stkactual: newStock });
+        } catch (error) {
+          stockErrors.push(`${item.codprod}: ${parseApiError(error, 'error al actualizar stock')}`);
+        }
+      }
+
+      if (stockUpdates.length) {
+        setProducts((prevProducts) => prevProducts.map((prod) => {
+          const update = stockUpdates.find((item) => item.id === prod._id);
+          return update ? { ...prod, stkactual: update.stkactual } : prod;
+        }));
+      }
+
+      await fetchDocuments();
+
+      if (stockErrors.length > 0) {
+        setAlert({
+          open: true,
+          severity: 'warning',
+          message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${stockErrors.join(' | ')}`,
+        });
+      } else {
+        const manualNumber = baseType === 'R' ? numeroSugerido.trim() : '';
+        const successMessage = sequenceInfo
+          ? `Documento ${sequenceInfo.numero} registrado correctamente.`
+          : manualNumber
+            ? `Documento ${manualNumber} registrado correctamente.`
+            : 'Documento registrado correctamente.';
+        setAlert({ open: true, severity: 'success', message: successMessage });
+        resetForm();
+      }
+    } catch (error) {
+      setAlert({ open: true, severity: 'error', message: parseApiError(error, 'No se pudo guardar el documento') });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalCantidad = useMemo(
+    () => items.reduce((acc, item) => acc + Number(item.cantidad ?? 0), 0),
+    [items],
+  );
+
+  const renderStepContent = () => {
+    switch (activeStep) {
+      case 0:
+        return (
+          <Paper sx={{ p: 3 }}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="document-type-label">Tipo de documento</InputLabel>
+                  <Select
+                    labelId="document-type-label"
+                    label="Tipo de documento"
+                    value={selectedType}
+                    onChange={(event) => setSelectedType(event.target.value)}
+                  >
+                    <MenuItem value="" disabled>
+                      Seleccione
+                    </MenuItem>
+                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Para NR y Ajustes el prefijo se fija en 0001 automáticamente.
+                  </FormHelperText>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="provider-label">Proveedor</InputLabel>
+                  <Select
+                    labelId="provider-label"
+                    label="Proveedor"
+                    value={selectedProvider}
+                    onChange={(event) => setSelectedProvider(event.target.value)}
+                    disabled={providersLoading}
+                  >
+                    <MenuItem value="" disabled>
+                      Seleccione
+                    </MenuItem>
+                    {providers.map((provider) => (
+                      <MenuItem key={provider._id} value={provider._id}>
+                        {provider.razonsocial}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {providersLoading && <FormHelperText>Cargando proveedores...</FormHelperText>}
+                  {dataError.providers && (
+                    <FormHelperText error>{dataError.providers}</FormHelperText>
+                  )}
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <Stack direction="row" spacing={2} alignItems="center">
+                  <Typography variant="body2" color="text.secondary">
+                    Documentos recientes en la base: {documentsLoading ? '...' : documents.length}
+                  </Typography>
+                  <Button size="small" onClick={fetchDocuments} disabled={documentsLoading}>
+                    Actualizar historial
+                  </Button>
+                </Stack>
+              </Grid>
+            </Grid>
+          </Paper>
+        );
+      case 1:
+        return (
+          <Paper sx={{ p: 3 }}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  label="Fecha"
+                  type="date"
+                  value={fechaRemito}
+                  onChange={(event) => setFechaRemito(event.target.value)}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  label="Prefijo"
+                  value={prefijo}
+                  onChange={handlePrefijoChange}
+                  fullWidth
+                  inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
+                  helperText={baseType === 'R' ? 'Editable para remitos.' : 'Asignado automáticamente.'}
+                  disabled={baseType !== 'R'}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  label="Número sugerido"
+                  value={numeroSugerido}
+                  onChange={handleNumeroSugeridoChange}
+                  fullWidth
+                  InputProps={{ readOnly: baseType !== 'R' }}
+                  helperText={dataError.sequence || 'Se consulta el backend antes de grabar.'}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="responsable-label">Responsable</InputLabel>
+                  <Select
+                    labelId="responsable-label"
+                    label="Responsable"
+                    value={usuarioResponsable}
+                    onChange={(event) => setUsuarioResponsable(event.target.value)}
+                    disabled={usersLoading}
+                  >
+                    <MenuItem value="">
+                      Sin especificar
+                    </MenuItem>
+                    {users.map((user) => (
+                      <MenuItem key={user._id} value={user._id}>
+                        {`${user.nombres ?? ''} ${user.apellidos ?? ''}`.trim() || user.email}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {usersLoading && <FormHelperText>Cargando usuarios...</FormHelperText>}
+                  {dataError.users && <FormHelperText error>{dataError.users}</FormHelperText>}
+                  <FormHelperText>
+                    El backend asignará el usuario autenticado automáticamente.
+                  </FormHelperText>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  label="Observaciones"
+                  value={observaciones}
+                  onChange={(event) => setObservaciones(event.target.value)}
+                  fullWidth
+                  multiline
+                  minRows={3}
+                />
+              </Grid>
+            </Grid>
+          </Paper>
+        );
+      case 2:
+        return (
+          <Paper sx={{ p: 3 }}>
+            <Stack spacing={3}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel id="producto-label">Producto</InputLabel>
+                    <Select
+                      labelId="producto-label"
+                      label="Producto"
+                      name="productoId"
+                      value={itemDraft.productoId}
+                      onChange={handleItemDraftChange}
+                      disabled={productsLoading}
+                    >
+                      <MenuItem value="" disabled>
+                        Seleccione un producto
+                      </MenuItem>
+                      {products.map((product) => (
+                        <MenuItem key={product._id} value={product._id}>
+                          {product.descripcion}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    {productsLoading && <FormHelperText>Cargando productos...</FormHelperText>}
+                    {dataError.products && <FormHelperText error>{dataError.products}</FormHelperText>}
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    label="Cantidad"
+                    name="cantidad"
+                    type="number"
+                    value={itemDraft.cantidad}
+                    onChange={handleItemDraftChange}
+                    fullWidth
+                    inputProps={{ min: 0, step: '0.01' }}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    color="primary"
+                    startIcon={editingIndex >= 0 ? <SaveIcon /> : <AddCircleIcon />}
+                    onClick={handleAddOrUpdateItem}
+                  >
+                    {editingIndex >= 0 ? 'Actualizar ítem' : 'Agregar ítem'}
+                  </Button>
+                </Grid>
+              </Grid>
+
+              <Divider />
+
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Producto</TableCell>
+                    <TableCell>Código</TableCell>
+                    <TableCell align="right">Cantidad</TableCell>
+                    <TableCell align="right">Stock actual</TableCell>
+                    <TableCell align="center">Acciones</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {items.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} align="center">
+                        <Typography variant="body2" color="text.secondary">
+                          No hay ítems cargados todavía.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    items.map((item, index) => (
+                      <TableRow key={item.productoId} hover>
+                        <TableCell>{item.descripcion}</TableCell>
+                        <TableCell>{item.codprod}</TableCell>
+                        <TableCell align="right">{item.cantidad}</TableCell>
+                        <TableCell align="right">{item.stkactual}</TableCell>
+                        <TableCell align="center">
+                          <Tooltip title="Editar">
+                            <IconButton color="primary" onClick={() => handleEditItem(index)}>
+                              <EditIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Eliminar">
+                            <IconButton color="error" onClick={() => handleRemoveItem(index)}>
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
+                <Typography variant="subtitle2">Total de ítems: {items.length}</Typography>
+                <Typography variant="subtitle2">Cantidad acumulada: {totalCantidad}</Typography>
+              </Stack>
+            </Stack>
+          </Paper>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Box>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+        <Typography variant="h5">Gestión de documentos</Typography>
+        <Button
+          variant="text"
+          color="secondary"
+          startIcon={<ReplayIcon />}
+          onClick={resetForm}
+          disabled={saving}
+        >
+          Reiniciar formulario
+        </Button>
+      </Stack>
+
+      <Stepper activeStep={activeStep} alternativeLabel sx={{ mb: 4 }}>
+        {steps.map((label) => (
+          <Step key={label}>
+            <StepLabel>{label}</StepLabel>
+          </Step>
+        ))}
+      </Stepper>
+
+      {Object.entries(dataError)
+        .filter(([, message]) => Boolean(message))
+        .map(([key, message]) => (
+          <Alert key={key} severity={key === 'sequence' ? 'warning' : 'error'} sx={{ mb: 2 }}>
+            {message}
+          </Alert>
+        ))}
+
+      {renderStepContent()}
+
+      <Stack direction="row" justifyContent="space-between" sx={{ mt: 4 }}>
+        <Button onClick={handleBack} disabled={activeStep === 0 || saving}>
+          Atrás
+        </Button>
+        {activeStep < steps.length - 1 ? (
+          <Button
+            variant="contained"
+            onClick={handleNext}
+            disabled={saving || (activeStep === 0 && !canProceedStep0) || (activeStep === 1 && !canProceedStep1)}
+          >
+            Siguiente
+          </Button>
+        ) : (
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleSubmit}
+            disabled={saving || !canSubmit}
+          >
+            {saving ? 'Guardando...' : 'Confirmar y guardar'}
+          </Button>
+        )}
+      </Stack>
+
+      <Snackbar open={alert.open} autoHideDuration={6000} onClose={closeAlert}>
+        <Alert onClose={closeAlert} severity={alert.severity} variant="filled" sx={{ width: '100%' }}>
+          {alert.message}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+}

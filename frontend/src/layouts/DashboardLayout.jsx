@@ -29,6 +29,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import HistoryIcon from '@mui/icons-material/History';
+import DescriptionIcon from '@mui/icons-material/Description';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -38,6 +39,7 @@ const navItems = [
   { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
   { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
+  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
