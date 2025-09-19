@@ -22,8 +22,8 @@ const itemSchema = new Schema({
     type: Number,
     required: [true, 'La cantidad es obligatoria'],
     validate: {
-      validator: (valor) => typeof valor === 'number' && !Number.isNaN(valor) && valor > 0,
-      message: 'La cantidad debe ser un número positivo',
+      validator: (valor) => Number.isInteger(valor) && valor > 0,
+      message: 'La cantidad debe ser un entero positivo',
     },
   },
   producto: {
