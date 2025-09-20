@@ -547,6 +547,19 @@ export default function DocumentsPage() {
     if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
       payload.nroDocumento = trimmedNumeroDocumento;
     }
+    if (selectedType === 'AJ+') {
+      const trimmedNumeroSugerido =
+        numeroSugerido?.toString().trim() || sequenceInfo?.numero?.toString().trim() || '';
+      if (!trimmedNumeroSugerido) {
+        setAlert({
+          open: true,
+          severity: 'warning',
+          message: 'No se pudo determinar el número sugerido para el ajuste.',
+        });
+        return;
+      }
+      payload.nroSugerido = trimmedNumeroSugerido;
+    }
     const responsableId = usuarioResponsable || selectedUserFromStorage || '';
     if (responsableId) {
       payload.usuarioResponsable = responsableId;
@@ -611,12 +624,10 @@ export default function DocumentsPage() {
           message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${formattedStockErrors.join(' | ')}`,
         });
       } else {
-        const manualNumber = baseType === 'R' ? numeroSugerido.trim() : '';
-        const successMessage = sequenceInfo
-          ? `Documento ${sequenceInfo.numero} registrado correctamente.`
-          : manualNumber
-            ? `Documento ${manualNumber} registrado correctamente.`
-            : 'Documento registrado correctamente.';
+        const backendNumber = data?.documento?.NrodeDocumento?.toString().trim();
+        const successMessage = backendNumber
+          ? `Documento ${backendNumber} registrado correctamente.`
+          : 'Documento registrado correctamente.';
         setAlert({ open: true, severity: 'success', message: successMessage });
         resetForm();
       }
