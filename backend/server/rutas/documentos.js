@@ -128,6 +128,40 @@ const parseItems = async (rawItems = []) => {
   return items;
 };
 
+const aggregateItemsByProducto = (items = []) => {
+  const aggregatedMap = new Map();
+
+  items.forEach((item) => {
+    const key = `${item.producto.toString()}::${item.codprod}`;
+    const current = aggregatedMap.get(key);
+    if (current) {
+      current.cantidad += item.cantidad;
+    } else {
+      aggregatedMap.set(key, {
+        producto: item.producto,
+        codprod: item.codprod,
+        cantidad: item.cantidad,
+      });
+    }
+  });
+
+  aggregatedMap.forEach((value) => {
+    if (
+      !Number.isFinite(value.cantidad) ||
+      !Number.isInteger(value.cantidad) ||
+      value.cantidad <= 0
+    ) {
+      const error = new Error(
+        `La cantidad total para el producto ${value.codprod} debe ser un entero positivo`,
+      );
+      error.status = 400;
+      throw error;
+    }
+  });
+
+  return [...aggregatedMap.values()];
+};
+
 // -----------------------------------------------------------------------------
 // 1. CREAR DOCUMENTO ------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -176,6 +210,15 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     items = await parseItems(body.items);
   } catch (error) {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
+  }
+
+  let aggregatedItemsNR = [];
+  if (tipo === 'NR') {
+    try {
+      aggregatedItemsNR = aggregateItemsByProducto(items);
+    } catch (error) {
+      return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
+    }
   }
 
   const data = {
@@ -230,7 +273,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
             continue;
           }
           stockResult.updates.push({
-            producto: updatedProduct._id.toString(),
+            producto: String(updatedProduct._id),
+            codprod: item.codprod,
+            incremento: item.cantidad,
             stkactual: Number(updatedProduct.stkactual ?? 0),
           });
         } catch (error) {
@@ -240,10 +285,49 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       }
     }
 
+    if (tipo === 'NR') {
+      for (const item of aggregatedItemsNR) {
+        const producto = await Producserv.findOne({ _id: item.producto })
+          .session(session)
+          .lean();
+
+        if (!producto) {
+          const error = new Error(`El producto ${item.codprod} no existe.`);
+          error.status = 400;
+          throw error;
+        }
+
+        if (producto.activo !== true) {
+          const error = new Error(`El producto ${item.codprod} está inactivo y no puede recibir stock.`);
+          error.status = 400;
+          throw error;
+        }
+
+        const updatedProduct = await Producserv.findByIdAndUpdate(
+          item.producto,
+          { $inc: { stkactual: item.cantidad } },
+          { new: true, session },
+        );
+
+        if (!updatedProduct) {
+          const error = new Error(`No se pudo actualizar el stock del producto ${item.codprod}.`);
+          error.status = 500;
+          throw error;
+        }
+
+        stockResult.updates.push({
+          producto: String(updatedProduct._id ?? item.producto),
+          codprod: item.codprod,
+          incremento: item.cantidad,
+          stkactual: Number(updatedProduct.stkactual ?? 0),
+        });
+      }
+    }
+
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
-    return res.status(500).json({
+    return res.status(error.status || 500).json({
       ok: false,
       err: { message: error?.message || 'No se pudo guardar el documento' },
     });
