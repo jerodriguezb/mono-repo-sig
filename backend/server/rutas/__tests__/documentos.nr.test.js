@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 jest.mock('../../modelos/documento', () => {
   const mockMongoose = require('mongoose');
   const store = [];
+  const pendingBySession = new Map();
   const existsMock = jest.fn(async (query = {}) => {
     const found = store.find((doc) => {
       if (query.NrodeDocumento && doc.NrodeDocumento !== query.NrodeDocumento) return false;
@@ -31,8 +32,8 @@ jest.mock('../../modelos/documento', () => {
       this._id = new mockMongoose.Types.ObjectId().toString();
     }
 
-    async save() {
-      store.push({
+    async save(options = {}) {
+      const docData = {
         _id: this._id,
         prefijo: this.prefijo,
         tipo: this.tipo,
@@ -43,7 +44,15 @@ jest.mock('../../modelos/documento', () => {
         usuario: this.usuario,
         NrodeDocumento: this.NrodeDocumento,
         activo: this.activo,
-      });
+      };
+
+      if (options?.session) {
+        const pending = pendingBySession.get(options.session) || [];
+        pending.push(docData);
+        pendingBySession.set(options.session, pending);
+      } else {
+        store.push(docData);
+      }
       return this;
     }
 
@@ -54,9 +63,18 @@ jest.mock('../../modelos/documento', () => {
 
   DocumentoMock.exists = existsMock;
   DocumentoMock.__store = store;
+  DocumentoMock.__commitSession = (session) => {
+    const pending = pendingBySession.get(session) || [];
+    pending.forEach((doc) => store.push(doc));
+    pendingBySession.delete(session);
+  };
+  DocumentoMock.__abortSession = (session) => {
+    pendingBySession.delete(session);
+  };
   DocumentoMock.__reset = () => {
     store.length = 0;
     existsMock.mockClear();
+    pendingBySession.clear();
   };
 
   return DocumentoMock;
@@ -96,6 +114,19 @@ jest.mock('../../modelos/producserv', () => {
     }),
   }));
 
+  const findOneMock = jest.fn((query = {}) => {
+    const id = query && query._id ? String(query._id) : undefined;
+    const doc = id && store.has(id) ? { ...store.get(id) } : null;
+    const buildResponse = () => ({
+      lean: () => Promise.resolve(doc),
+    });
+
+    return {
+      session: () => buildResponse(),
+      lean: () => Promise.resolve(doc),
+    };
+  });
+
   const findByIdAndUpdateMock = jest.fn(async (id, update = {}) => {
     const key = String(id);
     const current = store.get(key);
@@ -112,9 +143,11 @@ jest.mock('../../modelos/producserv', () => {
     __reset: () => {
       store.clear();
       findMock.mockClear();
+      findOneMock.mockClear();
       findByIdAndUpdateMock.mockClear();
     },
     find: findMock,
+    findOne: findOneMock,
     findByIdAndUpdate: findByIdAndUpdateMock,
   };
 });
@@ -128,8 +161,12 @@ const router = require('../documentos');
 
 const sessionStub = {
   startTransaction: jest.fn().mockResolvedValue(),
-  commitTransaction: jest.fn().mockResolvedValue(),
-  abortTransaction: jest.fn().mockResolvedValue(),
+  commitTransaction: jest.fn().mockImplementation(async () => {
+    Documento.__commitSession(sessionStub);
+  }),
+  abortTransaction: jest.fn().mockImplementation(async () => {
+    Documento.__abortSession(sessionStub);
+  }),
   endSession: jest.fn().mockResolvedValue(),
 };
 
@@ -180,6 +217,7 @@ describe('POST /documentos para Notas de Recepción (NR)', () => {
       tipo: 'PRODUCTO',
       iva: 21,
       stkactual: 0,
+      activo: true,
     };
     Producserv.__add(doc);
     return doc;
@@ -248,5 +286,61 @@ describe('POST /documentos para Notas de Recepción (NR)', () => {
     expect(segundaRespuesta.body.ok).toBe(false);
     expect(segundaRespuesta.body.err.message).toMatch(/Ya existe un documento activo/);
     expect(Documento.__store).toHaveLength(1);
+  });
+
+  test('suma las cantidades de productos repetidos y actualiza el stock una sola vez', async () => {
+    const proveedor = crearProveedor();
+    const producto = crearProducto();
+
+    const payload = {
+      tipo: 'NR',
+      prefijo: '12',
+      fechaRemito: '2024-05-20',
+      proveedor: proveedor._id,
+      items: [
+        { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+      ],
+      numeroSugerido: '0012NR00000001',
+    };
+
+    const response = await postDocumento(payload);
+
+    expect(response.status).toBe(201);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.stock.updates).toHaveLength(1);
+    expect(response.body.stock.updates[0]).toMatchObject({
+      producto: producto._id,
+      codprod: producto.codprod,
+      incremento: 5,
+    });
+    expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+    expect(Producserv.__store.get(producto._id).stkactual).toBe(5);
+  });
+
+  test('no incrementa stock cuando el producto está inactivo', async () => {
+    const proveedor = crearProveedor();
+    const producto = crearProducto();
+    Producserv.__add({ ...producto, activo: false, _id: producto._id });
+
+    const payload = {
+      tipo: 'NR',
+      prefijo: '12',
+      fechaRemito: '2024-05-20',
+      proveedor: proveedor._id,
+      items: [
+        { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+      ],
+      numeroSugerido: '0012NR00000001',
+    };
+
+    const response = await postDocumento(payload);
+
+    expect(response.status).toBe(400);
+    expect(response.body.ok).toBe(false);
+    expect(response.body.err.message).toMatch(/inactivo/);
+    expect(Documento.__store).toHaveLength(0);
+    expect(Producserv.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(sessionStub.abortTransaction).toHaveBeenCalledTimes(1);
   });
 });
