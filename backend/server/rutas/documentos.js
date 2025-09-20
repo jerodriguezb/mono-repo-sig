@@ -59,6 +59,17 @@ const normalizeRemitoNumber = (numero) => {
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
   return padSecuencia(parsed);
 };
+const normalizeNotaRecepcionNumber = (numero, prefijo) => {
+  if (numero === undefined || numero === null) return null;
+  const trimmed = numero.toString().trim().toUpperCase();
+  if (!trimmed) return null;
+  const expectedPrefijo = prefijo || '0001';
+  const pattern = new RegExp(`^${expectedPrefijo}NR\\d{8}$`);
+  if (!pattern.test(trimmed)) return null;
+  return trimmed;
+};
+const extractNumeroDocumento = (body = {}) =>
+  body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
 const documentoPopulate = [
   {
@@ -139,17 +150,24 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const userId = req.usuario?._id;
   if (!userId) return res.status(401).json({ ok: false, err: { message: 'Usuario no autenticado' } });
 
+  const resolvedPrefijo = prefijo || '0001';
+  const numeroCrudo = extractNumeroDocumento(body);
+
   let remitoNumero = null;
+  let notaRecepcionNumero = null;
   if (tipo === 'R') {
-    const numeroCrudo =
-      body.nroDocumento ??
-      body.numeroSugerido ??
-      body.numero ??
-      body.numeroRemito ??
-      null;
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
       return badRequest(res, 'El número de remito es obligatorio y debe ser un entero positivo.');
+    }
+  }
+  if (tipo === 'NR') {
+    notaRecepcionNumero = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
+    if (!notaRecepcionNumero) {
+      return badRequest(
+        res,
+        `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
+      );
     }
   }
 
@@ -160,7 +178,6 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
   }
 
-  const resolvedPrefijo = prefijo || '0001';
   const data = {
     tipo,
     proveedor: proveedorId,
@@ -172,6 +189,22 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (prefijo) data.prefijo = prefijo;
   if (tipo === 'R') {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
+  }
+  if (tipo === 'NR') {
+    data.NrodeDocumento = notaRecepcionNumero;
+  }
+
+  if (data.NrodeDocumento) {
+    const existingDocumento = await Documento.exists({
+      NrodeDocumento: data.NrodeDocumento,
+      activo: true,
+    });
+    if (existingDocumento) {
+      return res.status(409).json({
+        ok: false,
+        err: { message: `Ya existe un documento activo con el número ${data.NrodeDocumento}.` },
+      });
+    }
   }
 
   const session = await mongoose.startSession();
