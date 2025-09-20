@@ -123,8 +123,13 @@ documentoSchema.pre('save', function(next) {
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
-  if (this.isNew && this.NrodeDocumento && (tipo === 'R' || tipo === 'NR')) {
-    return next();
+  if (this.isNew && this.NrodeDocumento) {
+    if (tipo === 'R' || tipo === 'NR') {
+      return next();
+    }
+    if (tipo === 'AJ' && /^\d{4}AJ\d{8}$/.test(String(this.NrodeDocumento).toUpperCase())) {
+      return next();
+    }
   }
   this.NrodeDocumento = `${this.prefijo}${tipo}${padSecuencia(this.secuencia)}`;
   next();
