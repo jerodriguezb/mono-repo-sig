@@ -81,25 +81,7 @@ const isAjusteIncrementalOperacion = (operacion) => {
   if (operacion === undefined || operacion === null) return false;
   const normalized = normalizeText(operacion);
   if (!normalized) return false;
-  const incrementalTokens = new Set([
-    'INCREMENT',
-    'INCREMENTO',
-    'INCREMENTAR',
-    'INCREASE',
-    'SUMAR',
-    'SUMA',
-    'MAS',
-    'MAS+',
-    'AJ+',
-    'AJUSTE+',
-    'PLUS',
-    'POSITIVE',
-    'POS',
-    '+',
-    'ADD',
-    'AGREGAR',
-  ]);
-  return incrementalTokens.has(normalized);
+  return normalized === 'INCREMENT';
 };
 const extractNumeroDocumento = (body = {}) =>
   body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
@@ -266,9 +248,17 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   let aggregatedItemsNR = [];
+  let aggregatedItemsAjusteIncrement = [];
   if (tipo === 'NR') {
     try {
       aggregatedItemsNR = aggregateItemsByProducto(items);
+    } catch (error) {
+      return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
+    }
+  }
+  if (isAjusteIncremental) {
+    try {
+      aggregatedItemsAjusteIncrement = aggregateItemsByProducto(items);
     } catch (error) {
       return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
     }
@@ -312,6 +302,24 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   try {
     await session.startTransaction();
+
+    if (data.NrodeDocumento && typeof Documento.findOne === 'function') {
+      const baseQuery = Documento.findOne({
+        NrodeDocumento: data.NrodeDocumento,
+        activo: true,
+      });
+      const queryWithSession = baseQuery?.session?.(session) ?? baseQuery;
+      const queryWithSelect = queryWithSession?.select?.('_id') ?? queryWithSession;
+      const queryWithLean = queryWithSelect?.lean?.() ?? queryWithSelect;
+      const documentoExistenteTx = await (queryWithLean?.exec?.() ?? queryWithLean);
+      if (documentoExistenteTx) {
+        const error = new Error(
+          `Ya existe un documento activo con el número ${data.NrodeDocumento}.`,
+        );
+        error.status = 409;
+        throw error;
+      }
+    }
 
     const documento = new Documento(data);
     documentoDB = await documento.save({ session });
@@ -380,12 +388,60 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       }
     }
 
+    if (isAjusteIncremental) {
+      for (const item of aggregatedItemsAjusteIncrement) {
+        const producto = await Producserv.findById(item.producto)
+          .session(session)
+          .select('activo stkactual')
+          .lean();
+
+        if (!producto) {
+          const error = new Error(`El producto ${item.codprod} no existe.`);
+          error.status = 400;
+          throw error;
+        }
+
+        if (producto.activo !== true) {
+          stockResult.errors.push(
+            `Se omitió el producto ${item.codprod} porque está inactivo y no puede recibir stock.`,
+          );
+          continue;
+        }
+
+        const updatedProduct = await Producserv.findByIdAndUpdate(
+          item.producto,
+          { $inc: { stkactual: item.cantidad } },
+          { new: true, session },
+        );
+
+        if (!updatedProduct) {
+          const error = new Error(
+            `No se pudo incrementar el stock del producto ${item.codprod}.`,
+          );
+          error.status = 500;
+          throw error;
+        }
+
+        stockResult.updates.push({
+          producto: String(updatedProduct._id ?? item.producto),
+          codprod: item.codprod,
+          incremento: item.cantidad,
+          stkactual: Number(updatedProduct.stkactual ?? 0),
+        });
+      }
+    }
+
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
-    return res.status(error.status || 500).json({
+    const duplicateKey = error?.code === 11000;
+    const status = error.status || (duplicateKey ? 409 : 500);
+    const message = duplicateKey
+      ? `Ya existe un documento activo con el número ${data.NrodeDocumento}.`
+      : error?.message || 'No se pudo guardar el documento';
+    return res.status(status).json({
       ok: false,
-      err: { message: error?.message || 'No se pudo guardar el documento' },
+      err: { message },
     });
   } finally {
     await session.endSession();
@@ -396,7 +452,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   await documentoDB.populate(documentoPopulate);
-  const documentoRespuesta = documentoDB.toObject();
+  const documentoRespuesta =
+    typeof documentoDB.toObject === 'function' ? documentoDB.toObject() : documentoDB;
 
   const responsePayload = { ok: true, documento: documentoRespuesta, stock: stockResult };
   res.status(201).json(responsePayload);
