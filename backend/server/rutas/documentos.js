@@ -68,6 +68,39 @@ const normalizeNotaRecepcionNumber = (numero, prefijo) => {
   if (!pattern.test(trimmed)) return null;
   return trimmed;
 };
+const normalizeAjusteIncrementNumber = (numero, prefijo) => {
+  if (numero === undefined || numero === null) return null;
+  const trimmed = numero.toString().trim().toUpperCase();
+  if (!trimmed) return null;
+  const expectedPrefijo = prefijo || '0001';
+  const pattern = new RegExp(`^${expectedPrefijo}AJ\\d{8}$`);
+  if (!pattern.test(trimmed)) return null;
+  return trimmed;
+};
+const isAjusteIncrementalOperacion = (operacion) => {
+  if (operacion === undefined || operacion === null) return false;
+  const normalized = normalizeText(operacion);
+  if (!normalized) return false;
+  const incrementalTokens = new Set([
+    'INCREMENT',
+    'INCREMENTO',
+    'INCREMENTAR',
+    'INCREASE',
+    'SUMAR',
+    'SUMA',
+    'MAS',
+    'MAS+',
+    'AJ+',
+    'AJUSTE+',
+    'PLUS',
+    'POSITIVE',
+    'POS',
+    '+',
+    'ADD',
+    'AGREGAR',
+  ]);
+  return incrementalTokens.has(normalized);
+};
 const extractNumeroDocumento = (body = {}) =>
   body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
@@ -189,6 +222,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   let remitoNumero = null;
   let notaRecepcionNumero = null;
+  let ajusteIncrementNumero = null;
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
@@ -201,6 +235,25 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       return badRequest(
         res,
         `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
+      );
+    }
+  }
+  const ajusteOperacionRaw = body?.ajusteOperacion ?? body?.operacionAjuste ?? body?.operacion;
+  const isAjusteIncremental = tipo === 'AJ' && isAjusteIncrementalOperacion(ajusteOperacionRaw);
+  const nroSugeridoRaw = body?.nroSugerido;
+  const nroSugeridoProvided = nroSugeridoRaw !== undefined && nroSugeridoRaw !== null;
+  if (tipo === 'AJ' && (isAjusteIncremental || nroSugeridoProvided)) {
+    if (typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
+      const message = isAjusteIncremental
+        ? 'El número sugerido es obligatorio para los ajustes positivos.'
+        : 'El número sugerido debe ser un string no vacío.';
+      return badRequest(res, message);
+    }
+    ajusteIncrementNumero = normalizeAjusteIncrementNumber(nroSugeridoRaw, resolvedPrefijo);
+    if (!ajusteIncrementNumero) {
+      return badRequest(
+        res,
+        `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
     }
   }
@@ -235,6 +288,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
   if (tipo === 'NR') {
     data.NrodeDocumento = notaRecepcionNumero;
+  }
+  if (tipo === 'AJ' && ajusteIncrementNumero) {
+    data.NrodeDocumento = ajusteIncrementNumero;
   }
 
   if (data.NrodeDocumento) {
@@ -340,8 +396,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   await documentoDB.populate(documentoPopulate);
+  const documentoRespuesta = documentoDB.toObject();
 
-  const responsePayload = { ok: true, documento: documentoDB, stock: stockResult };
+  const responsePayload = { ok: true, documento: documentoRespuesta, stock: stockResult };
   res.status(201).json(responsePayload);
 }));
 
