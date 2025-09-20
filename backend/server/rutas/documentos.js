@@ -59,6 +59,11 @@ const normalizeRemitoNumber = (numero) => {
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
   return padSecuencia(parsed);
 };
+const isValidNotaRecepcionNumero = (numero) => {
+  if (typeof numero !== 'string') return false;
+  if (!numero.trim()) return false;
+  return /^\d{5}R\d{8}$/.test(numero);
+};
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
 const documentoPopulate = [
   {
@@ -140,6 +145,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (!userId) return res.status(401).json({ ok: false, err: { message: 'Usuario no autenticado' } });
 
   let remitoNumero = null;
+  let notaRecepcionNumero = null;
   if (tipo === 'R') {
     const numeroCrudo =
       body.nroDocumento ??
@@ -151,6 +157,17 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     if (!remitoNumero) {
       return badRequest(res, 'El número de remito es obligatorio y debe ser un entero positivo.');
     }
+  } else if (tipo === 'NR') {
+    if (body.numeroSugerido === undefined || body.numeroSugerido === null) {
+      return badRequest(res, 'El número sugerido es obligatorio para las notas de recepción.');
+    }
+    if (typeof body.numeroSugerido !== 'string') {
+      return badRequest(res, 'El número sugerido debe ser una cadena con formato válido.');
+    }
+    if (!isValidNotaRecepcionNumero(body.numeroSugerido)) {
+      return badRequest(res, 'El número sugerido debe respetar el formato NNNNNRNNNNNNNN.');
+    }
+    notaRecepcionNumero = body.numeroSugerido;
   }
 
   let items;
@@ -172,6 +189,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (prefijo) data.prefijo = prefijo;
   if (tipo === 'R') {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
+  } else if (tipo === 'NR') {
+    data.NrodeDocumento = notaRecepcionNumero;
   }
 
   const session = await mongoose.startSession();
