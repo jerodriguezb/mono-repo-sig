@@ -541,8 +541,11 @@ export default function DocumentsPage() {
         codprod: item.codprod,
       })),
     };
-    if (baseType === 'R') {
-      payload.nroDocumento = numeroSugerido;
+    const rawNumeroDocumento =
+      baseType === 'NR' && sequenceInfo?.numero ? sequenceInfo.numero : numeroSugerido;
+    const trimmedNumeroDocumento = rawNumeroDocumento?.toString().trim();
+    if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
+      payload.nroDocumento = trimmedNumeroDocumento;
     }
     const responsableId = usuarioResponsable || selectedUserFromStorage || '';
     if (responsableId) {

@@ -59,6 +59,17 @@ const normalizeRemitoNumber = (numero) => {
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
   return padSecuencia(parsed);
 };
+const normalizeNotaRecepcionNumber = (numero, prefijo) => {
+  if (numero === undefined || numero === null) return null;
+  const trimmed = numero.toString().trim().toUpperCase();
+  if (!trimmed) return null;
+  const expectedPrefijo = prefijo || '0001';
+  const pattern = new RegExp(`^${expectedPrefijo}NR\\d{8}$`);
+  if (!pattern.test(trimmed)) return null;
+  return trimmed;
+};
+const extractNumeroDocumento = (body = {}) =>
+  body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
 const documentoPopulate = [
   {
@@ -117,6 +128,40 @@ const parseItems = async (rawItems = []) => {
   return items;
 };
 
+const aggregateItemsByProducto = (items = []) => {
+  const aggregatedMap = new Map();
+
+  items.forEach((item) => {
+    const key = `${item.producto.toString()}::${item.codprod}`;
+    const current = aggregatedMap.get(key);
+    if (current) {
+      current.cantidad += item.cantidad;
+    } else {
+      aggregatedMap.set(key, {
+        producto: item.producto,
+        codprod: item.codprod,
+        cantidad: item.cantidad,
+      });
+    }
+  });
+
+  aggregatedMap.forEach((value) => {
+    if (
+      !Number.isFinite(value.cantidad) ||
+      !Number.isInteger(value.cantidad) ||
+      value.cantidad <= 0
+    ) {
+      const error = new Error(
+        `La cantidad total para el producto ${value.codprod} debe ser un entero positivo`,
+      );
+      error.status = 400;
+      throw error;
+    }
+  });
+
+  return [...aggregatedMap.values()];
+};
+
 // -----------------------------------------------------------------------------
 // 1. CREAR DOCUMENTO ------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -139,17 +184,24 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const userId = req.usuario?._id;
   if (!userId) return res.status(401).json({ ok: false, err: { message: 'Usuario no autenticado' } });
 
+  const resolvedPrefijo = prefijo || '0001';
+  const numeroCrudo = extractNumeroDocumento(body);
+
   let remitoNumero = null;
+  let notaRecepcionNumero = null;
   if (tipo === 'R') {
-    const numeroCrudo =
-      body.nroDocumento ??
-      body.numeroSugerido ??
-      body.numero ??
-      body.numeroRemito ??
-      null;
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
       return badRequest(res, 'El número de remito es obligatorio y debe ser un entero positivo.');
+    }
+  }
+  if (tipo === 'NR') {
+    notaRecepcionNumero = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
+    if (!notaRecepcionNumero) {
+      return badRequest(
+        res,
+        `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
+      );
     }
   }
 
@@ -160,7 +212,15 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
   }
 
-  const resolvedPrefijo = prefijo || '0001';
+  let aggregatedItemsNR = [];
+  if (tipo === 'NR') {
+    try {
+      aggregatedItemsNR = aggregateItemsByProducto(items);
+    } catch (error) {
+      return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
+    }
+  }
+
   const data = {
     tipo,
     proveedor: proveedorId,
@@ -172,6 +232,22 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (prefijo) data.prefijo = prefijo;
   if (tipo === 'R') {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
+  }
+  if (tipo === 'NR') {
+    data.NrodeDocumento = notaRecepcionNumero;
+  }
+
+  if (data.NrodeDocumento) {
+    const existingDocumento = await Documento.exists({
+      NrodeDocumento: data.NrodeDocumento,
+      activo: true,
+    });
+    if (existingDocumento) {
+      return res.status(409).json({
+        ok: false,
+        err: { message: `Ya existe un documento activo con el número ${data.NrodeDocumento}.` },
+      });
+    }
   }
 
   const session = await mongoose.startSession();
@@ -197,7 +273,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
             continue;
           }
           stockResult.updates.push({
-            producto: updatedProduct._id.toString(),
+            producto: String(updatedProduct._id),
+            codprod: item.codprod,
+            incremento: item.cantidad,
             stkactual: Number(updatedProduct.stkactual ?? 0),
           });
         } catch (error) {
@@ -207,10 +285,49 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       }
     }
 
+    if (tipo === 'NR') {
+      for (const item of aggregatedItemsNR) {
+        const producto = await Producserv.findOne({ _id: item.producto })
+          .session(session)
+          .lean();
+
+        if (!producto) {
+          const error = new Error(`El producto ${item.codprod} no existe.`);
+          error.status = 400;
+          throw error;
+        }
+
+        if (producto.activo !== true) {
+          const error = new Error(`El producto ${item.codprod} está inactivo y no puede recibir stock.`);
+          error.status = 400;
+          throw error;
+        }
+
+        const updatedProduct = await Producserv.findByIdAndUpdate(
+          item.producto,
+          { $inc: { stkactual: item.cantidad } },
+          { new: true, session },
+        );
+
+        if (!updatedProduct) {
+          const error = new Error(`No se pudo actualizar el stock del producto ${item.codprod}.`);
+          error.status = 500;
+          throw error;
+        }
+
+        stockResult.updates.push({
+          producto: String(updatedProduct._id ?? item.producto),
+          codprod: item.codprod,
+          incremento: item.cantidad,
+          stkactual: Number(updatedProduct.stkactual ?? 0),
+        });
+      }
+    }
+
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
-    return res.status(500).json({
+    return res.status(error.status || 500).json({
       ok: false,
       err: { message: error?.message || 'No se pudo guardar el documento' },
     });
