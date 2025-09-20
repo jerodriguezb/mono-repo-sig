@@ -44,6 +44,7 @@ const navItems = [
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
 ];
 
 export default function DashboardLayout({ themeName, setThemeName }) {
