@@ -59,8 +59,6 @@ const documentoSchema = new Schema({
   secuencia: Number,
   NrodeDocumento: {
     type: String,
-    // unique: true,
-    index: true,
   },
   proveedor: {
     type: Schema.Types.ObjectId,
@@ -125,7 +123,7 @@ documentoSchema.pre('save', function(next) {
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
-  if (tipo === 'R' && this.isNew && this.NrodeDocumento) {
+  if (this.isNew && this.NrodeDocumento && (tipo === 'R' || tipo === 'NR')) {
     return next();
   }
   this.NrodeDocumento = `${this.prefijo}${tipo}${padSecuencia(this.secuencia)}`;
@@ -133,6 +131,10 @@ documentoSchema.pre('save', function(next) {
 });
 
 documentoSchema.index({ tipo: 1, secuencia: 1 }, { unique: true });
+documentoSchema.index({ NrodeDocumento: 1 }, {
+  unique: true,
+  partialFilterExpression: { activo: true, NrodeDocumento: { $exists: true } },
+});
 
 documentoSchema.statics.TIPOS_DOCUMENTO = TIPOS_DOCUMENTO;
 documentoSchema.statics.ZONA_ARGENTINA = ZONA_ARGENTINA;
