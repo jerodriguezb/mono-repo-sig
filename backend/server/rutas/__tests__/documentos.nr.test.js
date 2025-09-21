@@ -296,6 +296,7 @@ describe('POST /documentos', () => {
 
       const primeraRespuesta = await postDocumento(payload, token);
       expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.ok).toBe(true);
       expect(Documento.__store).toHaveLength(1);
 
       const segundaRespuesta = await postDocumento(payload, token);
@@ -425,6 +426,78 @@ describe('POST /documentos', () => {
       expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
       expect(Producserv.__store.get(producto._id).stkactual).toBe(9);
       expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000042');
+    });
+
+    test('persiste cantidades negativas cuando el marcador indica Ajuste (–)', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 15 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-07-15',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000999',
+        documentoMarca: 'Ajuste (–)',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.items).toHaveLength(1);
+      expect(response.body.documento.items[0].cantidad).toBe(-3);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-3);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(12);
+      expect(payload.items[0].cantidad).toBe(3);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('un reintento de ajuste negativo no duplica la inversión de signo', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 20 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-08-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000111',
+        documentoMarca: 'Ajuste (–)',
+        items: [
+          { cantidad: 4, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const primeraRespuesta = await postDocumento(payload, token);
+
+      expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.ok).toBe(true);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-4);
+      expect(primeraRespuesta.body.documento.items[0].cantidad).toBe(-4);
+      expect(payload.items[0].cantidad).toBe(4);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+
+      payload.nroSugerido = '0001AJ00000112';
+
+      const segundaRespuesta = await postDocumento(payload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.ok).toBe(true);
+      expect(Documento.__store).toHaveLength(2);
+      expect(Documento.__store[1].items[0].cantidad).toBe(-4);
+      expect(segundaRespuesta.body.documento.items[0].cantidad).toBe(-4);
+      expect(payload.items[0].cantidad).toBe(4);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(2);
+      expect(Documento.__store.map((doc) => doc.items[0].cantidad)).toEqual([-4, -4]);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(12);
     });
   });
 });
