@@ -373,6 +373,7 @@ describe('POST /documentos', () => {
         fechaRemito: '2024-05-20',
         proveedor: proveedor._id,
         ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000123',
         items: [
           { cantidad: 3, producto: producto._id, codprod: producto.codprod },
         ],
@@ -391,6 +392,7 @@ describe('POST /documentos', () => {
       });
       expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
       expect(Producserv.__store.get(producto._id).stkactual).toBe(7);
+      expect(Documento.__store[0].NrodeDocumento).toBe(payload.nroSugerido);
     });
 
     test('realiza un ajuste positivo sumando stock y conserva el número sugerido', async () => {
