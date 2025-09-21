@@ -550,7 +550,7 @@ export default function DocumentsPage() {
     if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
       payload.nroDocumento = trimmedNumeroDocumento;
     }
-    if (selectedType === 'AJ+') {
+    if (selectedType === 'AJ+' || selectedType === 'AJ-') {
       const trimmedNumeroSugerido =
         numeroSugerido?.toString().trim() || sequenceInfo?.numero?.toString().trim() || '';
       if (!trimmedNumeroSugerido) {
