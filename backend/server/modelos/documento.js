@@ -22,8 +22,8 @@ const itemSchema = new Schema({
     type: Number,
     required: [true, 'La cantidad es obligatoria'],
     validate: {
-      validator: (valor) => Number.isInteger(valor) && valor > 0,
-      message: 'La cantidad debe ser un entero positivo',
+      validator: (valor) => Number.isInteger(valor) && valor !== 0,
+      message: 'La cantidad debe ser un entero distinto de cero',
     },
   },
   producto: {
