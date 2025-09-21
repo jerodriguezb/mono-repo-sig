@@ -223,6 +223,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   let remitoNumero = null;
   let notaRecepcionNumero = null;
   let ajusteIncrementNumero = null;
+  let ajusteManualNumero = null;
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
@@ -249,12 +250,18 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         : 'El número sugerido debe ser un string no vacío.';
       return badRequest(res, message);
     }
-    ajusteIncrementNumero = normalizeAjusteIncrementNumber(nroSugeridoRaw, resolvedPrefijo);
-    if (!ajusteIncrementNumero) {
+    const nroSugeridoTrimmed = nroSugeridoRaw.trim();
+    const nroSugeridoValidado = normalizeAjusteIncrementNumber(nroSugeridoTrimmed, resolvedPrefijo);
+    if (!nroSugeridoValidado) {
       return badRequest(
         res,
         `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
+    }
+    if (isAjusteIncremental) {
+      ajusteIncrementNumero = nroSugeridoValidado;
+    } else {
+      ajusteManualNumero = nroSugeridoRaw;
     }
   }
 
@@ -289,8 +296,12 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (tipo === 'NR') {
     data.NrodeDocumento = notaRecepcionNumero;
   }
-  if (tipo === 'AJ' && ajusteIncrementNumero) {
-    data.NrodeDocumento = ajusteIncrementNumero;
+  if (tipo === 'AJ') {
+    if (ajusteIncrementNumero) {
+      data.NrodeDocumento = ajusteIncrementNumero;
+    } else if (ajusteManualNumero) {
+      data.NrodeDocumento = ajusteManualNumero;
+    }
   }
 
   if (data.NrodeDocumento) {
