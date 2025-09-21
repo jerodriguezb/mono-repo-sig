@@ -541,6 +541,9 @@ export default function DocumentsPage() {
         codprod: item.codprod,
       })),
     };
+    if (baseType === 'AJ') {
+      payload.ajusteOperacion = ajusteOperacion === 'increment' ? 'increment' : 'decrement';
+    }
     const rawNumeroDocumento =
       baseType === 'NR' && sequenceInfo?.numero ? sequenceInfo.numero : numeroSugerido;
     const trimmedNumeroDocumento = rawNumeroDocumento?.toString().trim();

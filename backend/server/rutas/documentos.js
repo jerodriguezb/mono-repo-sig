@@ -341,6 +341,38 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       }
     }
 
+    if (tipo === 'AJ') {
+      for (const item of items) {
+        const delta = isAjusteIncremental ? item.cantidad : -item.cantidad;
+        try {
+          const updatedProduct = await Producserv.findByIdAndUpdate(
+            item.producto,
+            { $inc: { stkactual: delta } },
+            { new: true, session },
+          );
+          if (!updatedProduct) {
+            stockResult.errors.push(`No se encontró el producto ${item.codprod} para actualizar el stock.`);
+            continue;
+          }
+          const updatePayload = {
+            producto: String(updatedProduct._id),
+            codprod: item.codprod,
+            stkactual: Number(updatedProduct.stkactual ?? 0),
+            operacion: isAjusteIncremental ? 'increment' : 'decrement',
+          };
+          if (isAjusteIncremental) {
+            updatePayload.incremento = item.cantidad;
+          } else {
+            updatePayload.decremento = item.cantidad;
+          }
+          stockResult.updates.push(updatePayload);
+        } catch (error) {
+          const message = error?.message || 'operación fallida';
+          stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+        }
+      }
+    }
+
     if (tipo === 'NR') {
       for (const item of aggregatedItemsNR) {
         const producto = await Producserv.findOne({ _id: item.producto })
