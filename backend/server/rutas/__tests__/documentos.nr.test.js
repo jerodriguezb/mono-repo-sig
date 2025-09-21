@@ -59,6 +59,21 @@ jest.mock('../../modelos/documento', () => {
     async populate() {
       return this;
     }
+
+    toObject() {
+      return {
+        _id: this._id,
+        prefijo: this.prefijo,
+        tipo: this.tipo,
+        proveedor: this.proveedor,
+        fechaRemito: this.fechaRemito,
+        items: this.items,
+        observaciones: this.observaciones,
+        usuario: this.usuario,
+        NrodeDocumento: this.NrodeDocumento,
+        activo: this.activo,
+      };
+    }
   }
 
   DocumentoMock.exists = existsMock;
@@ -174,7 +189,40 @@ const app = express();
 app.use(express.json());
 app.use(router);
 
-describe('POST /documentos para Notas de Recepción (NR)', () => {
+const postDocumento = (payload, authToken) =>
+  request(app)
+    .post('/documentos')
+    .set('Authorization', `Bearer ${authToken}`)
+    .send(payload);
+
+const crearProveedor = () => {
+  const doc = {
+    _id: new mongoose.Types.ObjectId().toString(),
+    codprov: 1,
+    razonsocial: 'Proveedor Test',
+    domicilio: 'Calle Falsa 123',
+    telefono: '123456789',
+  };
+  Proveedor.__add(doc);
+  return doc;
+};
+
+const crearProducto = (overrides = {}) => {
+  const doc = {
+    _id: new mongoose.Types.ObjectId().toString(),
+    codprod: 'SKU-001',
+    descripcion: 'Producto Test',
+    tipo: 'PRODUCTO',
+    iva: 21,
+    stkactual: 0,
+    activo: true,
+    ...overrides,
+  };
+  Producserv.__add(doc);
+  return doc;
+};
+
+describe('POST /documentos', () => {
   let token;
 
   beforeAll(() => {
@@ -197,150 +245,184 @@ describe('POST /documentos para Notas de Recepción (NR)', () => {
     sessionStub.endSession.mockClear();
   });
 
-  const crearProveedor = () => {
-    const doc = {
-      _id: new mongoose.Types.ObjectId().toString(),
-      codprov: 1,
-      razonsocial: 'Proveedor Test',
-      domicilio: 'Calle Falsa 123',
-      telefono: '123456789',
-    };
-    Proveedor.__add(doc);
-    return doc;
-  };
+  describe('para Notas de Recepción (NR)', () => {
+    const buildPayload = () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
 
-  const crearProducto = () => {
-    const doc = {
-      _id: new mongoose.Types.ObjectId().toString(),
-      codprod: 'SKU-001',
-      descripcion: 'Producto Test',
-      tipo: 'PRODUCTO',
-      iva: 21,
-      stkactual: 0,
-      activo: true,
-    };
-    Producserv.__add(doc);
-    return doc;
-  };
-
-  const buildPayload = () => {
-    const proveedor = crearProveedor();
-    const producto = crearProducto();
-
-    return {
-      tipo: 'NR',
-      prefijo: '12',
-      fechaRemito: '2024-05-20',
-      proveedor: proveedor._id,
-      items: [
-        {
-          cantidad: 2,
-          producto: producto._id,
-          codprod: producto.codprod,
-        },
-      ],
-      numeroSugerido: '0012NR00000001',
-    };
-  };
-
-  const postDocumento = (payload) =>
-    request(app)
-      .post('/documentos')
-      .set('Authorization', `Bearer ${token}`)
-      .send(payload);
-
-  test('crea una NR con número válido y lo conserva', async () => {
-    const payload = buildPayload();
-
-    const response = await postDocumento(payload);
-
-    expect(response.status).toBe(201);
-    expect(response.body.ok).toBe(true);
-    expect(response.body.documento.NrodeDocumento).toBe('0012NR00000001');
-
-    expect(Documento.__store).toHaveLength(1);
-    expect(Documento.__store[0].NrodeDocumento).toBe('0012NR00000001');
-    expect(Documento.__store[0].prefijo).toBe('0012');
-  });
-
-  test('rechaza una NR con formato inválido', async () => {
-    const payload = { ...buildPayload(), numeroSugerido: '0012NR12' };
-
-    const response = await postDocumento(payload);
-
-    expect(response.status).toBe(400);
-    expect(response.body.ok).toBe(false);
-    expect(response.body.err.message).toMatch(/formato 0012NR/);
-    expect(Documento.__store).toHaveLength(0);
-  });
-
-  test('rechaza la creación duplicada de una NR activa', async () => {
-    const payload = buildPayload();
-
-    const primeraRespuesta = await postDocumento(payload);
-    expect(primeraRespuesta.status).toBe(201);
-    expect(Documento.__store).toHaveLength(1);
-
-    const segundaRespuesta = await postDocumento(payload);
-    expect(segundaRespuesta.status).toBe(409);
-    expect(segundaRespuesta.body.ok).toBe(false);
-    expect(segundaRespuesta.body.err.message).toMatch(/Ya existe un documento activo/);
-    expect(Documento.__store).toHaveLength(1);
-  });
-
-  test('suma las cantidades de productos repetidos y actualiza el stock una sola vez', async () => {
-    const proveedor = crearProveedor();
-    const producto = crearProducto();
-
-    const payload = {
-      tipo: 'NR',
-      prefijo: '12',
-      fechaRemito: '2024-05-20',
-      proveedor: proveedor._id,
-      items: [
-        { cantidad: 2, producto: producto._id, codprod: producto.codprod },
-        { cantidad: 3, producto: producto._id, codprod: producto.codprod },
-      ],
-      numeroSugerido: '0012NR00000001',
+      return {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          {
+            cantidad: 2,
+            producto: producto._id,
+            codprod: producto.codprod,
+          },
+        ],
+        numeroSugerido: '0012NR00000001',
+      };
     };
 
-    const response = await postDocumento(payload);
+    test('crea una NR con número válido y lo conserva', async () => {
+      const payload = buildPayload();
 
-    expect(response.status).toBe(201);
-    expect(response.body.ok).toBe(true);
-    expect(response.body.stock.updates).toHaveLength(1);
-    expect(response.body.stock.updates[0]).toMatchObject({
-      producto: producto._id,
-      codprod: producto.codprod,
-      incremento: 5,
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.NrodeDocumento).toBe('0012NR00000001');
+
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].NrodeDocumento).toBe('0012NR00000001');
+      expect(Documento.__store[0].prefijo).toBe('0012');
     });
-    expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
-    expect(Producserv.__store.get(producto._id).stkactual).toBe(5);
+
+    test('rechaza una NR con formato inválido', async () => {
+      const payload = { ...buildPayload(), numeroSugerido: '0012NR12' };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(400);
+      expect(response.body.ok).toBe(false);
+      expect(response.body.err.message).toMatch(/formato 0012NR/);
+      expect(Documento.__store).toHaveLength(0);
+    });
+
+    test('rechaza la creación duplicada de una NR activa', async () => {
+      const payload = buildPayload();
+
+      const primeraRespuesta = await postDocumento(payload, token);
+      expect(primeraRespuesta.status).toBe(201);
+      expect(Documento.__store).toHaveLength(1);
+
+      const segundaRespuesta = await postDocumento(payload, token);
+      expect(segundaRespuesta.status).toBe(409);
+      expect(segundaRespuesta.body.ok).toBe(false);
+      expect(segundaRespuesta.body.err.message).toMatch(/Ya existe un documento activo/);
+      expect(Documento.__store).toHaveLength(1);
+    });
+
+    test('suma las cantidades de productos repetidos y actualiza el stock una sola vez', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
+
+      const payload = {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+        numeroSugerido: '0012NR00000001',
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        incremento: 5,
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(5);
+    });
+
+    test('no incrementa stock cuando el producto está inactivo', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
+      Producserv.__add({ ...producto, activo: false, _id: producto._id });
+
+      const payload = {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+        numeroSugerido: '0012NR00000001',
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(400);
+      expect(response.body.ok).toBe(false);
+      expect(response.body.err.message).toMatch(/inactivo/);
+      expect(Documento.__store).toHaveLength(0);
+      expect(Producserv.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(sessionStub.abortTransaction).toHaveBeenCalledTimes(1);
+    });
   });
 
-  test('no incrementa stock cuando el producto está inactivo', async () => {
-    const proveedor = crearProveedor();
-    const producto = crearProducto();
-    Producserv.__add({ ...producto, activo: false, _id: producto._id });
+  describe('para Ajustes (AJ)', () => {
+    test('realiza un ajuste negativo descontando stock', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 10 });
 
-    const payload = {
-      tipo: 'NR',
-      prefijo: '12',
-      fechaRemito: '2024-05-20',
-      proveedor: proveedor._id,
-      items: [
-        { cantidad: 2, producto: producto._id, codprod: producto.codprod },
-      ],
-      numeroSugerido: '0012NR00000001',
-    };
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
 
-    const response = await postDocumento(payload);
+      const response = await postDocumento(payload, token);
 
-    expect(response.status).toBe(400);
-    expect(response.body.ok).toBe(false);
-    expect(response.body.err.message).toMatch(/inactivo/);
-    expect(Documento.__store).toHaveLength(0);
-    expect(Producserv.findByIdAndUpdate).not.toHaveBeenCalled();
-    expect(sessionStub.abortTransaction).toHaveBeenCalledTimes(1);
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        decremento: 3,
+        operacion: 'decrement',
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(7);
+    });
+
+    test('realiza un ajuste positivo sumando stock y conserva el número sugerido', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 4 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0007',
+        fechaRemito: '2024-06-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'increment',
+        nroSugerido: '0007AJ00000042',
+        items: [
+          { cantidad: 5, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        incremento: 5,
+        operacion: 'increment',
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(9);
+      expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000042');
+    });
   });
 });
