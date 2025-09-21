@@ -47,6 +47,13 @@ const DOCUMENT_TYPE_OPTIONS = [
   { value: 'AJ-', label: 'Ajuste (-)' },
 ];
 
+const DOCUMENT_TYPE_COLOR_MAP = {
+  R: 'cyan.main',
+  NR: 'cyan.main',
+  'AJ+': 'cyan.main',
+  'AJ-': 'error.main',
+};
+
 const DEFAULT_DATE = new Date().toISOString().split('T')[0];
 
 const normalizePrefijo = (value) => {
@@ -106,12 +113,31 @@ export default function DocumentsPage() {
   const [saving, setSaving] = useState(false);
   const [alert, setAlert] = useState({ open: false, severity: 'success', message: '' });
 
+  const selectedTypeLabel = useMemo(
+    () => DOCUMENT_TYPE_OPTIONS.find((option) => option.value === selectedType)?.label ?? '',
+    [selectedType],
+  );
   const baseType = useMemo(
     () => (selectedType.startsWith('AJ') ? 'AJ' : selectedType),
     [selectedType],
   );
   const previousBaseTypeRef = useRef(baseType);
   const productSearchRequestIdRef = useRef(0);
+
+  const shouldShowTitleSuffix = useMemo(
+    () => Boolean(selectedTypeLabel) && (activeStep === 1 || activeStep === 2),
+    [activeStep, selectedTypeLabel],
+  );
+
+  const titleText = useMemo(
+    () => (shouldShowTitleSuffix ? `Gestión de documentos — ${selectedTypeLabel}` : 'Gestión de documentos'),
+    [selectedTypeLabel, shouldShowTitleSuffix],
+  );
+
+  const titleColor = useMemo(
+    () => (shouldShowTitleSuffix ? DOCUMENT_TYPE_COLOR_MAP[selectedType] : undefined),
+    [selectedType, shouldShowTitleSuffix],
+  );
 
   const isNumeroSugeridoValid = useMemo(() => {
     if (baseType !== 'R') return true;
@@ -550,7 +576,7 @@ export default function DocumentsPage() {
     if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
       payload.nroDocumento = trimmedNumeroDocumento;
     }
-    if (selectedType === 'AJ+') {
+    if (selectedType === 'AJ+' || selectedType === 'AJ-') {
       const trimmedNumeroSugerido =
         numeroSugerido?.toString().trim() || sequenceInfo?.numero?.toString().trim() || '';
       if (!trimmedNumeroSugerido) {
@@ -945,7 +971,9 @@ export default function DocumentsPage() {
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Typography variant="h5">Gestión de documentos</Typography>
+        <Typography variant="h5" sx={titleColor ? { color: titleColor } : undefined}>
+          {titleText}
+        </Typography>
         <Button
           variant="text"
           color="secondary"
