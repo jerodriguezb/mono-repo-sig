@@ -272,6 +272,35 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
   }
 
+  const marcadorDocumentoRaw = [
+    body?.documentoMarca,
+    body?.documentMarker,
+    body?.marcaDocumento,
+    body?.documentoMarcador,
+    body?.documentTypeMarker,
+    body?.marcador,
+    body?.marker,
+    body?.marca,
+    body?.tipoMarcador,
+    body?.tipoSeleccion,
+  ].find((value) => typeof value === 'string' && value.trim());
+
+  const marcadorDocumentoNormalizado = marcadorDocumentoRaw
+    ? normalizeText(marcadorDocumentoRaw.replace(/–/g, '-'))
+    : '';
+  const marcadorDocumentoCompacto = marcadorDocumentoNormalizado.replace(/[\s()]/g, '');
+  const marcadorAjusteNegativo = new Set(['AJUSTE-', 'AJ-']);
+  const shouldPersistNegativeItems =
+    tipo === 'AJ' && marcadorAjusteNegativo.has(marcadorDocumentoCompacto);
+
+  const itemsParaDocumento = items.map((item) => {
+    const cloned = { ...item };
+    if (shouldPersistNegativeItems) {
+      cloned.cantidad = -Math.abs(item.cantidad);
+    }
+    return cloned;
+  });
+
   let aggregatedItemsNR = [];
   if (tipo === 'NR') {
     try {
@@ -286,7 +315,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     proveedor: proveedorId,
     fechaRemito: body.fechaRemito,
     usuario: userId,
-    items,
+    items: itemsParaDocumento,
     observaciones: body.observaciones,
   };
   if (prefijo) data.prefijo = prefijo;
