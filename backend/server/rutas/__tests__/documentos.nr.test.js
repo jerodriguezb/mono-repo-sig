@@ -494,6 +494,36 @@ describe('POST /documentos', () => {
       expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000042');
     });
 
+    test('persiste cantidades negativas cuando ajusteTipo indica ajuste (–)', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 18 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-07-10',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        ajusteTipo: 'AJ-',
+        nroSugerido: '0001AJ00000234',
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.items).toHaveLength(1);
+      expect(response.body.documento.items[0].cantidad).toBe(-2);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-2);
+      expect(payload.items[0].cantidad).toBe(2);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(16);
+    });
+
     test('persiste cantidades negativas cuando el marcador indica Ajuste (–)', async () => {
       const proveedor = crearProveedor();
       const producto = crearProducto({ stkactual: 15 });

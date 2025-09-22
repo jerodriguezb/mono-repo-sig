@@ -569,6 +569,9 @@ export default function DocumentsPage() {
     };
     if (baseType === 'AJ') {
       payload.ajusteOperacion = ajusteOperacion === 'increment' ? 'increment' : 'decrement';
+      if (selectedType === 'AJ-') {
+        payload.ajusteTipo = 'AJ-';
+      }
     }
     const rawNumeroDocumento =
       baseType === 'NR' && sequenceInfo?.numero ? sequenceInfo.numero : numeroSugerido;
