@@ -22,8 +22,8 @@ const itemSchema = new Schema({
     type: Number,
     required: [true, 'La cantidad es obligatoria'],
     validate: {
-      validator: (valor) => typeof valor === 'number' && !Number.isNaN(valor) && valor > 0,
-      message: 'La cantidad debe ser un número positivo',
+      validator: (valor) => Number.isInteger(valor) && valor !== 0,
+      message: 'La cantidad debe ser un entero distinto de cero',
     },
   },
   producto: {
@@ -59,8 +59,6 @@ const documentoSchema = new Schema({
   secuencia: Number,
   NrodeDocumento: {
     type: String,
-    // unique: true,
-    index: true,
   },
   proveedor: {
     type: Schema.Types.ObjectId,
@@ -125,14 +123,23 @@ documentoSchema.pre('save', function(next) {
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
-  if (tipo === 'R' && this.isNew && this.NrodeDocumento) {
-    return next();
+  if (this.isNew && this.NrodeDocumento) {
+    if (tipo === 'R' || tipo === 'NR') {
+      return next();
+    }
+    if (tipo === 'AJ' && /^\d{4}AJ\d{8}$/.test(String(this.NrodeDocumento).toUpperCase())) {
+      return next();
+    }
   }
   this.NrodeDocumento = `${this.prefijo}${tipo}${padSecuencia(this.secuencia)}`;
   next();
 });
 
 documentoSchema.index({ tipo: 1, secuencia: 1 }, { unique: true });
+documentoSchema.index({ NrodeDocumento: 1 }, {
+  unique: true,
+  partialFilterExpression: { activo: true, NrodeDocumento: { $exists: true } },
+});
 
 documentoSchema.statics.TIPOS_DOCUMENTO = TIPOS_DOCUMENTO;
 documentoSchema.statics.ZONA_ARGENTINA = ZONA_ARGENTINA;
