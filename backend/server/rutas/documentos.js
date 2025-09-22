@@ -101,6 +101,25 @@ const isAjusteIncrementalOperacion = (operacion) => {
   ]);
   return incrementalTokens.has(normalized);
 };
+const AJUSTE_NEGATIVO_TOKENS = new Set([
+  'AJ-',
+  'AJUSTE-',
+  'NEGATIVO',
+  'NEGATIVE',
+  'DECREMENT',
+  'DECREMENTO',
+  'RESTAR',
+  'MENOS',
+  'MINUS',
+]);
+const isAjusteNegativoHint = (value) => {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'boolean') return value;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+  const sanitized = normalized.replace(/–/g, '-').replace(/\s+/g, '');
+  return AJUSTE_NEGATIVO_TOKENS.has(sanitized);
+};
 const extractNumeroDocumento = (body = {}) =>
   body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
 const badRequest = (res, message) => res.status(400).json({ ok: false, err: { message } });
@@ -272,6 +291,16 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
   }
 
+  const ajusteTipoRaw = [
+    body?.ajusteTipo,
+    body?.tipoAjuste,
+    body?.ajusteTipoSeleccion,
+    body?.ajusteTipoMarcador,
+    body?.ajusteNegativo,
+    body?.esAjusteNegativo,
+    body?.ajusteEsNegativo,
+  ].find((value) => value !== undefined);
+
   const marcadorDocumentoRaw = [
     body?.documentoMarca,
     body?.documentMarker,
@@ -290,8 +319,11 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     : '';
   const marcadorDocumentoCompacto = marcadorDocumentoNormalizado.replace(/[\s()]/g, '');
   const marcadorAjusteNegativo = new Set(['AJUSTE-', 'AJ-']);
+  // La UI moderna envía ajusteTipo: 'AJ-' para indicar que las cantidades deben persistirse en negativo,
+  // pero mantenemos compatibilidad con el marcador textual usado previamente por hojas de cálculo.
   const shouldPersistNegativeItems =
-    tipo === 'AJ' && marcadorAjusteNegativo.has(marcadorDocumentoCompacto);
+    tipo === 'AJ' &&
+    (isAjusteNegativoHint(ajusteTipoRaw) || marcadorAjusteNegativo.has(marcadorDocumentoCompacto));
 
   const itemsParaDocumento = items.map((item) => {
     const cloned = { ...item };
