@@ -566,7 +566,45 @@ router.put('/documentos/:id', [verificaToken], asyncHandler(async (req, res) => 
     } catch (error) {
       return res.status(error.status || 500).json({ ok: false, err: { message: error.message } });
     }
-    documento.items = itemsActualizados;
+
+    const marcadorDocumentoRaw = [
+      body?.documentoMarca,
+      body?.documentMarker,
+      body?.marcaDocumento,
+      body?.documentoMarcador,
+      body?.documentTypeMarker,
+      body?.marcador,
+      body?.marker,
+      body?.marca,
+      body?.tipoMarcador,
+      body?.tipoSeleccion,
+    ].find((value) => typeof value === 'string' && value.trim());
+
+    const marcadorDocumentoNormalizado = marcadorDocumentoRaw
+      ? normalizeText(marcadorDocumentoRaw.replace(/–/g, '-'))
+      : '';
+    const marcadorDocumentoCompacto = marcadorDocumentoNormalizado.replace(/[\s()]/g, '');
+    const marcadorAjusteNegativo = new Set(['AJUSTE-', 'AJ-']);
+
+    const documentoTieneItemsNegativos = Array.isArray(documento.items)
+      ? documento.items.some((item) => Number(item?.cantidad) < 0)
+      : false;
+
+    const shouldMantenerNegativos =
+      documento.tipo === 'AJ'
+      && (marcadorDocumentoCompacto
+        ? marcadorAjusteNegativo.has(marcadorDocumentoCompacto)
+        : documentoTieneItemsNegativos);
+
+    const itemsNormalizados = itemsActualizados.map((item) => {
+      if (!shouldMantenerNegativos) {
+        return { ...item };
+      }
+      const cantidadNormalizada = item.cantidad < 0 ? item.cantidad : -Math.abs(item.cantidad);
+      return { ...item, cantidad: cantidadNormalizada };
+    });
+
+    documento.items = itemsNormalizados;
   }
 
   if (body.observaciones !== undefined) {

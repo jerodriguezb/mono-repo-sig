@@ -9,6 +9,7 @@ jest.mock('../../modelos/documento', () => {
   const mockMongoose = require('mongoose');
   const store = [];
   const pendingBySession = new Map();
+  const instanceStore = new Map();
   const existsMock = jest.fn(async (query = {}) => {
     const found = store.find((doc) => {
       if (query.NrodeDocumento && doc.NrodeDocumento !== query.NrodeDocumento) return false;
@@ -17,6 +18,11 @@ jest.mock('../../modelos/documento', () => {
     });
     return found ? { _id: found._id } : null;
   });
+  const findByIdMock = jest.fn();
+
+  const cloneItems = (items = []) =>
+    (Array.isArray(items) ? items.map((item) => ({ ...item })) : items);
+
   class DocumentoMock {
     constructor(data = {}) {
       this.data = { ...data };
@@ -24,12 +30,13 @@ jest.mock('../../modelos/documento', () => {
       this.tipo = data.tipo;
       this.proveedor = data.proveedor;
       this.fechaRemito = data.fechaRemito;
-      this.items = data.items;
+      this.items = cloneItems(data.items);
       this.observaciones = data.observaciones;
       this.usuario = data.usuario;
       this.NrodeDocumento = data.NrodeDocumento;
       this.activo = data.activo ?? true;
-      this._id = new mockMongoose.Types.ObjectId().toString();
+      this._id = data._id ? String(data._id) : new mockMongoose.Types.ObjectId().toString();
+      instanceStore.set(this._id, this);
     }
 
     async save(options = {}) {
@@ -39,7 +46,7 @@ jest.mock('../../modelos/documento', () => {
         tipo: this.tipo,
         proveedor: this.proveedor,
         fechaRemito: this.fechaRemito,
-        items: this.items,
+        items: cloneItems(this.items),
         observaciones: this.observaciones,
         usuario: this.usuario,
         NrodeDocumento: this.NrodeDocumento,
@@ -48,11 +55,22 @@ jest.mock('../../modelos/documento', () => {
 
       if (options?.session) {
         const pending = pendingBySession.get(options.session) || [];
-        pending.push(docData);
+        const existingIndex = pending.findIndex((doc) => doc._id === this._id);
+        if (existingIndex >= 0) {
+          pending[existingIndex] = docData;
+        } else {
+          pending.push(docData);
+        }
         pendingBySession.set(options.session, pending);
       } else {
-        store.push(docData);
+        const existingIndex = store.findIndex((doc) => doc._id === this._id);
+        if (existingIndex >= 0) {
+          store[existingIndex] = docData;
+        } else {
+          store.push(docData);
+        }
       }
+      instanceStore.set(this._id, this);
       return this;
     }
 
@@ -67,7 +85,7 @@ jest.mock('../../modelos/documento', () => {
         tipo: this.tipo,
         proveedor: this.proveedor,
         fechaRemito: this.fechaRemito,
-        items: this.items,
+        items: cloneItems(this.items),
         observaciones: this.observaciones,
         usuario: this.usuario,
         NrodeDocumento: this.NrodeDocumento,
@@ -76,11 +94,57 @@ jest.mock('../../modelos/documento', () => {
     }
   }
 
+  const ensureInstance = (id) => {
+    if (!id) return null;
+    const key = String(id);
+    const stored = store.find((doc) => doc._id === key);
+    if (!stored) return null;
+    const existingInstance = instanceStore.get(key);
+    if (existingInstance) {
+      existingInstance.prefijo = stored.prefijo;
+      existingInstance.tipo = stored.tipo;
+      existingInstance.proveedor = stored.proveedor;
+      existingInstance.fechaRemito = stored.fechaRemito;
+      existingInstance.items = cloneItems(stored.items);
+      existingInstance.observaciones = stored.observaciones;
+      existingInstance.usuario = stored.usuario;
+      existingInstance.NrodeDocumento = stored.NrodeDocumento;
+      existingInstance.activo = stored.activo;
+      return existingInstance;
+    }
+    return new DocumentoMock({ ...stored, _id: key });
+  };
+
+  findByIdMock.mockImplementation((id) => {
+    const exec = async () => ensureInstance(id);
+    const leanExec = async () => {
+      const instance = await exec();
+      return instance ? instance.toObject() : null;
+    };
+    return {
+      exec,
+      populate: () => ({
+        lean: () => ({ exec: leanExec }),
+        exec,
+      }),
+      lean: () => ({ exec: leanExec }),
+    };
+  });
+
   DocumentoMock.exists = existsMock;
+  DocumentoMock.findById = findByIdMock;
   DocumentoMock.__store = store;
   DocumentoMock.__commitSession = (session) => {
     const pending = pendingBySession.get(session) || [];
-    pending.forEach((doc) => store.push(doc));
+    pending.forEach((doc) => {
+      const existingIndex = store.findIndex((stored) => stored._id === doc._id);
+      if (existingIndex >= 0) {
+        store[existingIndex] = doc;
+      } else {
+        store.push(doc);
+      }
+      instanceStore.delete(doc._id);
+    });
     pendingBySession.delete(session);
   };
   DocumentoMock.__abortSession = (session) => {
@@ -89,7 +153,9 @@ jest.mock('../../modelos/documento', () => {
   DocumentoMock.__reset = () => {
     store.length = 0;
     existsMock.mockClear();
+    findByIdMock.mockClear();
     pendingBySession.clear();
+    instanceStore.clear();
   };
 
   return DocumentoMock;
@@ -499,5 +565,61 @@ describe('POST /documentos', () => {
       expect(Documento.__store.map((doc) => doc.items[0].cantidad)).toEqual([-4, -4]);
       expect(Producserv.__store.get(producto._id).stkactual).toBe(12);
     });
+  });
+});
+
+describe('PUT /documentos/:id', () => {
+  let token;
+
+  beforeAll(() => {
+    process.env.JWT_SECRET = 'test-secret';
+    token = jwt.sign({ _id: new mongoose.Types.ObjectId().toString(), role: 'ADMIN_ROLE' }, process.env.JWT_SECRET);
+  });
+
+  afterAll(() => {
+    delete process.env.JWT_SECRET;
+  });
+
+  beforeEach(() => {
+    Documento.__reset();
+    Proveedor.__reset();
+    Producserv.__reset();
+  });
+
+  test('mantiene las cantidades negativas al actualizar un Ajuste (–)', async () => {
+    const proveedor = crearProveedor();
+    const producto = crearProducto({ stkactual: 30 });
+
+    const documentoExistente = new Documento({
+      tipo: 'AJ',
+      prefijo: '0001',
+      fechaRemito: '2024-09-01',
+      proveedor: proveedor._id,
+      items: [
+        { cantidad: -5, producto: producto._id, codprod: producto.codprod },
+      ],
+      usuario: new mongoose.Types.ObjectId().toString(),
+      observaciones: 'Ajuste negativo previo',
+    });
+    await documentoExistente.save();
+
+    const updatePayload = {
+      items: [
+        { cantidad: 6, producto: producto._id, codprod: producto.codprod },
+      ],
+    };
+
+    const response = await request(app)
+      .put(`/documentos/${documentoExistente._id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(updatePayload);
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.documento.items).toHaveLength(1);
+    expect(response.body.documento.items[0].cantidad).toBe(-6);
+    expect(Documento.__store).toHaveLength(1);
+    expect(Documento.__store[0].items[0].cantidad).toBe(-6);
+    expect(updatePayload.items[0].cantidad).toBe(6);
   });
 });
