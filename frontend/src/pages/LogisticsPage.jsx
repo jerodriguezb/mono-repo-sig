@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, CircularProgress, Stack, Typography } from '@mui/material';
-import AppOrdenAPrepararReactTable from '../components/AppOrdenAPrepararReactTable.js';
-import AppCamionReactTable from '../components/AppCamionReactTable.js';
-import AppGestionReactTable from '../components/AppGestionReactTable.js';
-import AppComandaReactTable from '../components/AppComandaReactTable.js';
+import AppOrdenAPrepararReactTable from '../components/AppOrdenAPrepararReactTable.jsx';
+import AppCamionReactTable from '../components/AppCamionReactTable.jsx';
+import AppGestionReactTable from '../components/AppGestionReactTable.jsx';
+import AppComandaReactTable from '../components/AppComandaReactTable.jsx';
 import ModalFormAsignar from '../components/ModalFormAsignar.jsx';
 import ModalFormCamion from '../components/ModalFormCamion.jsx';
 import api from '../api/axios.js';
