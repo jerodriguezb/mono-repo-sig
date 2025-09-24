@@ -7,6 +7,8 @@ const mongoose = require('mongoose');
 const Documento = require('../modelos/documento');
 const Proveedor = require('../modelos/proveedor');
 const Producserv = require('../modelos/producserv');
+const Stock = require('../modelos/stock');
+const Tipomovimiento = require('../modelos/tipomovimiento');
 const { verificaToken } = require('../middlewares/autenticacion');
 
 const router = express.Router();
@@ -214,6 +216,21 @@ const aggregateItemsByProducto = (items = []) => {
   return [...aggregatedMap.values()];
 };
 
+const MOVIMIENTO_COMPRA_QUERY = { movimiento: 'COMPRA', codmov: 1, activo: true };
+let movimientoCompraCache = null;
+const getMovimientoCompraId = async () => {
+  if (movimientoCompraCache) return movimientoCompraCache;
+  const movimiento = await Tipomovimiento.findOne(MOVIMIENTO_COMPRA_QUERY)
+    .select('_id')
+    .lean()
+    .exec();
+  if (movimiento?._id) {
+    movimientoCompraCache = movimiento._id;
+    return movimiento._id;
+  }
+  return null;
+};
+
 // -----------------------------------------------------------------------------
 // 1. CREAR DOCUMENTO ------------------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -238,6 +255,17 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   const resolvedPrefijo = prefijo || '0001';
   const numeroCrudo = extractNumeroDocumento(body);
+
+  let movimientoCompraId = null;
+  if (tipo === 'R') {
+    movimientoCompraId = await getMovimientoCompraId();
+    if (!movimientoCompraId) {
+      return res.status(500).json({
+        ok: false,
+        err: { message: 'No se encontró el movimiento COMPRA para registrar stock.' },
+      });
+    }
+  }
 
   let remitoNumero = null;
   let notaRecepcionNumero = null;
@@ -410,6 +438,22 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
           const message = error?.message || 'operación fallida';
           stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
         }
+      }
+
+      const fechaMovimiento =
+        documentoDB?.fechaRemito instanceof Date
+          ? documentoDB.fechaRemito
+          : new Date(documentoDB?.fechaRemito || data.fechaRemito);
+      const stockMovements = items.map((item) => ({
+        codprod: item.producto,
+        movimiento: movimientoCompraId,
+        cantidad: item.cantidad,
+        fecha: fechaMovimiento,
+        usuario: userId,
+        activo: true,
+      }));
+      if (stockMovements.length > 0) {
+        await Stock.insertMany(stockMovements, { session });
       }
     }
 
