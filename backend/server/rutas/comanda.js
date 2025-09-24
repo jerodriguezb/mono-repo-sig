@@ -8,13 +8,7 @@ const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
 const Counter = require('../modelos/counter');
-const {
-  verificaToken,
-  verificaAdmin_role,
-  verificaCam_role,
-  verificaAdminCam_role,
-  verificaAdminPrev_role,
-} = require('../middlewares/autenticacion');
+const { verificaToken, verificaAdmin_role, ROLES } = require('../middlewares/autenticacion');
 
 const router = express.Router();
 
@@ -44,6 +38,13 @@ const commonPopulate = [
   'camion',
   { path: 'usuario', select: 'role nombres apellidos' },
   { path: 'camionero', select: 'role nombres apellidos' },
+  { path: 'operarioAsignado', select: 'role nombres apellidos' },
+  { path: 'preparacion.responsable', select: 'role nombres apellidos' },
+  { path: 'controlCarga.inspector', select: 'role nombres apellidos' },
+  { path: 'usuarioLogistica', select: 'role nombres apellidos' },
+  { path: 'usuarioDespacho', select: 'role nombres apellidos' },
+  { path: 'historial.usuario', select: 'role nombres apellidos' },
+  { path: 'entregas.usuario', select: 'role nombres apellidos' },
 ];
 
 // -----------------------------------------------------------------------------
@@ -260,6 +261,48 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
         activo: body.activo,
         items: body.items,
       });
+
+      if (Object.prototype.hasOwnProperty.call(body, 'estadoPreparacion')) {
+        comanda.estadoPreparacion = body.estadoPreparacion;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'operarioAsignado')) {
+        comanda.operarioAsignado = body.operarioAsignado;
+      }
+      if (body.preparacion) {
+        comanda.preparacion = body.preparacion;
+      }
+      if (body.controlCarga) {
+        comanda.controlCarga = body.controlCarga;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'motivoLogistica')) {
+        comanda.motivoLogistica = body.motivoLogistica;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'usuarioLogistica')) {
+        comanda.usuarioLogistica = body.usuarioLogistica;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'salidaDeposito')) {
+        comanda.salidaDeposito = body.salidaDeposito;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'usuarioDespacho')) {
+        comanda.usuarioDespacho = body.usuarioDespacho;
+      }
+      if (Array.isArray(body.entregas)) {
+        comanda.entregas = body.entregas;
+      }
+
+      if (Array.isArray(body.historial) && body.historial.length) {
+        comanda.historial = body.historial;
+      } else if (body.usuario) {
+        comanda.historial = [
+          {
+            accion: 'Comanda creada',
+            usuario: body.usuario,
+            motivo: body.motivoCreacion || null,
+            fecha: body.fecha || new Date(),
+          },
+        ];
+      }
+
       comandaDB = await comanda.save({ session });
       for (const item of body.items) {
         await Producserv.updateOne(
@@ -289,14 +332,227 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
 // -----------------------------------------------------------------------------
 // 11. ACTUALIZAR COMANDA --------------------------------------------------------
 // -----------------------------------------------------------------------------
-router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
-  const comandaDB = await Comanda.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-    context: 'query',
-  }).populate(commonPopulate).exec();
-  if (!comandaDB) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
-  res.json({ ok: true, comanda: comandaDB });
+router.put('/comandas/:id', verificaToken, asyncHandler(async (req, res) => {
+  const role = req.usuario?.role;
+  const usuarioId = req.usuario?._id;
+  const allowedRoles = [ROLES.ADMIN, ROLES.CAMION, ROLES.USER_ROLE];
+  if (!allowedRoles.includes(role)) {
+    return res.status(403).json({ ok: false, err: { message: 'Permiso denegado' } });
+  }
+
+  const isAdmin = role === ROLES.ADMIN;
+  const isDeposito = isAdmin || role === ROLES.USER_ROLE;
+  const isChofer = role === ROLES.CAMION;
+  const now = new Date();
+  const body = req.body || {};
+
+  const ensure = (condition, status, message) => {
+    if (!condition) {
+      const err = new Error(message);
+      err.status = status;
+      throw err;
+    }
+  };
+
+  const session = await Comanda.startSession();
+  let updatedId = null;
+
+  try {
+    await session.withTransaction(async () => {
+      const comanda = await Comanda.findById(req.params.id).session(session);
+      ensure(comanda, 404, 'Comanda no encontrada');
+
+      const historialEntries = [];
+      const estadoAnterior = comanda.estadoPreparacion;
+
+      if (Object.prototype.hasOwnProperty.call(body, 'estadoPreparacion')) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para cambiar el estado de preparación');
+
+        const nuevoEstado = body.estadoPreparacion;
+        const ESTADOS_VALIDOS = ['A Preparar', 'En Curso', 'Lista para carga'];
+        ensure(ESTADOS_VALIDOS.includes(nuevoEstado), 400, 'Estado de preparación inválido');
+
+        if (estadoAnterior === 'En Curso' && nuevoEstado === 'Lista para carga') {
+          const checklistOk =
+            (body.preparacion?.checklistDepositoConfirmado ?? comanda.preparacion?.checklistDepositoConfirmado) &&
+            (body.preparacion?.verificacionBultos ?? comanda.preparacion?.verificacionBultos);
+          ensure(checklistOk, 400, 'Completa el checklist de preparación antes de marcar la comanda como lista para carga');
+          if (comanda.operarioAsignado && !isAdmin) {
+            ensure(String(comanda.operarioAsignado) === String(usuarioId), 403, 'Solo el operario asignado puede finalizar la preparación');
+          }
+        }
+
+        if (estadoAnterior !== nuevoEstado) {
+          comanda.estadoPreparacion = nuevoEstado;
+          historialEntries.push({
+            accion: `Cambio de estado de preparación → ${nuevoEstado}`,
+            usuario: usuarioId,
+            motivo: body.motivoPreparacion || body.motivo || null,
+            fecha: now,
+          });
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, 'operarioAsignado')) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para asignar operarios');
+        comanda.operarioAsignado = body.operarioAsignado || null;
+        historialEntries.push({
+          accion: body.operarioAsignado ? 'Operario asignado' : 'Operario removido',
+          usuario: usuarioId,
+          motivo: body.motivoPreparacion || body.motivo || null,
+          fecha: now,
+        });
+      }
+
+      if (body.preparacion) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para actualizar la preparación');
+        comanda.preparacion = {
+          ...(comanda.preparacion ? comanda.preparacion.toObject ? comanda.preparacion.toObject() : comanda.preparacion : {}),
+          ...body.preparacion,
+        };
+        historialEntries.push({
+          accion: 'Checklist de preparación actualizado',
+          usuario: usuarioId,
+          motivo: body.preparacion.incidencias || body.motivoPreparacion || null,
+          fecha: now,
+        });
+      }
+
+      if (body.controlCarga) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para registrar el control de carga');
+        ensure(comanda.estadoPreparacion === 'Lista para carga', 400, 'La comanda debe estar lista para carga antes de registrar el control');
+        const checklistCarga = body.controlCarga.checklistDepositoConfirmado === true || comanda.controlCarga?.checklistDepositoConfirmado === true;
+        ensure(checklistCarga, 400, 'Confirmá el checklist del depósito antes de continuar');
+        comanda.controlCarga = {
+          ...(comanda.controlCarga ? comanda.controlCarga.toObject ? comanda.controlCarga.toObject() : comanda.controlCarga : {}),
+          ...body.controlCarga,
+        };
+        historialEntries.push({
+          accion: 'Control de carga registrado',
+          usuario: usuarioId,
+          motivo: body.controlCarga.anotaciones || body.motivoLogistica || null,
+          fecha: now,
+        });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, 'motivoLogistica') || Object.prototype.hasOwnProperty.call(body, 'usuarioLogistica')) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para gestionar logística');
+        if (Object.prototype.hasOwnProperty.call(body, 'motivoLogistica')) {
+          comanda.motivoLogistica = body.motivoLogistica || null;
+        }
+        if (Object.prototype.hasOwnProperty.call(body, 'usuarioLogistica')) {
+          comanda.usuarioLogistica = body.usuarioLogistica || null;
+        }
+        historialEntries.push({
+          accion: 'Asignación logística actualizada',
+          usuario: usuarioId,
+          motivo: body.motivoLogistica || null,
+          fecha: now,
+        });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, 'camion') || Object.prototype.hasOwnProperty.call(body, 'camionero') || Object.prototype.hasOwnProperty.call(body, 'fechadeentrega')) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para asignar camiones');
+        ensure(comanda.estadoPreparacion === 'Lista para carga', 400, 'Solo se pueden asignar camiones a comandas listas para carga');
+        if (Object.prototype.hasOwnProperty.call(body, 'camion')) comanda.camion = body.camion || null;
+        if (Object.prototype.hasOwnProperty.call(body, 'camionero')) comanda.camionero = body.camionero || null;
+        if (Object.prototype.hasOwnProperty.call(body, 'fechadeentrega')) comanda.fechadeentrega = body.fechadeentrega || null;
+        historialEntries.push({
+          accion: 'Camión asignado',
+          usuario: usuarioId,
+          motivo: body.motivoLogistica || null,
+          fecha: now,
+        });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, 'salidaDeposito') || Object.prototype.hasOwnProperty.call(body, 'usuarioDespacho')) {
+        ensure(isDeposito || isAdmin, 403, 'Sin permisos para registrar el despacho');
+        if (body.salidaDeposito) comanda.salidaDeposito = body.salidaDeposito;
+        if (Object.prototype.hasOwnProperty.call(body, 'usuarioDespacho')) comanda.usuarioDespacho = body.usuarioDespacho || null;
+        historialEntries.push({
+          accion: 'Despacho registrado',
+          usuario: usuarioId,
+          motivo: body.motivoDespacho || body.motivoLogistica || null,
+          fecha: now,
+        });
+      }
+
+      if (Array.isArray(body.entregas)) {
+        ensure(isChofer || isAdmin, 403, 'Solo choferes pueden actualizar las entregas');
+        const entregasNormalizadas = body.entregas.map((ent) => ({
+          ...ent,
+          usuario: ent.usuario || usuarioId,
+          fecha: ent.fecha || now,
+        }));
+        comanda.entregas = entregasNormalizadas;
+        historialEntries.push({
+          accion: 'Entregas actualizadas',
+          usuario: usuarioId,
+          motivo: body.motivoEntrega || null,
+          fecha: now,
+        });
+      }
+
+      if (body.nuevaEntrega) {
+        ensure(isChofer || isAdmin, 403, 'Solo choferes pueden registrar entregas');
+        comanda.entregas = Array.isArray(comanda.entregas) ? comanda.entregas : [];
+        comanda.entregas.push({
+          ...body.nuevaEntrega,
+          usuario: body.nuevaEntrega.usuario || usuarioId,
+          fecha: body.nuevaEntrega.fecha || now,
+        });
+        historialEntries.push({
+          accion: 'Entrega registrada',
+          usuario: usuarioId,
+          motivo: body.nuevaEntrega.motivo || null,
+          fecha: now,
+        });
+      }
+
+      const camposGenerales = ['codestado', 'activo'];
+      camposGenerales.forEach((campo) => {
+        if (Object.prototype.hasOwnProperty.call(body, campo)) {
+          ensure(isAdmin, 403, 'Sin permisos para actualizar campos administrativos');
+          comanda[campo] = body[campo];
+        }
+      });
+
+      if (body.historialEntry) {
+        const entries = Array.isArray(body.historialEntry) ? body.historialEntry : [body.historialEntry];
+        entries.forEach((entry) => {
+          if (!entry?.accion) return;
+          historialEntries.push({
+            accion: entry.accion,
+            usuario: usuarioId,
+            motivo: entry.motivo || null,
+            fecha: now,
+          });
+        });
+      }
+
+      if (historialEntries.length) {
+        comanda.historial = Array.isArray(comanda.historial) ? comanda.historial : [];
+        historialEntries.forEach((h) => comanda.historial.push(h));
+      }
+
+      await comanda.save({ session, validateModifiedOnly: false });
+      updatedId = comanda._id;
+    });
+  } catch (error) {
+    if (error && error.status) {
+      return res.status(error.status).json({ ok: false, err: { message: error.message } });
+    }
+    throw error;
+  } finally {
+    session.endSession();
+  }
+
+  if (!updatedId) {
+    return res.status(500).json({ ok: false, err: { message: 'No se pudo actualizar la comanda' } });
+  }
+
+  const comandaActualizada = await Comanda.findById(updatedId).populate(commonPopulate).lean().exec();
+  res.json({ ok: true, comanda: comandaActualizada });
 }));
 
 // -----------------------------------------------------------------------------
