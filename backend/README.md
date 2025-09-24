@@ -1,70 +1,67 @@
-# Getting Started with Create React App
+# Backend – Flujo de depósito y logística
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Este servicio Express expone los endpoints REST para gestionar comandas y el flujo operativo de depósito, control de carga y despacho. Las modificaciones recientes amplían el modelo `Comanda` para soportar auditoría completa y nuevas etapas.
 
-## Available Scripts
+## Campos clave del modelo `Comanda`
 
-In the project directory, you can run:
+El esquema (`backend/server/modelos/comanda.js`) ahora incluye:
 
-### `npm start`
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `estadoPreparacion` | String (`"A Preparar" \| "En Curso" \| "Lista para carga"`) | Estado interno de depósito. |
+| `operarioAsignado` | ObjectId → `Usuario` | Operario responsable de la preparación. |
+| `preparacion` | Subdocumento | Datos del checklist de depósito: responsable, horarios, verificación de bultos, control de temperatura, incidencias y archivos adjuntos. |
+| `controlCarga` | Subdocumento | Inspector, fecha/hora, confirmación del checklist, sello y anotaciones del control de carga. |
+| `historial` | Array de subdocumentos | Auditoría `{ accion, usuario, motivo, fecha }` para cada cambio relevante. |
+| `entregas` | Array de subdocumentos | Registro por parada con estado (`Completada/Parcial/Rechazada`), motivo, fotos y confirmación de checklist. |
+| `motivoLogistica` / `usuarioLogistica` | String & ObjectId | Observaciones y usuario responsable de la asignación logística. |
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+Todos los subdocumentos usan timestamps para poder reconstruir la línea temporal de una orden.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## Endpoint `PUT /comandas/:id`
 
-### `npm test`
+El controlador (`backend/server/rutas/comanda.js`) valida y fusiona los cambios recibidos:
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+* **Depósito / logística** (roles `ADMIN_ROLE` o `USER_CAM`) pueden actualizar `estadoPreparacion`, `operarioAsignado`, `preparacion`, `controlCarga`, `motivoLogistica`, `usuarioLogistica` y asignar camiones. Se registran entradas en `historial` automáticamente.
+* **Choferes** (`USER_CAM`) o administradores pueden cargar entregas parciales usando el campo `entregaNueva` o reemplazar el arreglo `entregas` completo.
+* Se validan transiciones críticas: para pasar a “En Curso” debe existir `preparacion.inicio`, y para “Lista para carga” es obligatorio contar con `preparacion.fin` y un operario asignado. El control de carga sólo puede registrarse en este último estado.
+* La ruta sigue permitiendo que administradores/preventistas modifiquen campos generales (`codcli`, `items`, etc.) respetando las reglas existentes.
 
-### `npm run build`
+Cualquier modificación relevante genera un nuevo item en `historial`, lo que permite visualizarlo desde el frontend sin endpoints adicionales.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Flujo sugerido desde el frontend
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+1. **Depósito** trabaja sobre `/comandasapreparar` realizando polling y mantiene el checklist en `preparacion`. “Tomar comanda” asigna el operario y cambia a “En Curso”.
+2. Al completar la preparación se marca `estadoPreparacion = "Lista para carga"` y se habilita el `controlCarga`.
+3. Con la comanda lista, logística asigna camión (`camion`, `usuarioLogistica`, `motivoLogistica`).
+4. Sólo cuando `controlCarga` está completo la orden aparece en el panel de choferes. Cada entrega se persiste en `entregas` y queda auditada en `historial`.
+5. Todas las transiciones (preparación, control de carga, despacho, entregas) quedan disponibles en el nuevo componente “Seguimiento” de las tablas administrativas.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Validaciones y seguridad
 
-### `npm run eject`
+* Los middlewares de autenticación siguen vigentes. El propio controlador hace verificación de rol antes de aceptar cambios sensibles.
+* Se realizan comprobaciones de consistencia (camión sólo asignable a comandas listas, control de carga sólo cuando corresponde, etc.).
+* Las operaciones sobre `Comanda` utilizan `mongoose` con `runValidators` y merges controlados para evitar sobrescribir información previa.
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+## Cómo actualizar una comanda
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Todos los datos nuevos se envían mediante `PUT /comandas/:id` con el payload correspondiente, por ejemplo:
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+```json
+{
+  "estadoPreparacion": "Lista para carga",
+  "preparacion": {
+    "responsable": "<usuarioId>",
+    "inicio": "2025-02-10T11:30:00.000Z",
+    "fin": "2025-02-10T12:05:00.000Z",
+    "verificacionBultos": true,
+    "archivos": [{ "nombre": "checklist.pdf", "url": "https://..." }]
+  },
+  "motivoHistorial": "Checklist completado"
+}
+```
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+El controlador fusiona la información con el documento existente y añade la entrada correspondiente en `historial`.
 
-## Learn More
+Consulta el archivo `backend/server/rutas/comanda.js` para ejemplos de combinaciones soportadas (control de carga, asignación logística y entrega).
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)

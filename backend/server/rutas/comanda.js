@@ -11,9 +11,7 @@ const Counter = require('../modelos/counter');
 const {
   verificaToken,
   verificaAdmin_role,
-  verificaCam_role,
-  verificaAdminCam_role,
-  verificaAdminPrev_role,
+  ROLES,
 } = require('../middlewares/autenticacion');
 
 const router = express.Router();
@@ -31,7 +29,13 @@ const toNumber = (v, def) => Number(v ?? def);
  * Conjunto de poblados comunes a la mayoría de endpoints.
  */
 const commonPopulate = [
-  'codcli',
+  {
+    path: 'codcli',
+    populate: [
+      { path: 'ruta' },
+      { path: 'localidad' },
+    ],
+  },
   { path: 'items.lista' },
   {
     path: 'items.codprod',
@@ -44,6 +48,12 @@ const commonPopulate = [
   'camion',
   { path: 'usuario', select: 'role nombres apellidos' },
   { path: 'camionero', select: 'role nombres apellidos' },
+  { path: 'operarioAsignado', select: 'nombres apellidos role' },
+  { path: 'preparacion.responsable', select: 'nombres apellidos role' },
+  { path: 'controlCarga.inspector', select: 'nombres apellidos role' },
+  { path: 'usuarioLogistica', select: 'nombres apellidos role' },
+  { path: 'historial.usuario', select: 'nombres apellidos role' },
+  { path: 'entregas.usuario', select: 'nombres apellidos role' },
 ];
 
 // -----------------------------------------------------------------------------
@@ -260,6 +270,22 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
         activo: body.activo,
         items: body.items,
       });
+      if (body.estadoPreparacion) comanda.estadoPreparacion = body.estadoPreparacion;
+      if (body.operarioAsignado) comanda.operarioAsignado = body.operarioAsignado;
+      if (body.preparacion) comanda.preparacion = body.preparacion;
+      if (body.controlCarga) comanda.controlCarga = body.controlCarga;
+      if (body.motivoLogistica) comanda.motivoLogistica = body.motivoLogistica;
+      if (body.usuarioLogistica) comanda.usuarioLogistica = body.usuarioLogistica;
+      if (Array.isArray(body.entregas)) comanda.entregas = body.entregas;
+      if (Array.isArray(body.historial) && body.historial.length)
+        comanda.historial = body.historial;
+      if (body.usuario) {
+        comanda.historial.push({
+          accion: 'Comanda creada',
+          usuario: body.usuario,
+          motivo: body.motivoHistorial || undefined,
+        });
+      }
       comandaDB = await comanda.save({ session });
       for (const item of body.items) {
         await Producserv.updateOne(
@@ -289,13 +315,221 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
 // -----------------------------------------------------------------------------
 // 11. ACTUALIZAR COMANDA --------------------------------------------------------
 // -----------------------------------------------------------------------------
-router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
-  const comandaDB = await Comanda.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-    context: 'query',
-  }).populate(commonPopulate).exec();
-  if (!comandaDB) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+router.put('/comandas/:id', verificaToken, asyncHandler(async (req, res) => {
+  const { role, _id: usuarioId } = req.usuario || {};
+  const body = { ...req.body };
+  const motivoHistorial = body.motivoHistorial;
+  delete body.motivoHistorial;
+
+  const estadoPreparacionPayload = body.estadoPreparacion;
+  delete body.estadoPreparacion;
+
+  const preparacionPayload = body.preparacion;
+  delete body.preparacion;
+
+  const operarioAsignadoPayload = body.operarioAsignado;
+  delete body.operarioAsignado;
+
+  const controlCargaPayload = body.controlCarga;
+  delete body.controlCarga;
+
+  const usuarioLogisticaPayload = body.usuarioLogistica;
+  delete body.usuarioLogistica;
+
+  const motivoLogisticaPayload = body.motivoLogistica;
+  delete body.motivoLogistica;
+
+  const entregaNuevaPayload = body.entregaNueva;
+  delete body.entregaNueva;
+
+  let entregasPayload = undefined;
+  if (Array.isArray(body.entregas)) {
+    entregasPayload = body.entregas;
+    delete body.entregas;
+  }
+
+  const historialEntries = [];
+  const comanda = await Comanda.findById(req.params.id).exec();
+  if (!comanda) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+
+  const isAdmin = role === ROLES.ADMIN;
+  const isPreventista = role === ROLES.PREV;
+  const isChofer = role === ROLES.CAMION;
+
+  const puedeGestionDeposito = isAdmin || isChofer;
+  const puedeGestionGeneral = isAdmin || isPreventista;
+  const puedeGestionLogistica = isAdmin || isChofer;
+  const puedeGestionEntregas = isAdmin || isChofer;
+
+  if (operarioAsignadoPayload !== undefined) {
+    if (!puedeGestionDeposito) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para asignar operario' } });
+    }
+    const prevOperario = comanda.operarioAsignado ? String(comanda.operarioAsignado) : null;
+    const nextOperario = operarioAsignadoPayload ? String(operarioAsignadoPayload) : null;
+    comanda.operarioAsignado = operarioAsignadoPayload || null;
+    if (prevOperario !== nextOperario) {
+      historialEntries.push({
+        accion: prevOperario ? 'Operario reasignado' : 'Operario asignado',
+        usuario: usuarioId,
+        motivo: motivoHistorial,
+      });
+    }
+  }
+
+  if (preparacionPayload) {
+    if (!puedeGestionDeposito) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para actualizar preparación' } });
+    }
+    const currentPrep = comanda.preparacion && typeof comanda.preparacion.toObject === 'function'
+      ? comanda.preparacion.toObject()
+      : { ...comanda.preparacion };
+    const merged = { ...currentPrep };
+    for (const [key, value] of Object.entries(preparacionPayload)) {
+      if (value !== undefined) merged[key] = value;
+    }
+    comanda.preparacion = merged;
+  }
+
+  if (estadoPreparacionPayload) {
+    if (!['A Preparar', 'En Curso', 'Lista para carga'].includes(estadoPreparacionPayload)) {
+      return res.status(400).json({ ok: false, err: { message: 'Estado de preparación inválido' } });
+    }
+    if (!puedeGestionDeposito) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para actualizar estado de preparación' } });
+    }
+    const prevEstado = comanda.estadoPreparacion || 'A Preparar';
+    if (prevEstado !== estadoPreparacionPayload) {
+      const inicioPrep = preparacionPayload?.inicio || comanda.preparacion?.inicio;
+      const finPrep = preparacionPayload?.fin || comanda.preparacion?.fin;
+      if (estadoPreparacionPayload === 'En Curso' && !inicioPrep) {
+        return res.status(400).json({
+          ok: false,
+          err: { message: 'Debe registrar la hora de inicio antes de marcar En Curso' },
+        });
+      }
+      if (estadoPreparacionPayload === 'Lista para carga') {
+        if (!finPrep) {
+          return res.status(400).json({
+            ok: false,
+            err: { message: 'Debe registrar la hora de fin antes de marcar Lista para carga' },
+          });
+        }
+        const operario = operarioAsignadoPayload || comanda.operarioAsignado;
+        if (!operario) {
+          return res.status(400).json({
+            ok: false,
+            err: { message: 'Debe asignar un operario antes de finalizar la preparación' },
+          });
+        }
+      }
+      historialEntries.push({
+        accion: `Estado preparación: ${prevEstado} → ${estadoPreparacionPayload}`,
+        usuario: usuarioId,
+        motivo: motivoHistorial,
+      });
+      comanda.estadoPreparacion = estadoPreparacionPayload;
+    }
+  }
+
+  if (controlCargaPayload) {
+    if (!puedeGestionDeposito) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para registrar control de carga' } });
+    }
+    const estadoObjetivo = estadoPreparacionPayload || comanda.estadoPreparacion;
+    if (estadoObjetivo !== 'Lista para carga') {
+      return res.status(400).json({
+        ok: false,
+        err: { message: 'El control de carga sólo puede registrarse cuando la comanda está Lista para carga' },
+      });
+    }
+    const currentControl = comanda.controlCarga && typeof comanda.controlCarga.toObject === 'function'
+      ? comanda.controlCarga.toObject()
+      : { ...comanda.controlCarga };
+    comanda.controlCarga = { ...currentControl, ...controlCargaPayload };
+    historialEntries.push({
+      accion: 'Control de carga registrado',
+      usuario: usuarioId,
+      motivo: controlCargaPayload.anotaciones || motivoHistorial,
+    });
+  }
+
+  if (usuarioLogisticaPayload !== undefined || motivoLogisticaPayload !== undefined) {
+    if (!puedeGestionLogistica) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para actualizar logística' } });
+    }
+    if (usuarioLogisticaPayload !== undefined) comanda.usuarioLogistica = usuarioLogisticaPayload || null;
+    if (motivoLogisticaPayload !== undefined) comanda.motivoLogistica = motivoLogisticaPayload || null;
+    historialEntries.push({
+      accion: 'Asignación logística actualizada',
+      usuario: usuarioId,
+      motivo: motivoLogisticaPayload || motivoHistorial,
+    });
+  }
+
+  if (body.camion !== undefined) {
+    if (!puedeGestionLogistica) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para asignar camión' } });
+    }
+    comanda.camion = body.camion || null;
+    delete body.camion;
+    historialEntries.push({
+      accion: 'Camión asignado',
+      usuario: usuarioId,
+      motivo: motivoHistorial,
+    });
+  }
+
+  if (Array.isArray(entregasPayload)) {
+    if (!puedeGestionEntregas) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para actualizar entregas' } });
+    }
+    comanda.entregas = entregasPayload;
+    historialEntries.push({
+      accion: `Entregas actualizadas (${entregasPayload.length})`,
+      usuario: usuarioId,
+      motivo: motivoHistorial,
+    });
+  }
+
+  if (entregaNuevaPayload) {
+    if (!puedeGestionEntregas) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para cargar entregas' } });
+    }
+    if (!Array.isArray(comanda.entregas)) {
+      comanda.entregas = [];
+    }
+    comanda.entregas.push({
+      ...entregaNuevaPayload,
+      usuario: entregaNuevaPayload.usuario || usuarioId,
+    });
+    historialEntries.push({
+      accion: `Entrega ${entregaNuevaPayload.estado || 'registrada'}`,
+      usuario: usuarioId,
+      motivo: entregaNuevaPayload.motivo || motivoHistorial,
+    });
+  }
+
+  const allowedGeneralFields = ['codcli', 'fecha', 'codestado', 'fechadeentrega', 'usuario', 'camionero', 'activo', 'items'];
+  const generalUpdates = Object.keys(body).filter((key) => allowedGeneralFields.includes(key));
+  if (generalUpdates.length) {
+    if (!puedeGestionGeneral) {
+      return res.status(403).json({ ok: false, err: { message: 'Sin permisos para modificar la comanda' } });
+    }
+    for (const key of generalUpdates) {
+      comanda[key] = body[key];
+    }
+  }
+
+  if (historialEntries.length) {
+    if (!Array.isArray(comanda.historial)) {
+      comanda.historial = [];
+    }
+    comanda.historial.push(...historialEntries);
+  }
+
+  const saved = await comanda.save();
+  const comandaDB = await saved.populate(commonPopulate);
   res.json({ ok: true, comanda: comandaDB });
 }));
 
@@ -303,7 +537,16 @@ router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler
 // 12. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
 // -----------------------------------------------------------------------------
 router.delete('/comandas/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
-  const comandaBorrada = await Comanda.findByIdAndUpdate(req.params.id, { activo: false }, { new: true })
+  const historialEntry = {
+    accion: 'Comanda desactivada',
+    usuario: req.usuario?._id,
+    fecha: new Date(),
+  };
+  const comandaBorrada = await Comanda.findByIdAndUpdate(
+    req.params.id,
+    { $set: { activo: false }, $push: { historial: historialEntry } },
+    { new: true }
+  )
     .populate(commonPopulate)
     .exec();
   if (!comandaBorrada) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
