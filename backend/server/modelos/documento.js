@@ -71,7 +71,8 @@ const documentoSchema = new Schema({
   },
   fechaRegistro: {
     type: Date,
-    default: () => toArgDate(new Date()),
+    // default: () => toArgDate(new Date()),
+    default: () => Date.now() - 3 * 60 * 60 * 1000,
   },
   usuario: {
     type: Schema.Types.ObjectId,
