@@ -217,19 +217,51 @@ const aggregateItemsByProducto = (items = []) => {
 };
 
 const MOVIMIENTO_COMPRA_QUERY = { movimiento: 'COMPRA', codmov: 1, activo: true };
-let movimientoCompraCache = null;
-const getMovimientoCompraId = async () => {
-  if (movimientoCompraCache) return movimientoCompraCache;
-  const movimiento = await Tipomovimiento.findOne(MOVIMIENTO_COMPRA_QUERY)
-    .select('_id')
-    .lean()
-    .exec();
+const MOVIMIENTO_INGRESO_POSITIVO_QUERY = { movimiento: 'INGRESO POSITIVO', activo: true };
+const MOVIMIENTO_AJUSTE_POSITIVO_QUERY = { movimiento: 'AJUSTE+', activo: true };
+const MOVIMIENTO_AJUSTE_NEGATIVO_QUERY = { movimiento: 'AJUSTE-', activo: true };
+
+const movimientoCache = new Map();
+
+const logMovimientoSeedWarning = (movimientoNombre, factorHint) => {
+  const suffix = factorHint ? ` con factor ${factorHint}` : '';
+  console.error(
+    `[documentos] Tipomovimiento "${movimientoNombre}" no encontrado.${suffix} ` +
+      'Solicitar alta o seed del tipo correspondiente.',
+  );
+};
+
+const fetchMovimientoId = async (cacheKey, query, { onMissing } = {}) => {
+  if (movimientoCache.has(cacheKey)) return movimientoCache.get(cacheKey);
+  const movimiento = await Tipomovimiento.findOne(query).select('_id').lean().exec();
   if (movimiento?._id) {
-    movimientoCompraCache = movimiento._id;
+    movimientoCache.set(cacheKey, movimiento._id);
     return movimiento._id;
   }
+  if (typeof onMissing === 'function') {
+    try {
+      onMissing();
+    } catch (error) {
+      console.error('[documentos] Error al registrar advertencia de tipomovimiento faltante:', error);
+    }
+  }
+  movimientoCache.set(cacheKey, null);
   return null;
 };
+
+const getMovimientoCompraId = async () => fetchMovimientoId('COMPRA', MOVIMIENTO_COMPRA_QUERY);
+const getMovimientoIngresoPositivoId = async () =>
+  fetchMovimientoId('INGRESO_POSITIVO', MOVIMIENTO_INGRESO_POSITIVO_QUERY, {
+    onMissing: () => logMovimientoSeedWarning('INGRESO POSITIVO', '+1'),
+  });
+const getMovimientoAjustePositivoId = async () =>
+  fetchMovimientoId('AJUSTE_POSITIVO', MOVIMIENTO_AJUSTE_POSITIVO_QUERY, {
+    onMissing: () => logMovimientoSeedWarning('AJUSTE+', '+1'),
+  });
+const getMovimientoAjusteNegativoId = async () =>
+  fetchMovimientoId('AJUSTE_NEGATIVO', MOVIMIENTO_AJUSTE_NEGATIVO_QUERY, {
+    onMissing: () => logMovimientoSeedWarning('AJUSTE-', '-1'),
+  });
 
 // -----------------------------------------------------------------------------
 // 1. CREAR DOCUMENTO ------------------------------------------------------------
@@ -309,6 +341,49 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       ajusteIncrementNumero = nroSugeridoValidado;
     } else {
       ajusteManualNumero = nroSugeridoRaw;
+    }
+  }
+
+  let movimientoIngresoPositivoId = null;
+  let movimientoAjustePositivoId = null;
+  let movimientoAjusteNegativoId = null;
+
+  if (tipo === 'NR') {
+    movimientoIngresoPositivoId = await getMovimientoIngresoPositivoId();
+    if (!movimientoIngresoPositivoId) {
+      return res.status(500).json({
+        ok: false,
+        err: {
+          message:
+            'No se encontró el tipo de movimiento INGRESO POSITIVO. Solicitar alta con factor +1.',
+        },
+      });
+    }
+  }
+
+  if (tipo === 'AJ') {
+    if (isAjusteIncremental) {
+      movimientoAjustePositivoId = await getMovimientoAjustePositivoId();
+      if (!movimientoAjustePositivoId) {
+        return res.status(500).json({
+          ok: false,
+          err: {
+            message:
+              'No se encontró el tipo de movimiento AJUSTE+. Solicitar alta con factor +1.',
+          },
+        });
+      }
+    } else {
+      movimientoAjusteNegativoId = await getMovimientoAjusteNegativoId();
+      if (!movimientoAjusteNegativoId) {
+        return res.status(500).json({
+          ok: false,
+          err: {
+            message:
+              'No se encontró el tipo de movimiento AJUSTE-. Solicitar alta con factor -1.',
+          },
+        });
+      }
     }
   }
 
@@ -416,6 +491,11 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     const documento = new Documento(data);
     documentoDB = await documento.save({ session });
 
+    const fechaMovimientoDocumento =
+      documentoDB?.fechaRemito instanceof Date
+        ? documentoDB.fechaRemito
+        : new Date(documentoDB?.fechaRemito || data.fechaRemito);
+
     if (tipo === 'R') {
       for (const item of items) {
         try {
@@ -440,15 +520,11 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         }
       }
 
-      const fechaMovimiento =
-        documentoDB?.fechaRemito instanceof Date
-          ? documentoDB.fechaRemito
-          : new Date(documentoDB?.fechaRemito || data.fechaRemito);
       const stockMovements = items.map((item) => ({
         codprod: item.producto,
         movimiento: movimientoCompraId,
         cantidad: item.cantidad,
-        fecha: fechaMovimiento,
+        fecha: fechaMovimientoDocumento,
         usuario: userId,
         activo: true,
       }));
@@ -485,6 +561,24 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         } catch (error) {
           const message = error?.message || 'operación fallida';
           stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+        }
+      }
+
+      const movimientoAjusteId = isAjusteIncremental
+        ? movimientoAjustePositivoId
+        : movimientoAjusteNegativoId;
+
+      if (movimientoAjusteId) {
+        const stockMovementsAjuste = items.map((item) => ({
+          codprod: item.producto,
+          movimiento: movimientoAjusteId,
+          cantidad: isAjusteIncremental ? item.cantidad : -Math.abs(item.cantidad),
+          fecha: fechaMovimientoDocumento,
+          usuario: userId,
+          activo: true,
+        }));
+        if (stockMovementsAjuste.length > 0) {
+          await Stock.insertMany(stockMovementsAjuste, { session });
         }
       }
     }
@@ -525,6 +619,20 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
           incremento: item.cantidad,
           stkactual: Number(updatedProduct.stkactual ?? 0),
         });
+      }
+
+      if (movimientoIngresoPositivoId) {
+        const stockMovementsNR = items.map((item) => ({
+          codprod: item.producto,
+          movimiento: movimientoIngresoPositivoId,
+          cantidad: item.cantidad,
+          fecha: fechaMovimientoDocumento,
+          usuario: userId,
+          activo: true,
+        }));
+        if (stockMovementsNR.length > 0) {
+          await Stock.insertMany(stockMovementsNR, { session });
+        }
       }
     }
 
