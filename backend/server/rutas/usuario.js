@@ -35,6 +35,34 @@ router.get('/usuarios', [verificaToken, verificaAdmin_role], asyncHandler(async 
   res.json({ ok: true, usuarios, cantidad });
 }));
 
+router.get('/usuarios/autocomplete', [verificaToken], asyncHandler(async (req, res) => {
+  const term = typeof req.query.term === 'string' ? req.query.term.trim() : '';
+
+  if (term.length < 2) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'Ingresá al menos 2 caracteres para buscar' },
+    });
+  }
+
+  const regex = new RegExp(term, 'i');
+  const usuarios = await Usuario.find({
+    activo: true,
+    $or: [
+      { nombres: { $regex: regex } },
+      { apellidos: { $regex: regex } },
+      { email: { $regex: regex } },
+    ],
+  })
+    .limit(20)
+    .sort({ nombres: 1, apellidos: 1 })
+    .select('_id nombres apellidos role email')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, usuarios });
+}));
+
 // -----------------------------------------------------------------------------
 // 2. OBTENER USUARIO POR ID -----------------------------------------------------
 // -----------------------------------------------------------------------------
