@@ -3,7 +3,9 @@
 // Compatible con Node.js v22.17.1 y Mongoose v8.16.5
 
 const express = require('express');
+const mongoose = require('mongoose');
 const Comanda = require('../modelos/comanda');
+const Cliente = require('../modelos/cliente');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
@@ -27,6 +29,11 @@ const asyncHandler = (fn) => (req, res, next) => {
 
 const toNumber = (v, def) => Number(v ?? def);
 
+const parseObjectId = (value) => {
+  if (!value || !mongoose.Types.ObjectId.isValid(value)) return null;
+  return new mongoose.Types.ObjectId(value);
+};
+
 /**
  * Conjunto de poblados comunes a la mayoría de endpoints.
  */
@@ -44,6 +51,7 @@ const commonPopulate = [
   'camion',
   { path: 'usuario', select: 'role nombres apellidos' },
   { path: 'camionero', select: 'role nombres apellidos' },
+  { path: 'usuarioAsignado', select: 'role nombres apellidos' },
 ];
 
 // -----------------------------------------------------------------------------
@@ -76,6 +84,136 @@ router.get('/comandasactivas', asyncHandler(async (req, res) => {
     .exec();
   const cantidad = await Comanda.countDocuments(query);
   res.json({ ok: true, comandas, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 2.a. COMANDAS PARA LOGÍSTICA CON FILTROS -------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/logistica', asyncHandler(async (req, res) => {
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = 20; // fijo según requerimiento
+  const skip = (page - 1) * limit;
+
+  const filters = { activo: true };
+
+  const {
+    fechaDesde,
+    fechaHasta,
+    cliente,
+    producto,
+    ruta,
+    camionero,
+    estado,
+    usuario,
+    puntoDistribucion,
+  } = req.query;
+
+  if (fechaDesde || fechaHasta) {
+    const rango = {};
+    if (fechaDesde) {
+      const fecha = new Date(fechaDesde);
+      if (!Number.isNaN(fecha.valueOf())) rango.$gte = fecha;
+    }
+    if (fechaHasta) {
+      const fecha = new Date(fechaHasta);
+      if (!Number.isNaN(fecha.valueOf())) rango.$lte = fecha;
+    }
+    if (Object.keys(rango).length) filters.fecha = rango;
+  }
+
+  if (producto) {
+    const prodId = parseObjectId(producto);
+    if (prodId) filters['items.codprod'] = prodId;
+  }
+
+  if (camionero) {
+    const camioneroId = parseObjectId(camionero);
+    if (camioneroId) filters.camionero = camioneroId;
+  }
+
+  if (estado) {
+    const estadoId = parseObjectId(estado);
+    if (estadoId) filters.codestado = estadoId;
+  }
+
+  if (usuario) {
+    const usuarioId = parseObjectId(usuario);
+    if (usuarioId) filters.usuario = usuarioId;
+  }
+
+  if (puntoDistribucion) {
+    filters.puntoDistribucion = { $regex: puntoDistribucion, $options: 'i' };
+  }
+
+  let clienteSet = null;
+
+  if (cliente) {
+    const clienteId = parseObjectId(cliente);
+    if (clienteId) {
+      clienteSet = new Set([clienteId.toString()]);
+    }
+  }
+
+  if (ruta) {
+    const rutaId = parseObjectId(ruta);
+    if (rutaId) {
+      const clientes = await Cliente.find({ ruta: rutaId, activo: true })
+        .select('_id')
+        .lean()
+        .exec();
+      const routeIds = clientes.map((c) => c._id.toString());
+      if (clienteSet) {
+        const interseccion = routeIds.filter((id) => clienteSet.has(id));
+        clienteSet = new Set(interseccion);
+      } else {
+        clienteSet = new Set(routeIds);
+      }
+    }
+  }
+
+  if (clienteSet) {
+    if (clienteSet.size === 0) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, data: [] });
+    }
+    const ids = Array.from(clienteSet).map((id) => new mongoose.Types.ObjectId(id));
+    filters.codcli = ids.length === 1 ? ids[0] : { $in: ids };
+  }
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(filters),
+    Comanda.find(filters)
+      .sort({ fecha: -1, nrodecomanda: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate([
+        {
+          path: 'codcli',
+          populate: [
+            { path: 'ruta' },
+            { path: 'localidad', populate: { path: 'provincia' } },
+          ],
+        },
+        { path: 'items.lista' },
+        {
+          path: 'items.codprod',
+          populate: [
+            { path: 'marca' },
+            { path: 'unidaddemedida' },
+          ],
+        },
+        'codestado',
+        'camion',
+        { path: 'usuario', select: 'role nombres apellidos' },
+        { path: 'camionero', select: 'role nombres apellidos' },
+        { path: 'usuarioAsignado', select: 'role nombres apellidos' },
+      ])
+      .lean()
+      .exec(),
+  ]);
+
+  const totalPages = Math.ceil(total / limit);
+
+  res.json({ ok: true, page, limit, total, totalPages, data: comandas });
 }));
 
 // -----------------------------------------------------------------------------
@@ -284,6 +422,60 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
   } finally {
     session.endSession();
   }
+}));
+
+// -----------------------------------------------------------------------------
+// 10.a ACTUALIZACIÓN MASIVA PARA LOGÍSTICA -------------------------------------
+// -----------------------------------------------------------------------------
+router.put('/comandas/logistica/bulk', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
+  const { ids, codestado, camionero, usuarioAsignado, puntoDistribucion } = req.body ?? {};
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ ok: false, err: { message: 'Debe indicar las comandas a actualizar' } });
+  }
+
+  const objectIds = ids
+    .map((id) => parseObjectId(id))
+    .filter(Boolean);
+
+  if (!objectIds.length) {
+    return res.status(400).json({ ok: false, err: { message: 'Identificadores inválidos' } });
+  }
+
+  const update = {};
+
+  const estadoId = parseObjectId(codestado);
+  if (estadoId) update.codestado = estadoId;
+
+  const camioneroId = parseObjectId(camionero);
+  if (camioneroId) {
+    update.camionero = camioneroId;
+    update.usuarioAsignado = camioneroId;
+  }
+
+  const usuarioAsignadoId = parseObjectId(usuarioAsignado);
+  if (usuarioAsignadoId) update.usuarioAsignado = usuarioAsignadoId;
+
+  if (typeof puntoDistribucion === 'string') {
+    update.puntoDistribucion = puntoDistribucion.trim();
+  }
+
+  if (Object.keys(update).length === 0) {
+    return res.status(400).json({ ok: false, err: { message: 'No se enviaron cambios para aplicar' } });
+  }
+
+  const result = await Comanda.updateMany(
+    { _id: { $in: objectIds } },
+    { $set: update },
+    { multi: true },
+  ).exec();
+
+  const refreshed = await Comanda.find({ _id: { $in: objectIds } })
+    .populate(commonPopulate)
+    .lean()
+    .exec();
+
+  res.json({ ok: true, modificadas: result.modifiedCount ?? 0, comandas: refreshed });
 }));
 
 // -----------------------------------------------------------------------------

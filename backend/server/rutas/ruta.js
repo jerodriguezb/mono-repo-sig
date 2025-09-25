@@ -35,6 +35,33 @@ router.get('/rutas', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
+// 1.a BÚSQUEDA RÁPIDA DE RUTAS --------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/rutas/lookup', asyncHandler(async (req, res) => {
+  const { term = '', limit = 20 } = req.query;
+  const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 20);
+  const trimmed = term.trim();
+
+  if (!trimmed) {
+    const rutas = await Ruta.find({ activo: true })
+      .sort('ruta')
+      .limit(safeLimit)
+      .lean()
+      .exec();
+    return res.json({ ok: true, rutas });
+  }
+
+  const regex = new RegExp(trimmed, 'i');
+  const rutas = await Ruta.find({ activo: true, ruta: { $regex: regex } })
+    .sort('ruta')
+    .limit(safeLimit)
+    .lean()
+    .exec();
+
+  res.json({ ok: true, rutas });
+}));
+
+// -----------------------------------------------------------------------------
 // 2. OBTENER RUTA POR ID --------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/rutas/:id', asyncHandler(async (req, res) => {

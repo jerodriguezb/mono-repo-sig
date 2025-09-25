@@ -93,4 +93,31 @@ router.delete('/usuarios/:id', [verificaToken, verificaAdmin_role], asyncHandler
 }));
 
 // -----------------------------------------------------------------------------
+// 6. LISTAR CAMIONEROS PARA LOGÍSTICA ------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/usuarios/camioneros', asyncHandler(async (req, res) => {
+  const { term = '', limit = 20 } = req.query;
+  const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 20);
+  const regex = term ? new RegExp(term, 'i') : null;
+
+  const query = { activo: true, role: 'USER_CAM' };
+  if (regex) {
+    query.$or = [
+      { nombres: { $regex: regex } },
+      { apellidos: { $regex: regex } },
+      { email: { $regex: regex } },
+    ];
+  }
+
+  const usuarios = await Usuario.find(query)
+    .sort({ nombres: 1, apellidos: 1 })
+    .limit(safeLimit)
+    .select('nombres apellidos email role')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, usuarios });
+}));
+
+// -----------------------------------------------------------------------------
 module.exports = router;
