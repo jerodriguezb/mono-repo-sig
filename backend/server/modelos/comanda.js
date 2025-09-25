@@ -76,6 +76,16 @@ const comandaSchema = new Schema({
     ref: "Usuario",
   },
 
+  usuarioAsignado: {
+    type: Schema.Types.ObjectId,
+    ref: "Usuario",
+  },
+
+  puntoDistribucion: {
+    type: String,
+    trim: true,
+  },
+
   activo: {
     type: Boolean,
     default: true,
