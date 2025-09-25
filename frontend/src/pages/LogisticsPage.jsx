@@ -6,7 +6,6 @@ import {
   Button,
   Checkbox,
   Divider,
-  Grid,
   IconButton,
   LinearProgress,
   Link,
@@ -19,6 +18,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Tooltip,
   Typography,
@@ -34,6 +34,7 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import jsPDF from 'jspdf';
@@ -87,6 +88,7 @@ export default function LogisticsPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
   const [columnFilters, setColumnFilters] = useState([]);
+  const [sorting, setSorting] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
   const [itemsModal, setItemsModal] = useState({ open: false, comanda: null });
   const [logisticsDialog, setLogisticsDialog] = useState({ open: false, comandas: [] });
@@ -111,6 +113,8 @@ export default function LogisticsPage() {
   const productoTimer = useRef(null);
   const camioneroTimer = useRef(null);
   const usuarioTimer = useRef(null);
+
+  const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
 
   const columns = useMemo(() => [
       {
@@ -141,11 +145,15 @@ export default function LogisticsPage() {
         header: 'Nro. Comanda',
         cell: (info) => info.getValue() ?? '—',
         meta: { align: 'left' },
+        enableSorting: true,
       }),
       columnHelper.display({
         id: 'cliente',
         header: 'Cliente',
         cell: ({ row }) => row.original?.codcli?.razonsocial ?? '—',
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(rowA.original?.codcli?.razonsocial ?? '', rowB.original?.codcli?.razonsocial ?? ''),
       }),
       columnHelper.display({
         id: 'producto',
@@ -163,45 +171,73 @@ export default function LogisticsPage() {
             </Link>
           );
         },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(extractPrimaryProduct(rowA.original?.items), extractPrimaryProduct(rowB.original?.items)),
       }),
       columnHelper.display({
         id: 'fecha',
         header: 'Fecha',
         cell: ({ row }) => (row.original?.fecha ? dayjs(row.original.fecha).format('DD/MM/YYYY') : '—'),
         meta: { align: 'center' },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => {
+          const dateA = rowA.original?.fecha ? new Date(rowA.original.fecha).getTime() : 0;
+          const dateB = rowB.original?.fecha ? new Date(rowB.original.fecha).getTime() : 0;
+          return dateA - dateB;
+        },
       }),
       columnHelper.display({
         id: 'cantidadEntregada',
         header: 'Cant. entregada',
         cell: ({ row }) => numberFormatter.format(sumDelivered(row.original?.items)),
         meta: { align: 'right' },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => sumDelivered(rowA.original?.items) - sumDelivered(rowB.original?.items),
       }),
       columnHelper.display({
         id: 'lista',
         header: 'Lista',
         cell: ({ row }) => row.original?.items?.[0]?.lista?.lista ?? '—',
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(rowA.original?.items?.[0]?.lista?.lista ?? '', rowB.original?.items?.[0]?.lista?.lista ?? ''),
       }),
       columnHelper.display({
         id: 'precioUnitario',
         header: 'Precio unitario',
         cell: ({ row }) => currencyFormatter.format(Number(row.original?.items?.[0]?.monto ?? 0)),
         meta: { align: 'right' },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          Number(rowA.original?.items?.[0]?.monto ?? 0) - Number(rowB.original?.items?.[0]?.monto ?? 0),
       }),
       columnHelper.display({
         id: 'totalEntregado',
         header: 'Total entregado',
         cell: ({ row }) => currencyFormatter.format(sumDeliveredTotal(row.original?.items)),
         meta: { align: 'right' },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => sumDeliveredTotal(rowA.original?.items) - sumDeliveredTotal(rowB.original?.items),
       }),
       columnHelper.display({
         id: 'estado',
         header: 'Estado',
         cell: ({ row }) => row.original?.codestado?.estado ?? '—',
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
       }),
       columnHelper.display({
         id: 'ruta',
         header: 'Ruta',
         cell: ({ row }) => row.original?.codcli?.ruta?.ruta ?? row.original?.camion?.ruta ?? '—',
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(
+            rowA.original?.codcli?.ruta?.ruta ?? rowA.original?.camion?.ruta ?? '',
+            rowB.original?.codcli?.ruta?.ruta ?? rowB.original?.camion?.ruta ?? '',
+          ),
       }),
       columnHelper.display({
         id: 'camionero',
@@ -212,11 +248,27 @@ export default function LogisticsPage() {
             ? `${camionero?.nombres ?? ''} ${camionero?.apellidos ?? ''}`.trim()
             : '—';
         },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => {
+          const nombreA = rowA.original?.camionero
+            ? `${rowA.original.camionero?.nombres ?? ''} ${rowA.original.camionero?.apellidos ?? ''}`.trim()
+            : '';
+          const nombreB = rowB.original?.camionero
+            ? `${rowB.original.camionero?.nombres ?? ''} ${rowB.original.camionero?.apellidos ?? ''}`.trim()
+            : '';
+          return collator.compare(nombreA, nombreB);
+        },
       }),
       columnHelper.display({
         id: 'puntoDistribucion',
         header: 'Punto de distribución',
         cell: ({ row }) => row.original?.puntoDistribucion ?? row.original?.camion?.camion ?? '—',
+        enableSorting: true,
+        sortingFn: (rowA, rowB) =>
+          collator.compare(
+            rowA.original?.puntoDistribucion ?? rowA.original?.camion?.camion ?? '',
+            rowB.original?.puntoDistribucion ?? rowB.original?.camion?.camion ?? '',
+          ),
       }),
       columnHelper.display({
         id: 'usuario',
@@ -226,6 +278,16 @@ export default function LogisticsPage() {
           return usuario
             ? `${usuario?.nombres ?? ''} ${usuario?.apellidos ?? ''}`.trim()
             : '—';
+        },
+        enableSorting: true,
+        sortingFn: (rowA, rowB) => {
+          const nombreA = rowA.original?.usuario
+            ? `${rowA.original.usuario?.nombres ?? ''} ${rowA.original.usuario?.apellidos ?? ''}`.trim()
+            : '';
+          const nombreB = rowB.original?.usuario
+            ? `${rowB.original.usuario?.nombres ?? ''} ${rowB.original.usuario?.apellidos ?? ''}`.trim()
+            : '';
+          return collator.compare(nombreA, nombreB);
         },
       }),
       columnHelper.display({
@@ -255,7 +317,7 @@ export default function LogisticsPage() {
         enableColumnFilter: false,
         meta: { align: 'center' },
       }),
-    ], []);
+    ], [collator]);
 
   const table = useReactTable({
     data,
@@ -263,10 +325,13 @@ export default function LogisticsPage() {
     state: {
       columnFilters,
       rowSelection,
+      sorting,
     },
     onColumnFiltersChange: setColumnFilters,
     onRowSelectionChange: setRowSelection,
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     manualFiltering: true,
     enableRowSelection: true,
     getRowId: (row) => row?._id ?? String(row?.nrodecomanda ?? Math.random()),
@@ -631,7 +696,9 @@ export default function LogisticsPage() {
 
   const handleClearFilters = () => {
     table.resetColumnFilters();
+    table.resetSorting();
     setColumnFilters([]);
+    setSorting([]);
     setPage(1);
   };
 
@@ -728,36 +795,18 @@ export default function LogisticsPage() {
       </Stack>
 
       <Paper sx={{ p: 2, mb: 3 }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              label="Nro. de comanda"
-              value={nroValue}
-              onChange={(event) => nroColumn?.setFilterValue(event.target.value || undefined)}
-              fullWidth
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              value={clienteValue}
-              options={ensureOptionPresence(clienteOptions, clienteValue)}
-              onChange={(_, value) => clienteColumn?.setFilterValue(value ?? undefined)}
-              onInputChange={handleClienteInput}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
-              renderInput={(params) => <TextField {...params} label="Cliente" placeholder="Buscar cliente" />}
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              value={productoValue}
-              options={ensureOptionPresence(productoOptions, productoValue)}
-              onChange={(_, value) => productoColumn?.setFilterValue(value ?? undefined)}
-              onInputChange={handleProductoInput}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
-              renderInput={(params) => <TextField {...params} label="Producto" placeholder="Buscar producto" />}
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            gridTemplateColumns: {
+              xs: 'repeat(1, minmax(0, 1fr))',
+              sm: 'repeat(2, minmax(0, 1fr))',
+              md: 'repeat(15, minmax(0, 1fr))',
+            },
+          }}
+        >
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
             <TextField
               type="date"
               label="Fecha desde"
@@ -766,8 +815,8 @@ export default function LogisticsPage() {
               onChange={(event) => handleDateChange('desde', event.target.value)}
               fullWidth
             />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
             <TextField
               type="date"
               label="Fecha hasta"
@@ -776,18 +825,30 @@ export default function LogisticsPage() {
               onChange={(event) => handleDateChange('hasta', event.target.value)}
               fullWidth
             />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
             <Autocomplete
+              sx={{ width: '100%' }}
+              value={estadoValue}
+              options={ensureOptionPresence(estadoOptions, estadoValue)}
+              onChange={(_, value) => estadoColumn?.setFilterValue(value ?? undefined)}
+              renderInput={(params) => <TextField {...params} label="Estado" placeholder="Seleccionar estado" />}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+            />
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
+            <Autocomplete
+              sx={{ width: '100%' }}
               value={rutaValue}
               options={ensureOptionPresence(rutaOptions, rutaValue)}
               onChange={(_, value) => rutaColumn?.setFilterValue(value ?? undefined)}
               renderInput={(params) => <TextField {...params} label="Ruta" placeholder="Seleccionar ruta" />}
               isOptionEqualToValue={(option, value) => option.id === value.id}
             />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
             <Autocomplete
+              sx={{ width: '100%' }}
               value={camioneroValue}
               options={ensureOptionPresence(camioneroOptions, camioneroValue)}
               onChange={(_, value) => camioneroColumn?.setFilterValue(value ?? undefined)}
@@ -795,28 +856,10 @@ export default function LogisticsPage() {
               renderInput={(params) => <TextField {...params} label="Camionero" placeholder="Buscar" />}
               isOptionEqualToValue={(option, value) => option.id === value.id}
             />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
             <Autocomplete
-              value={estadoValue}
-              options={ensureOptionPresence(estadoOptions, estadoValue)}
-              onChange={(_, value) => estadoColumn?.setFilterValue(value ?? undefined)}
-              renderInput={(params) => <TextField {...params} label="Estado" placeholder="Seleccionar estado" />}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              value={usuarioValue}
-              options={ensureOptionPresence(usuarioOptions, usuarioValue)}
-              onChange={(_, value) => usuarioColumn?.setFilterValue(value ?? undefined)}
-              onInputChange={handleUsuarioInput}
-              renderInput={(params) => <TextField {...params} label="Usuario" placeholder="Buscar usuario" />}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
+              sx={{ width: '100%' }}
               value={puntoDistribucionOption}
               options={ensureOptionPresence(puntoDistribucionOptions, puntoDistribucionOption)}
               freeSolo
@@ -827,8 +870,49 @@ export default function LogisticsPage() {
               renderInput={(params) => <TextField {...params} label="Punto de distribución" placeholder="Depósito" />}
               isOptionEqualToValue={(option, value) => option.id === value.id}
             />
-          </Grid>
-        </Grid>
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
+            <TextField
+              label="Nro. de comanda"
+              value={nroValue}
+              onChange={(event) => nroColumn?.setFilterValue(event.target.value || undefined)}
+              fullWidth
+            />
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
+            <Autocomplete
+              sx={{ width: '100%' }}
+              value={clienteValue}
+              options={ensureOptionPresence(clienteOptions, clienteValue)}
+              onChange={(_, value) => clienteColumn?.setFilterValue(value ?? undefined)}
+              onInputChange={handleClienteInput}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              renderInput={(params) => <TextField {...params} label="Cliente" placeholder="Buscar cliente" />}
+            />
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
+            <Autocomplete
+              sx={{ width: '100%' }}
+              value={productoValue}
+              options={ensureOptionPresence(productoOptions, productoValue)}
+              onChange={(_, value) => productoColumn?.setFilterValue(value ?? undefined)}
+              onInputChange={handleProductoInput}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              renderInput={(params) => <TextField {...params} label="Producto" placeholder="Buscar producto" />}
+            />
+          </Box>
+          <Box sx={{ gridColumn: { xs: 'span 1', sm: 'span 1', md: 'span 3' } }}>
+            <Autocomplete
+              sx={{ width: '100%' }}
+              value={usuarioValue}
+              options={ensureOptionPresence(usuarioOptions, usuarioValue)}
+              onChange={(_, value) => usuarioColumn?.setFilterValue(value ?? undefined)}
+              onInputChange={handleUsuarioInput}
+              renderInput={(params) => <TextField {...params} label="Usuario" placeholder="Buscar usuario" />}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+            />
+          </Box>
+        </Box>
       </Paper>
 
       {loading && <LinearProgress sx={{ mb: 2 }} />}
@@ -873,7 +957,31 @@ export default function LogisticsPage() {
                       align={header.column.columnDef.meta?.align ?? 'left'}
                       sx={{ fontWeight: 600, bgcolor: 'grey.100' }}
                     >
-                      {flexRender(header.column.columnDef.header, header.getContext())}
+                      {header.isPlaceholder
+                        ? null
+                        : header.column.getCanSort()
+                        ? (
+                            <TableSortLabel
+                              active={!!header.column.getIsSorted()}
+                              direction={header.column.getIsSorted() === 'desc' ? 'desc' : 'asc'}
+                              onClick={header.column.getToggleSortingHandler()}
+                              hideSortIcon={!header.column.getIsSorted()}
+                              sx={{
+                                justifyContent:
+                                  (header.column.columnDef.meta?.align ?? 'left') === 'right'
+                                    ? 'flex-end'
+                                    : (header.column.columnDef.meta?.align ?? 'left') === 'center'
+                                    ? 'center'
+                                    : 'flex-start',
+                                alignItems: 'center',
+                                display: 'flex',
+                                width: '100%',
+                              }}
+                            >
+                              {flexRender(header.column.columnDef.header, header.getContext())}
+                            </TableSortLabel>
+                          )
+                        : flexRender(header.column.columnDef.header, header.getContext())}
                     </TableCell>
                   ))}
                 </TableRow>
