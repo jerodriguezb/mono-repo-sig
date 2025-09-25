@@ -8,6 +8,7 @@ const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
 const Counter = require('../modelos/counter');
+const Cliente = require('../modelos/cliente');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -32,6 +33,28 @@ const toNumber = (v, def) => Number(v ?? def);
  */
 const commonPopulate = [
   'codcli',
+  { path: 'items.lista' },
+  {
+    path: 'items.codprod',
+    populate: [
+      { path: 'marca' },
+      { path: 'unidaddemedida' },
+    ],
+  },
+  'codestado',
+  'camion',
+  { path: 'usuario', select: 'role nombres apellidos' },
+  { path: 'camionero', select: 'role nombres apellidos' },
+];
+
+const logisticsPopulate = [
+  {
+    path: 'codcli',
+    populate: [
+      { path: 'ruta' },
+      { path: 'localidad', populate: { path: 'provincia' } },
+    ],
+  },
   { path: 'items.lista' },
   {
     path: 'items.codprod',
@@ -76,6 +99,92 @@ router.get('/comandasactivas', asyncHandler(async (req, res) => {
     .exec();
   const cantidad = await Comanda.countDocuments(query);
   res.json({ ok: true, comandas, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 2.b COMANDAS PARA LOGÍSTICA ---------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/logistica', asyncHandler(async (req, res) => {
+  const limitCandidate = toNumber(req.query.limit, 20);
+  const limit = Math.min(Math.max(limitCandidate, 1), 20);
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const skip = (page - 1) * limit;
+
+  const query = { activo: true };
+
+  const {
+    estado,
+    cliente,
+    producto,
+    ruta,
+    camionero,
+    usuario,
+    fechaDesde,
+    fechaHasta,
+    puntoDistribucion,
+    camion,
+  } = req.query;
+
+  if (estado) query.codestado = estado;
+  if (cliente) query.codcli = cliente;
+  if (producto) query['items.codprod'] = producto;
+  if (camionero) query.camionero = camionero;
+  if (usuario) query.usuario = usuario;
+  if (camion) query.camion = camion;
+  if (puntoDistribucion) {
+    query.puntoDistribucion = { $regex: puntoDistribucion, $options: 'i' };
+  }
+
+  if (fechaDesde || fechaHasta) {
+    query.fecha = {};
+    if (fechaDesde) {
+      const from = new Date(fechaDesde);
+      if (!Number.isNaN(from.valueOf())) query.fecha.$gte = from;
+    }
+    if (fechaHasta) {
+      const to = new Date(fechaHasta);
+      if (!Number.isNaN(to.valueOf())) {
+        to.setHours(23, 59, 59, 999);
+        query.fecha.$lte = to;
+      }
+    }
+    if (Object.keys(query.fecha).length === 0) delete query.fecha;
+  }
+
+  if (ruta) {
+    const clientes = await Cliente.find({ ruta }).select('_id').lean().exec();
+    const ids = clientes.map((c) => c._id.toString());
+    if (!ids.length) {
+      return res.json({ ok: true, page, limit, total: 0, pages: 0, data: [] });
+    }
+    if (cliente) {
+      if (!ids.includes(String(cliente))) {
+        return res.json({ ok: true, page, limit, total: 0, pages: 0, data: [] });
+      }
+    } else {
+      query.codcli = { $in: ids };
+    }
+  }
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(query),
+    Comanda.find(query)
+      .sort({ fecha: -1, nrodecomanda: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate(logisticsPopulate)
+      .lean()
+      .exec(),
+  ]);
+
+  res.json({
+    ok: true,
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit) || 0,
+    data: comandas,
+  });
 }));
 
 // -----------------------------------------------------------------------------

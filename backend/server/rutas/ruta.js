@@ -34,6 +34,27 @@ router.get('/rutas', asyncHandler(async (req, res) => {
   res.json({ ok: true, rutas, cantidad });
 }));
 
+router.get('/rutas/autocomplete', asyncHandler(async (req, res) => {
+  const term = typeof req.query.term === 'string' ? req.query.term.trim() : '';
+
+  if (term.length < 2) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'El término debe tener al menos 2 caracteres' },
+    });
+  }
+
+  const regex = new RegExp(term, 'i');
+  const rutas = await Ruta.find({ activo: true, ruta: { $regex: regex } })
+    .sort('ruta')
+    .limit(20)
+    .select('_id ruta')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, rutas });
+}));
+
 // -----------------------------------------------------------------------------
 // 2. OBTENER RUTA POR ID --------------------------------------------------------
 // -----------------------------------------------------------------------------
