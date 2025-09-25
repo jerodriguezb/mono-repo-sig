@@ -6,7 +6,12 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const { pick } = require('underscore');
 const Usuario = require('../modelos/usuario');
-const { verificaToken, verificaAdmin_role } = require('../middlewares/autenticacion');
+const {
+  verificaToken,
+  verificaAdmin_role,
+  verificaAdminCam_role,
+  ROLES,
+} = require('../middlewares/autenticacion');
 
 const router = express.Router();
 
@@ -33,6 +38,58 @@ router.get('/usuarios', [verificaToken, verificaAdmin_role], asyncHandler(async 
 
   const cantidad = await Usuario.countDocuments(query);
   res.json({ ok: true, usuarios, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 1.a LISTAR CAMIONEROS (LOOKUP) ------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/usuarios/camioneros', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
+  const { term = '' } = req.query;
+  const query = { activo: true, role: ROLES.CAMION };
+
+  if (term && term.length >= 2) {
+    const regex = new RegExp(term, 'i');
+    query.$or = [
+      { nombres: regex },
+      { apellidos: regex },
+      { email: regex },
+    ];
+  }
+
+  const usuarios = await Usuario.find(query)
+    .limit(20)
+    .sort('nombres')
+    .select('_id nombres apellidos email role')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, usuarios });
+}));
+
+// -----------------------------------------------------------------------------
+// 1.b LOOKUP GENERAL ------------------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/usuarios/lookup', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
+  const { term = '' } = req.query;
+  const query = { activo: true };
+
+  if (term && term.length >= 2) {
+    const regex = new RegExp(term, 'i');
+    query.$or = [
+      { nombres: regex },
+      { apellidos: regex },
+      { email: regex },
+    ];
+  }
+
+  const usuarios = await Usuario.find(query)
+    .limit(20)
+    .sort('nombres')
+    .select('_id nombres apellidos email role')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, usuarios });
 }));
 
 // -----------------------------------------------------------------------------
