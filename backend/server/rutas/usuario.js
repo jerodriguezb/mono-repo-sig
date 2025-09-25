@@ -36,6 +36,44 @@ router.get('/usuarios', [verificaToken, verificaAdmin_role], asyncHandler(async 
 }));
 
 // -----------------------------------------------------------------------------
+// 1.a LOOKUP PARA AUTOCOMPLETE --------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/usuarios/lookup', asyncHandler(async (req, res) => {
+  const raw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (raw.length < 2) {
+    return res.status(400).json({ ok: false, err: { message: 'Ingresá al menos 2 caracteres' } });
+  }
+
+  const limit = Math.min(Math.max(toNumber(req.query.limit, 20), 1), 20);
+  const regex = new RegExp(raw, 'i');
+
+  const roles = typeof req.query.roles === 'string' && req.query.roles
+    ? req.query.roles.split(',').map((r) => r.trim()).filter(Boolean)
+    : null;
+
+  const filter = {
+    activo: true,
+    $or: [
+      { nombres: { $regex: regex } },
+      { apellidos: { $regex: regex } },
+    ],
+  };
+
+  if (roles && roles.length) {
+    filter.role = { $in: roles };
+  }
+
+  const usuarios = await Usuario.find(filter)
+    .limit(limit)
+    .sort({ nombres: 1, apellidos: 1 })
+    .select('nombres apellidos role')
+    .lean()
+    .exec();
+
+  res.json({ ok: true, usuarios });
+}));
+
+// -----------------------------------------------------------------------------
 // 2. OBTENER USUARIO POR ID -----------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/usuarios/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {

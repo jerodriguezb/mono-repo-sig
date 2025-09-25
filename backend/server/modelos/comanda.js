@@ -76,6 +76,12 @@ const comandaSchema = new Schema({
     ref: "Usuario",
   },
 
+  puntoDistribucion: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+
   activo: {
     type: Boolean,
     default: true,

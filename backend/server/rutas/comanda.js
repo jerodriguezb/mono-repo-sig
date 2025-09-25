@@ -3,11 +3,13 @@
 // Compatible con Node.js v22.17.1 y Mongoose v8.16.5
 
 const express = require('express');
+const mongoose = require('mongoose');
 const Comanda = require('../modelos/comanda');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
 const Counter = require('../modelos/counter');
+const Cliente = require('../modelos/cliente');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -31,7 +33,13 @@ const toNumber = (v, def) => Number(v ?? def);
  * Conjunto de poblados comunes a la mayoría de endpoints.
  */
 const commonPopulate = [
-  'codcli',
+  {
+    path: 'codcli',
+    populate: [
+      { path: 'ruta' },
+      { path: 'localidad', populate: { path: 'provincia' } },
+    ],
+  },
   { path: 'items.lista' },
   {
     path: 'items.codprod',
@@ -45,6 +53,16 @@ const commonPopulate = [
   { path: 'usuario', select: 'role nombres apellidos' },
   { path: 'camionero', select: 'role nombres apellidos' },
 ];
+
+const { Types } = mongoose;
+const toObjectId = (value) => {
+  if (!value) return null;
+  try {
+    return new Types.ObjectId(value);
+  } catch (err) {
+    return null;
+  }
+};
 
 // -----------------------------------------------------------------------------
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
@@ -76,6 +94,112 @@ router.get('/comandasactivas', asyncHandler(async (req, res) => {
     .exec();
   const cantidad = await Comanda.countDocuments(query);
   res.json({ ok: true, comandas, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 2.b. COMANDAS PARA LOGÍSTICA -------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/logistica', asyncHandler(async (req, res) => {
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const limit = 20;
+  const skip = (page - 1) * limit;
+
+  const match = { activo: true };
+
+  const numero = req.query.numero ? Number(req.query.numero) : null;
+  if (Number.isFinite(numero)) {
+    match.nrodecomanda = numero;
+  }
+
+  const fechaDesde = req.query.fechaDesde ? new Date(req.query.fechaDesde) : null;
+  const fechaHasta = req.query.fechaHasta ? new Date(req.query.fechaHasta) : null;
+  if (fechaDesde || fechaHasta) {
+    match.fecha = {};
+    if (fechaDesde && !Number.isNaN(fechaDesde.getTime())) {
+      match.fecha.$gte = fechaDesde;
+    }
+    if (fechaHasta && !Number.isNaN(fechaHasta.getTime())) {
+      match.fecha.$lte = fechaHasta;
+    }
+    if (Object.keys(match.fecha).length === 0) delete match.fecha;
+  }
+
+  const clienteId = toObjectId(req.query.cliente);
+  const estadoId = toObjectId(req.query.estado);
+  const productoId = toObjectId(req.query.producto);
+  const camioneroId = toObjectId(req.query.camionero);
+  const usuarioId = toObjectId(req.query.usuario);
+
+  if (clienteId) match.codcli = clienteId;
+  if (estadoId) match.codestado = estadoId;
+  if (productoId) match['items.codprod'] = productoId;
+  if (camioneroId) match.camionero = camioneroId;
+  if (usuarioId) match.usuario = usuarioId;
+
+  if (req.query.puntoDistribucion) {
+    match.puntoDistribucion = {
+      $regex: new RegExp(req.query.puntoDistribucion, 'i'),
+    };
+  }
+
+  let routeIdsForClients = null;
+  const rutaId = toObjectId(req.query.ruta);
+  if (rutaId) {
+    const clientes = await Cliente.find({ ruta: rutaId })
+      .select('_id')
+      .lean()
+      .exec();
+    routeIdsForClients = clientes.map((c) => c._id);
+    if (!routeIdsForClients.length) {
+      return res.json({ ok: true, page, limit, total: 0, data: [] });
+    }
+  }
+
+  if (Array.isArray(routeIdsForClients)) {
+    if (match.codcli) {
+      const ids = routeIdsForClients
+        .map((id) => id.toString())
+        .filter((id) => id === match.codcli.toString());
+      if (!ids.length) {
+        return res.json({ ok: true, page, limit, total: 0, data: [] });
+      }
+    } else {
+      match.codcli = { $in: routeIdsForClients };
+    }
+  }
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(match),
+    Comanda.find(match)
+      .sort({ fecha: -1, nrodecomanda: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate(commonPopulate)
+      .lean()
+      .exec(),
+  ]);
+
+  const data = comandas.map((comanda) => {
+    const totalEntregado = Array.isArray(comanda.items)
+      ? comanda.items.reduce((acc, item) => {
+          const cantidad = Number(item.cantidadentregada ?? 0);
+          const monto = Number(item.monto ?? 0);
+          return acc + cantidad * monto;
+        }, 0)
+      : 0;
+
+    const cantidadEntregada = Array.isArray(comanda.items)
+      ? comanda.items.reduce((acc, item) => acc + Number(item.cantidadentregada ?? 0), 0)
+      : 0;
+
+    return {
+      ...comanda,
+      totalEntregado,
+      cantidadEntregada,
+    };
+  });
+
+  res.json({ ok: true, page, limit, total, data });
 }));
 
 // -----------------------------------------------------------------------------
