@@ -30,13 +30,7 @@ import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import dayjs from 'dayjs';
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
+import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
@@ -319,6 +313,18 @@ export default function LogisticsPage() {
       }),
     ], [collator]);
 
+  const handleSortingChange = useCallback((updater) => {
+    setSorting((prev) => {
+      const nextSorting = typeof updater === 'function' ? updater(prev) : updater;
+      if (!Array.isArray(nextSorting) || nextSorting.length === 0) {
+        return [];
+      }
+      const latest = nextSorting[nextSorting.length - 1];
+      return latest ? [latest] : [];
+    });
+    setPage(1);
+  }, []);
+
   const table = useReactTable({
     data,
     columns,
@@ -329,10 +335,10 @@ export default function LogisticsPage() {
     },
     onColumnFiltersChange: setColumnFilters,
     onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     manualFiltering: true,
+    manualSorting: true,
     enableRowSelection: true,
     getRowId: (row) => row?._id ?? String(row?.nrodecomanda ?? Math.random()),
   });
@@ -345,6 +351,20 @@ export default function LogisticsPage() {
 
   const buildParamsFromFilters = useCallback(() => {
     const params = { page, limit: PAGE_SIZE };
+    const sortingColumnMap = {
+      nrodecomanda: 'nrodecomanda',
+      fecha: 'fecha',
+      estado: 'codestado',
+      puntoDistribucion: 'puntoDistribucion',
+    };
+    const [currentSorting] = sorting;
+    if (currentSorting) {
+      const sortField = sortingColumnMap[currentSorting.id];
+      if (sortField) {
+        params.sortField = sortField;
+        params.sortOrder = currentSorting.desc ? 'desc' : 'asc';
+      }
+    }
     columnFilters.forEach(({ id, value }) => {
       if (!value && value !== 0) return;
       switch (id) {
@@ -381,7 +401,7 @@ export default function LogisticsPage() {
       }
     });
     return params;
-  }, [columnFilters, page]);
+  }, [columnFilters, page, sorting]);
 
   const fetchComandas = useCallback(async () => {
     setLoading(true);

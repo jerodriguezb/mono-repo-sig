@@ -108,6 +108,8 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     usuario,
     nrocomanda,
     puntoDistribucion,
+    sortField,
+    sortOrder,
   } = req.query;
 
   const filters = [{ activo: true }];
@@ -183,10 +185,23 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
 
+  const allowedSortFields = new Set([
+    'nrodecomanda',
+    'fecha',
+    'codestado',
+    'puntoDistribucion',
+  ]);
+
+  const sortDirection = sortOrder === 'asc' ? 1 : -1;
+  const sortCriteria =
+    sortField && allowedSortFields.has(sortField)
+      ? { [sortField]: sortDirection }
+      : { fecha: -1, nrodecomanda: -1 };
+
   const [total, comandas] = await Promise.all([
     Comanda.countDocuments(query),
     Comanda.find(query)
-      .sort({ fecha: -1, nrodecomanda: -1 })
+      .sort(sortCriteria)
       .skip(skip)
       .limit(limit)
       .populate([
