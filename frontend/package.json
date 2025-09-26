@@ -17,6 +17,8 @@
     "@mui/x-data-grid": "^8.9.1",
     "@tanstack/react-table": "^8.21.3",
     "axios": "^1.6.8",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
     "dayjs": "^1.11.10",
     "framer-motion": "^11.18.2",
     "react": "^19.1.0",

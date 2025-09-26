@@ -3,7 +3,9 @@
 // Compatible con Node.js v22.17.1 y Mongoose v8.16.5
 
 const express = require('express');
+const mongoose = require('mongoose');
 const Comanda = require('../modelos/comanda');
+const Cliente = require('../modelos/cliente');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
@@ -26,6 +28,14 @@ const asyncHandler = (fn) => (req, res, next) => {
 };
 
 const toNumber = (v, def) => Number(v ?? def);
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 /**
  * Conjunto de poblados comunes a la mayoría de endpoints.
@@ -76,6 +86,152 @@ router.get('/comandasactivas', asyncHandler(async (req, res) => {
     .exec();
   const cantidad = await Comanda.countDocuments(query);
   res.json({ ok: true, comandas, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 2.a. COMANDAS PARA LOGÍSTICA -------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const requestedLimit = Math.max(toNumber(req.query.limit, 20), 1);
+  const limit = Math.min(requestedLimit, 20); // Siempre máximo 20 por página
+  const skip = (page - 1) * limit;
+
+  const {
+    fechaDesde,
+    fechaHasta,
+    cliente,
+    producto,
+    ruta,
+    camionero,
+    estado,
+    usuario,
+    nrocomanda,
+    puntoDistribucion,
+    sortField,
+    sortOrder,
+  } = req.query;
+
+  const filters = [{ activo: true }];
+
+  const from = parseDate(fechaDesde);
+  const to = parseDate(fechaHasta);
+  if (from || to) {
+    const rango = {};
+    if (from) rango.$gte = from;
+    if (to) {
+      // Ajusta al final del día para incluir registros completos
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      rango.$lte = end;
+    }
+    filters.push({ fecha: rango });
+  }
+
+  if (nrocomanda) {
+    const nro = Number(nrocomanda);
+    if (!Number.isNaN(nro)) filters.push({ nrodecomanda: nro });
+  }
+
+  if (cliente) {
+    if (!isValidObjectId(cliente)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ codcli: cliente });
+  }
+
+  if (producto) {
+    if (!isValidObjectId(producto)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ 'items.codprod': producto });
+  }
+
+  if (camionero) {
+    if (!isValidObjectId(camionero)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ camionero });
+  }
+
+  if (estado) {
+    if (!isValidObjectId(estado)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ codestado: estado });
+  }
+
+  if (usuario) {
+    if (!isValidObjectId(usuario)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ usuario });
+  }
+  if (puntoDistribucion) {
+    filters.push({ puntoDistribucion: { $regex: new RegExp(puntoDistribucion, 'i') } });
+  }
+
+  if (ruta) {
+    if (!isValidObjectId(ruta)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const clientes = await Cliente.find({ ruta }).select('_id').lean().exec();
+    const ids = clientes.map((c) => c._id);
+    if (!ids.length) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ codcli: { $in: ids } });
+  }
+
+  const query = filters.length === 1 ? filters[0] : { $and: filters };
+
+  const allowedSortFields = new Set([
+    'nrodecomanda',
+    'fecha',
+    'codestado',
+    'puntoDistribucion',
+  ]);
+
+  const sortDirection = sortOrder === 'asc' ? 1 : -1;
+  const sortCriteria =
+    sortField && allowedSortFields.has(sortField)
+      ? { [sortField]: sortDirection }
+      : { fecha: -1, nrodecomanda: -1 };
+
+  const [total, comandas] = await Promise.all([
+    Comanda.countDocuments(query),
+    Comanda.find(query)
+      .sort(sortCriteria)
+      .skip(skip)
+      .limit(limit)
+      .populate([
+        {
+          path: 'codcli',
+          populate: [
+            { path: 'ruta' },
+            { path: 'localidad', populate: { path: 'provincia' } },
+          ],
+        },
+        { path: 'items.lista' },
+        {
+          path: 'items.codprod',
+          populate: [
+            { path: 'marca' },
+            { path: 'unidaddemedida' },
+          ],
+        },
+        { path: 'codestado' },
+        { path: 'camion' },
+        { path: 'usuario', select: 'nombres apellidos role email' },
+        { path: 'camionero', select: 'nombres apellidos role email' },
+      ])
+      .lean()
+      .exec(),
+  ]);
+
+  const totalPages = Math.ceil(total / limit) || 0;
+
+  res.json({ ok: true, page, limit, total, totalPages, comandas });
 }));
 
 // -----------------------------------------------------------------------------
@@ -257,6 +413,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
         fechadeentrega: body.fechadeentrega,
         usuario: body.usuario,
         camionero: body.camionero,
+        puntoDistribucion: body.puntoDistribucion,
         activo: body.activo,
         items: body.items,
       });
