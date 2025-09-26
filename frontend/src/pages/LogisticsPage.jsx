@@ -23,6 +23,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
@@ -89,6 +90,7 @@ const buildOption = (entity, labelFn) => {
 const safeGetFilterValue = (column) => column?.getFilterValue?.() ?? null;
 
 export default function LogisticsPage() {
+  const theme = useTheme();
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -122,6 +124,28 @@ export default function LogisticsPage() {
   const usuarioTimer = useRef(null);
 
   const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
+
+  const defaultEstadoColor = theme.palette.text.primary;
+
+  const estadoColor = useMemo(
+    () => ({
+      Pendiente: theme.palette.warning.main,
+      'En preparación': theme.palette.info.main,
+      Preparando: theme.palette.info.main,
+      'Listo para enviar': theme.palette.secondary.main,
+      Despachado: theme.palette.primary.main,
+      'En camino': theme.palette.primary.main,
+      'En tránsito': theme.palette.primary.main,
+      Entregado: theme.palette.success.main,
+      Completo: theme.palette.success.main,
+      'No entregado': theme.palette.error.main,
+      Cancelado: theme.palette.error.main,
+      Anulado: theme.palette.error.main,
+      Rechazado: theme.palette.error.main,
+      Reprogramado: theme.palette.warning.dark,
+    }),
+    [theme],
+  );
 
   const columns = useMemo(() => [
       {
@@ -221,7 +245,17 @@ export default function LogisticsPage() {
       columnHelper.display({
         id: 'estado',
         header: 'Estado',
-        cell: ({ row }) => row.original?.codestado?.estado ?? '—',
+        cell: ({ row }) => {
+          const estadoActual = row.original?.codestado?.estado;
+          const displayEstado = estadoActual ?? '—';
+          const color = estadoActual ? estadoColor[estadoActual] ?? defaultEstadoColor : defaultEstadoColor;
+
+          return (
+            <Typography component="span" sx={{ color }}>
+              {displayEstado}
+            </Typography>
+          );
+        },
         enableSorting: true,
         sortingFn: (rowA, rowB) =>
           collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
@@ -315,7 +349,7 @@ export default function LogisticsPage() {
         enableColumnFilter: false,
         meta: { align: 'center' },
       }),
-    ], [collator]);
+    ], [collator, defaultEstadoColor, estadoColor]);
 
   const handleSortingChange = useCallback((updater) => {
     setSorting((prev) => {
