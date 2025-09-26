@@ -357,16 +357,26 @@ export default function LogisticsPage() {
     const params = { page, limit: PAGE_SIZE };
     const sortingColumnMap = {
       nrodecomanda: 'nrodecomanda',
+      cliente: 'codcli.razonsocial',
+      producto: 'productoPrincipal.descripcion',
       fecha: 'fecha',
-      estado: 'codestado',
+      cantidadEntregada: 'totales.cantidadEntregada',
+      precioTotal: 'totales.precioSolicitado',
+      totalEntregado: 'totales.totalEntregado',
+      estado: 'codestado.estado',
+      ruta: 'codcli.ruta.ruta',
+      camionero: 'camioneroNombre',
       puntoDistribucion: 'puntoDistribucion',
+      usuario: 'usuarioNombre',
     };
     const [currentSorting] = sorting;
     if (currentSorting) {
       const sortField = sortingColumnMap[currentSorting.id];
-      if (sortField) {
+      const sortOrder =
+        currentSorting.desc === true ? 'desc' : currentSorting.desc === false ? 'asc' : null;
+      if (sortField && sortOrder) {
         params.sortField = sortField;
-        params.sortOrder = currentSorting.desc ? 'desc' : 'asc';
+        params.sortOrder = sortOrder;
       }
     }
     columnFilters.forEach(({ id, value }) => {
