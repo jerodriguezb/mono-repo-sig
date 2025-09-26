@@ -37,6 +37,7 @@ import api from '../api/axios';
 import ItemsModal from '../components/logistics/ItemsModal.jsx';
 import LogisticsActionDialog from '../components/logistics/LogisticsActionDialog.jsx';
 import DeleteConfirmationDialog from '../components/logistics/DeleteConfirmationDialog.jsx';
+import { getLogisticsStatusColor } from '../constants/logisticsStatusColors.js';
 
 const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
@@ -221,7 +222,16 @@ export default function LogisticsPage() {
       columnHelper.display({
         id: 'estado',
         header: 'Estado',
-        cell: ({ row }) => row.original?.codestado?.estado ?? '—',
+        cell: ({ row }) => {
+          const estado = row.original?.codestado?.estado ?? '—';
+          const color = getLogisticsStatusColor(row.original?.codestado?.estado);
+
+          return (
+            <Typography component="span" sx={{ color, fontWeight: 600 }}>
+              {estado}
+            </Typography>
+          );
+        },
         enableSorting: true,
         sortingFn: (rowA, rowB) =>
           collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
