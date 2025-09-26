@@ -163,7 +163,7 @@ export default function LogisticsPage() {
           collator.compare(rowA.original?.codcli?.razonsocial ?? '', rowB.original?.codcli?.razonsocial ?? ''),
       }),
       columnHelper.display({
-        id: 'producto',
+        id: 'productoPrincipal',
         header: 'Producto principal',
         cell: ({ row }) => {
           const descripcion = extractPrimaryProduct(row.original?.items);
@@ -357,9 +357,16 @@ export default function LogisticsPage() {
     const params = { page, limit: PAGE_SIZE };
     const sortingColumnMap = {
       nrodecomanda: 'nrodecomanda',
+      cliente: 'cliente',
+      productoPrincipal: 'productoPrincipal',
       fecha: 'fecha',
+      precioTotal: 'precioTotal',
+      totalEntregado: 'totalEntregado',
       estado: 'codestado',
+      ruta: 'ruta',
+      camionero: 'camionero',
       puntoDistribucion: 'puntoDistribucion',
+      usuario: 'usuario',
     };
     const [currentSorting] = sorting;
     if (currentSorting) {
@@ -378,7 +385,7 @@ export default function LogisticsPage() {
         case 'cliente':
           if (value?.id) params.cliente = value.id;
           break;
-        case 'producto':
+        case 'productoPrincipal':
           if (value?.id) params.producto = value.id;
           break;
         case 'fecha':
@@ -727,7 +734,7 @@ export default function LogisticsPage() {
   };
 
   const clienteColumn = table.getColumn('cliente');
-  const productoColumn = table.getColumn('producto');
+  const productoColumn = table.getColumn('productoPrincipal');
   const fechaColumn = table.getColumn('fecha');
   const rutaColumn = table.getColumn('ruta');
   const camioneroColumn = table.getColumn('camionero');
