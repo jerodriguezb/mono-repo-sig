@@ -62,6 +62,19 @@ const sumDeliveredTotal = (items = []) =>
     0,
   );
 
+const sumRequestedTotal = (items = []) =>
+  items.reduce(
+    (acc, item) => acc + Number(item?.cantidad ?? 0) * Number(item?.monto ?? 0),
+    0,
+  );
+
+const resolvePrecioTotal = (comanda) => {
+  if (comanda?.precioTotal !== undefined && comanda?.precioTotal !== null) {
+    return Number(comanda.precioTotal) || 0;
+  }
+  return sumRequestedTotal(comanda?.items);
+};
+
 const extractPrimaryProduct = (items = []) => items?.[0]?.codprod?.descripcion ?? '—';
 
 const buildOption = (entity, labelFn) => {
@@ -190,21 +203,12 @@ export default function LogisticsPage() {
         sortingFn: (rowA, rowB) => sumDelivered(rowA.original?.items) - sumDelivered(rowB.original?.items),
       }),
       columnHelper.display({
-        id: 'lista',
-        header: 'Lista',
-        cell: ({ row }) => row.original?.items?.[0]?.lista?.lista ?? '—',
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(rowA.original?.items?.[0]?.lista?.lista ?? '', rowB.original?.items?.[0]?.lista?.lista ?? ''),
-      }),
-      columnHelper.display({
-        id: 'precioUnitario',
-        header: 'Precio unitario',
-        cell: ({ row }) => currencyFormatter.format(Number(row.original?.items?.[0]?.monto ?? 0)),
+        id: 'precioTotal',
+        header: 'Precio total',
+        cell: ({ row }) => currencyFormatter.format(resolvePrecioTotal(row.original)),
         meta: { align: 'right' },
         enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          Number(rowA.original?.items?.[0]?.monto ?? 0) - Number(rowB.original?.items?.[0]?.monto ?? 0),
+        sortingFn: (rowA, rowB) => resolvePrecioTotal(rowA.original) - resolvePrecioTotal(rowB.original),
       }),
       columnHelper.display({
         id: 'totalEntregado',
@@ -616,8 +620,7 @@ export default function LogisticsPage() {
       'Producto principal',
       'Fecha',
       'Cantidad entregada',
-      'Lista',
-      'Precio unitario',
+      'Precio total',
       'Total entregado',
       'Estado',
       'Ruta',
@@ -632,8 +635,7 @@ export default function LogisticsPage() {
       extractPrimaryProduct(comanda?.items),
       comanda?.fecha ? dayjs(comanda.fecha).format('DD/MM/YYYY') : '',
       numberFormatter.format(sumDelivered(comanda?.items)),
-      comanda?.items?.[0]?.lista?.lista ?? '',
-      currencyFormatter.format(Number(comanda?.items?.[0]?.monto ?? 0)),
+      currencyFormatter.format(resolvePrecioTotal(comanda)),
       currencyFormatter.format(sumDeliveredTotal(comanda?.items)),
       comanda?.codestado?.estado ?? '',
       comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
@@ -675,8 +677,7 @@ export default function LogisticsPage() {
       'Producto',
       'Fecha',
       'Cant. entregada',
-      'Lista',
-      'Precio unitario',
+      'Precio total',
       'Total entregado',
       'Estado',
       'Ruta',
@@ -690,8 +691,7 @@ export default function LogisticsPage() {
       extractPrimaryProduct(comanda?.items),
       comanda?.fecha ? dayjs(comanda.fecha).format('DD/MM/YYYY') : '',
       numberFormatter.format(sumDelivered(comanda?.items)),
-      comanda?.items?.[0]?.lista?.lista ?? '',
-      currencyFormatter.format(Number(comanda?.items?.[0]?.monto ?? 0)),
+      currencyFormatter.format(resolvePrecioTotal(comanda)),
       currencyFormatter.format(sumDeliveredTotal(comanda?.items)),
       comanda?.codestado?.estado ?? '',
       comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
