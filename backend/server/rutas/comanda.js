@@ -185,25 +185,193 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
 
-  const allowedSortFields = new Set([
-    'nrodecomanda',
-    'fecha',
-    'codestado',
-    'puntoDistribucion',
-  ]);
+  /**
+   * Campos permitidos para ordenamiento remoto.
+   * Cada clave representa el `sortField` aceptado por la API y el valor el alias
+   * o campo real calculado en el pipeline de agregación. Se incluye
+   * `nrodecomanda` para mantener compatibilidad con el cliente.
+   */
+  const SORT_FIELD_MAP = {
+    nrodecomanda: 'nrodecomanda',
+    cliente: 'clienteNombre',
+    productoPrincipal: 'productoPrincipal',
+    fecha: 'fecha',
+    precioTotal: 'precioTotal',
+    totalEntregado: 'totalEntregado',
+    estado: 'estadoNombre',
+    ruta: 'rutaNombre',
+    camionero: 'camioneroNombre',
+    puntoDistribucion: 'puntoDistribucion',
+    usuario: 'usuarioNombre',
+  };
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const sortKey = SORT_FIELD_MAP[sortField];
+  const sortStage = sortKey
+    ? sortKey === 'nrodecomanda'
+      ? { nrodecomanda: sortDirection }
+      : { [sortKey]: sortDirection, nrodecomanda: -1 }
+    : { fecha: -1, nrodecomanda: -1 };
 
-  const [total, comandas] = await Promise.all([
+  const aggregationPipeline = [
+    { $match: query },
+    {
+      $lookup: {
+        from: 'clientes',
+        localField: 'codcli',
+        foreignField: '_id',
+        as: 'clienteData',
+      },
+    },
+    { $unwind: { path: '$clienteData', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'rutas',
+        localField: 'clienteData.ruta',
+        foreignField: '_id',
+        as: 'rutaData',
+      },
+    },
+    { $unwind: { path: '$rutaData', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'camionero',
+        foreignField: '_id',
+        as: 'camioneroData',
+      },
+    },
+    { $unwind: { path: '$camioneroData', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'usuario',
+        foreignField: '_id',
+        as: 'usuarioData',
+      },
+    },
+    { $unwind: { path: '$usuarioData', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'estados',
+        localField: 'codestado',
+        foreignField: '_id',
+        as: 'estadoData',
+      },
+    },
+    { $unwind: { path: '$estadoData', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        primerItem: { $arrayElemAt: ['$items', 0] },
+      },
+    },
+    {
+      $lookup: {
+        from: 'producservs',
+        localField: 'primerItem.codprod',
+        foreignField: '_id',
+        as: 'productoPrincipalData',
+      },
+    },
+    { $unwind: { path: '$productoPrincipalData', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        clienteNombre: { $ifNull: ['$clienteData.razonsocial', ''] },
+        rutaNombre: { $ifNull: ['$rutaData.ruta', ''] },
+        camioneroNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$camioneroData.nombres', ''] },
+                ' ',
+                { $ifNull: ['$camioneroData.apellidos', ''] },
+              ],
+            },
+          },
+        },
+        usuarioNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$usuarioData.nombres', ''] },
+                ' ',
+                { $ifNull: ['$usuarioData.apellidos', ''] },
+              ],
+            },
+          },
+        },
+        estadoNombre: { $ifNull: ['$estadoData.estado', ''] },
+        productoPrincipal: { $ifNull: ['$productoPrincipalData.descripcion', ''] },
+        precioTotal: {
+          $reduce: {
+            input: '$items',
+            initialValue: 0,
+            in: {
+              $add: [
+                '$$value',
+                {
+                  $multiply: [
+                    { $ifNull: ['$$this.cantidad', 0] },
+                    { $ifNull: ['$$this.monto', 0] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        totalEntregado: {
+          $reduce: {
+            input: '$items',
+            initialValue: 0,
+            in: {
+              $add: [
+                '$$value',
+                {
+                  $multiply: [
+                    { $ifNull: ['$$this.cantidadentregada', 0] },
+                    { $ifNull: ['$$this.monto', 0] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 1,
+        nrodecomanda: 1,
+        fecha: 1,
+        puntoDistribucion: 1,
+        clienteNombre: 1,
+        rutaNombre: 1,
+        camioneroNombre: 1,
+        usuarioNombre: 1,
+        estadoNombre: 1,
+        productoPrincipal: 1,
+        precioTotal: 1,
+        totalEntregado: 1,
+      },
+    },
+    { $sort: sortStage },
+    { $skip: skip },
+    { $limit: limit },
+  ];
+
+  const [total, aggregateResults] = await Promise.all([
     Comanda.countDocuments(query),
-    Comanda.find(query)
-      .sort(sortCriteria)
-      .skip(skip)
-      .limit(limit)
+    Comanda.aggregate(aggregationPipeline)
+      .collation({ locale: 'es', strength: 1 })
+      .exec(),
+  ]);
+
+  const idsInOrder = aggregateResults.map((doc) => String(doc._id));
+  const aliasById = new Map(aggregateResults.map((doc) => [String(doc._id), doc]));
+
+  let comandas = [];
+  if (idsInOrder.length) {
+    const populated = await Comanda.find({ _id: { $in: idsInOrder } })
       .populate([
         {
           path: 'codcli',
@@ -226,8 +394,38 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
         { path: 'camionero', select: 'nombres apellidos role email' },
       ])
       .lean()
-      .exec(),
-  ]);
+      .exec();
+
+    const populatedMap = new Map(populated.map((doc) => [String(doc._id), doc]));
+    comandas = idsInOrder
+      .map((id) => {
+        const base = populatedMap.get(id);
+        if (!base) return null;
+        const alias = aliasById.get(id) ?? {};
+        const {
+          clienteNombre,
+          rutaNombre,
+          camioneroNombre,
+          usuarioNombre,
+          estadoNombre,
+          productoPrincipal,
+          precioTotal,
+          totalEntregado,
+        } = alias;
+        return {
+          ...base,
+          clienteNombre,
+          rutaNombre,
+          camioneroNombre,
+          usuarioNombre,
+          estadoNombre,
+          productoPrincipal,
+          precioTotal,
+          totalEntregado,
+        };
+      })
+      .filter(Boolean);
+  }
 
   const totalPages = Math.ceil(total / limit) || 0;
 
