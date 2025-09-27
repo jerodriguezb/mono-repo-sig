@@ -30,7 +30,13 @@ import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import dayjs from 'dayjs';
-import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
@@ -342,7 +348,7 @@ export default function LogisticsPage() {
     onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     manualFiltering: true,
-    manualSorting: true,
+    getSortedRowModel: getSortedRowModel(),
     enableRowSelection: true,
     getRowId: (row) => row?._id ?? String(row?.nrodecomanda ?? Math.random()),
   });
