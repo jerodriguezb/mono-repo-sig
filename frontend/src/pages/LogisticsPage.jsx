@@ -393,6 +393,11 @@ export default function LogisticsPage() {
       fecha: 'fecha',
       estado: 'codestado',
       puntoDistribucion: 'puntoDistribucion',
+      cliente: 'clienteNombre',
+      precioTotal: 'precioTotal',
+      ruta: 'rutaNombre',
+      camionero: 'camioneroNombre',
+      usuario: 'usuarioNombre',
     };
     const [currentSorting] = sorting;
     if (currentSorting) {

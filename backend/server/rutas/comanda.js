@@ -190,6 +190,11 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'fecha',
     'codestado',
     'puntoDistribucion',
+    'clienteNombre',
+    'precioTotal',
+    'rutaNombre',
+    'camioneroNombre',
+    'usuarioNombre',
   ]);
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
@@ -198,35 +203,164 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
       ? { [sortField]: sortDirection }
       : { fecha: -1, nrodecomanda: -1 };
 
-  const [total, comandas] = await Promise.all([
+  const aggregationPipeline = [
+    { $match: query },
+    {
+      $lookup: {
+        from: 'clientes',
+        localField: 'codcli',
+        foreignField: '_id',
+        as: 'cliente',
+      },
+    },
+    { $unwind: { path: '$cliente', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'rutas',
+        localField: 'cliente.ruta',
+        foreignField: '_id',
+        as: 'ruta',
+      },
+    },
+    { $unwind: { path: '$ruta', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'camionero',
+        foreignField: '_id',
+        as: 'camioneroDoc',
+      },
+    },
+    { $unwind: { path: '$camioneroDoc', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'usuario',
+        foreignField: '_id',
+        as: 'usuarioDoc',
+      },
+    },
+    { $unwind: { path: '$usuarioDoc', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'camions',
+        localField: 'camion',
+        foreignField: '_id',
+        as: 'camionDoc',
+      },
+    },
+    { $unwind: { path: '$camionDoc', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        clienteNombre: { $ifNull: ['$cliente.razonsocial', ''] },
+        rutaNombre: {
+          $let: {
+            vars: {
+              rutaCliente: '$ruta.ruta',
+              rutaCamion: '$camionDoc.ruta',
+            },
+            in: {
+              $ifNull: ['$$rutaCliente', { $ifNull: ['$$rutaCamion', ''] }],
+            },
+          },
+        },
+        camioneroNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$camioneroDoc.nombres', ''] },
+                ' ',
+                { $ifNull: ['$camioneroDoc.apellidos', ''] },
+              ],
+            },
+          },
+        },
+        usuarioNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$usuarioDoc.nombres', ''] },
+                ' ',
+                { $ifNull: ['$usuarioDoc.apellidos', ''] },
+              ],
+            },
+          },
+        },
+        precioTotal: {
+          $reduce: {
+            input: { $ifNull: ['$items', []] },
+            initialValue: 0,
+            in: {
+              $add: [
+                '$$value',
+                {
+                  $multiply: [
+                    { $ifNull: ['$$this.cantidad', 0] },
+                    { $ifNull: ['$$this.monto', 0] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 1,
+        nrodecomanda: 1,
+        codcli: 1,
+        fecha: 1,
+        codestado: 1,
+        camion: 1,
+        fechadeentrega: 1,
+        usuario: 1,
+        camionero: 1,
+        puntoDistribucion: 1,
+        activo: 1,
+        items: 1,
+        clienteNombre: 1,
+        rutaNombre: 1,
+        camioneroNombre: 1,
+        usuarioNombre: 1,
+        precioTotal: 1,
+      },
+    },
+    { $sort: sortCriteria },
+  ];
+
+  if (skip > 0) {
+    aggregationPipeline.push({ $skip: skip });
+  }
+  aggregationPipeline.push({ $limit: limit });
+
+  const collation = { locale: 'es-AR', caseLevel: false, strength: 1 };
+
+  const [total, aggregated] = await Promise.all([
     Comanda.countDocuments(query),
-    Comanda.find(query)
-      .sort(sortCriteria)
-      .skip(skip)
-      .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
-      .lean()
-      .exec(),
+    Comanda.aggregate(aggregationPipeline).collation(collation).exec(),
+  ]);
+
+  const comandas = await Comanda.populate(aggregated, [
+    {
+      path: 'codcli',
+      populate: [
+        { path: 'ruta' },
+        { path: 'localidad', populate: { path: 'provincia' } },
+      ],
+    },
+    { path: 'items.lista' },
+    {
+      path: 'items.codprod',
+      populate: [
+        { path: 'marca' },
+        { path: 'unidaddemedida' },
+      ],
+    },
+    { path: 'codestado' },
+    { path: 'camion' },
+    { path: 'usuario', select: 'nombres apellidos role email' },
+    { path: 'camionero', select: 'nombres apellidos role email' },
   ]);
 
   const totalPages = Math.ceil(total / limit) || 0;
