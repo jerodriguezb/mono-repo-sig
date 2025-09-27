@@ -185,49 +185,195 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
 
-  const allowedSortFields = new Set([
+  const simpleSortFields = new Set([
     'nrodecomanda',
     'fecha',
     'codestado',
     'puntoDistribucion',
   ]);
+  const advancedSortFieldMap = new Map([
+    ['codcli', 'clienteNombre'],
+    ['precioTotal', 'precioTotalCalculado'],
+    ['ruta', 'rutaNombre'],
+    ['camionero', 'camioneroNombre'],
+    ['usuario', 'usuarioNombre'],
+  ]);
+  const allowedSortFields = new Set([
+    ...simpleSortFields,
+    ...advancedSortFieldMap.keys(),
+  ]);
 
+  const populateOptions = [
+    {
+      path: 'codcli',
+      populate: [
+        { path: 'ruta' },
+        { path: 'localidad', populate: { path: 'provincia' } },
+      ],
+    },
+    { path: 'items.lista' },
+    {
+      path: 'items.codprod',
+      populate: [
+        { path: 'marca' },
+        { path: 'unidaddemedida' },
+      ],
+    },
+    { path: 'codestado' },
+    { path: 'camion' },
+    { path: 'usuario', select: 'nombres apellidos role email' },
+    { path: 'camionero', select: 'nombres apellidos role email' },
+  ];
+
+  const requestedSortField = sortField && allowedSortFields.has(sortField) ? sortField : null;
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const defaultSort = { fecha: -1, nrodecomanda: -1 };
 
-  const [total, comandas] = await Promise.all([
-    Comanda.countDocuments(query),
-    Comanda.find(query)
+  const totalPromise = Comanda.countDocuments(query);
+
+  let comandas;
+  if (requestedSortField && advancedSortFieldMap.has(requestedSortField)) {
+    const aggregationSortField = advancedSortFieldMap.get(requestedSortField);
+    const sortSpec = {
+      [aggregationSortField]: sortDirection,
+      fecha: -1,
+      nrodecomanda: -1,
+      _id: 1,
+    };
+
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: 'clientes',
+          localField: 'codcli',
+          foreignField: '_id',
+          as: 'cliente',
+        },
+      },
+      { $unwind: { path: '$cliente', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'rutas',
+          localField: 'cliente.ruta',
+          foreignField: '_id',
+          as: 'clienteRuta',
+        },
+      },
+      { $unwind: { path: '$clienteRuta', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'usuarios',
+          localField: 'camionero',
+          foreignField: '_id',
+          as: 'camioneroDoc',
+        },
+      },
+      { $unwind: { path: '$camioneroDoc', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'usuarios',
+          localField: 'usuario',
+          foreignField: '_id',
+          as: 'usuarioDoc',
+        },
+      },
+      { $unwind: { path: '$usuarioDoc', preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          clienteNombre: { $ifNull: ['$cliente.razonsocial', ''] },
+          rutaNombre: { $ifNull: ['$clienteRuta.ruta', ''] },
+          camioneroNombre: {
+            $let: {
+              vars: {
+                nombres: { $ifNull: ['$camioneroDoc.nombres', ''] },
+                apellidos: { $ifNull: ['$camioneroDoc.apellidos', ''] },
+              },
+              in: {
+                $trim: {
+                  input: {
+                    $concat: ['$$apellidos', ' ', '$$nombres'],
+                  },
+                },
+              },
+            },
+          },
+          usuarioNombre: {
+            $let: {
+              vars: {
+                nombres: { $ifNull: ['$usuarioDoc.nombres', ''] },
+                apellidos: { $ifNull: ['$usuarioDoc.apellidos', ''] },
+              },
+              in: {
+                $trim: {
+                  input: {
+                    $concat: ['$$apellidos', ' ', '$$nombres'],
+                  },
+                },
+              },
+            },
+          },
+          precioTotalCalculado: {
+            $reduce: {
+              input: { $ifNull: ['$items', []] },
+              initialValue: 0,
+              in: {
+                $add: [
+                  '$$value',
+                  {
+                    $multiply: [
+                      { $ifNull: ['$$this.cantidad', 0] },
+                      { $ifNull: ['$$this.monto', 0] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $sort: sortSpec },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          clienteNombre: 0,
+          rutaNombre: 0,
+          camioneroNombre: 0,
+          usuarioNombre: 0,
+          precioTotalCalculado: 0,
+          clienteRuta: 0,
+          cliente: 0,
+          camioneroDoc: 0,
+          usuarioDoc: 0,
+        },
+      },
+    ];
+
+    comandas = await Comanda.aggregate(pipeline);
+    comandas = await Comanda.populate(comandas, populateOptions);
+  } else {
+    const sortCriteria = requestedSortField
+      ? { [requestedSortField]: sortDirection }
+      : defaultSort;
+
+    comandas = await Comanda.find(query)
       .sort(sortCriteria)
       .skip(skip)
       .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
+      .populate(populateOptions)
       .lean()
-      .exec(),
-  ]);
+      .exec();
+  }
+
+  const total = await totalPromise;
+  if (!Array.isArray(comandas)) {
+    comandas = [];
+  }
+
+  if (requestedSortField && advancedSortFieldMap.has(requestedSortField)) {
+    comandas = comandas.map((comanda) => (typeof comanda.toObject === 'function' ? comanda.toObject() : comanda));
+  }
 
   const totalPages = Math.ceil(total / limit) || 0;
 
