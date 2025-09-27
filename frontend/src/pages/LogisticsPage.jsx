@@ -154,140 +154,173 @@ export default function LogisticsPage() {
         meta: { align: 'left' },
         enableSorting: true,
       }),
-      columnHelper.display({
-        id: 'cliente',
-        header: 'Cliente',
-        cell: ({ row }) => row.original?.codcli?.razonsocial ?? '—',
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(rowA.original?.codcli?.razonsocial ?? '', rowB.original?.codcli?.razonsocial ?? ''),
-      }),
-      columnHelper.display({
-        id: 'producto',
-        header: 'Producto principal',
-        cell: ({ row }) => {
-          const descripcion = extractPrimaryProduct(row.original?.items);
-          return (
-            <Link
-              component="button"
-              onClick={() => setItemsModal({ open: true, comanda: row.original })}
-              underline="hover"
-              sx={{ fontWeight: 500 }}
-            >
-              {descripcion}
-            </Link>
-          );
+      columnHelper.accessor(
+        (row) => row?.codcli?.razonsocial ?? '',
+        {
+          id: 'cliente',
+          header: 'Cliente',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            collator.compare(rowA.original?.codcli?.razonsocial ?? '', rowB.original?.codcli?.razonsocial ?? ''),
         },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(extractPrimaryProduct(rowA.original?.items), extractPrimaryProduct(rowB.original?.items)),
-      }),
-      columnHelper.display({
-        id: 'fecha',
-        header: 'Fecha',
-        cell: ({ row }) => (row.original?.fecha ? dayjs(row.original.fecha).format('DD/MM/YYYY') : '—'),
-        meta: { align: 'center' },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => {
-          const dateA = rowA.original?.fecha ? new Date(rowA.original.fecha).getTime() : 0;
-          const dateB = rowB.original?.fecha ? new Date(rowB.original.fecha).getTime() : 0;
-          return dateA - dateB;
+      ),
+      columnHelper.accessor(
+        (row) => extractPrimaryProduct(row?.items),
+        {
+          id: 'producto',
+          header: 'Producto principal',
+          cell: (info) => {
+            const descripcion = info.getValue();
+            return (
+              <Link
+                component="button"
+                onClick={() => setItemsModal({ open: true, comanda: info.row.original })}
+                underline="hover"
+                sx={{ fontWeight: 500 }}
+              >
+                {descripcion}
+              </Link>
+            );
+          },
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            collator.compare(
+              extractPrimaryProduct(rowA.original?.items),
+              extractPrimaryProduct(rowB.original?.items),
+            ),
         },
-      }),
-      columnHelper.display({
-        id: 'cantidadEntregada',
-        header: 'Cant. entregada',
-        cell: ({ row }) => numberFormatter.format(sumDelivered(row.original?.items)),
-        meta: { align: 'right' },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => sumDelivered(rowA.original?.items) - sumDelivered(rowB.original?.items),
-      }),
-      columnHelper.display({
-        id: 'precioTotal',
-        header: 'Precio total',
-        cell: ({ row }) => currencyFormatter.format(resolvePrecioTotal(row.original)),
-        meta: { align: 'right' },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => resolvePrecioTotal(rowA.original) - resolvePrecioTotal(rowB.original),
-      }),
-      columnHelper.display({
-        id: 'totalEntregado',
-        header: 'Total entregado',
-        cell: ({ row }) => currencyFormatter.format(sumDeliveredTotal(row.original?.items)),
-        meta: { align: 'right' },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => sumDeliveredTotal(rowA.original?.items) - sumDeliveredTotal(rowB.original?.items),
-      }),
-      columnHelper.display({
-        id: 'estado',
-        header: 'Estado',
-        cell: ({ row }) => row.original?.codestado?.estado ?? '—',
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
-      }),
-      columnHelper.display({
-        id: 'ruta',
-        header: 'Ruta',
-        cell: ({ row }) => row.original?.codcli?.ruta?.ruta ?? row.original?.camion?.ruta ?? '—',
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(
-            rowA.original?.codcli?.ruta?.ruta ?? rowA.original?.camion?.ruta ?? '',
-            rowB.original?.codcli?.ruta?.ruta ?? rowB.original?.camion?.ruta ?? '',
-          ),
-      }),
-      columnHelper.display({
-        id: 'camionero',
-        header: 'Camionero',
-        cell: ({ row }) => {
-          const camionero = row.original?.camionero;
-          return camionero
-            ? `${camionero?.nombres ?? ''} ${camionero?.apellidos ?? ''}`.trim()
-            : '—';
+      ),
+      columnHelper.accessor(
+        (row) => row?.fecha ?? null,
+        {
+          id: 'fecha',
+          header: 'Fecha',
+          cell: (info) => (info.getValue() ? dayjs(info.getValue()).format('DD/MM/YYYY') : '—'),
+          meta: { align: 'center' },
+          enableSorting: true,
+          sortingFn: (rowA, rowB) => {
+            const dateA = rowA.original?.fecha ? new Date(rowA.original.fecha).getTime() : 0;
+            const dateB = rowB.original?.fecha ? new Date(rowB.original.fecha).getTime() : 0;
+            return dateA - dateB;
+          },
         },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => {
-          const nombreA = rowA.original?.camionero
-            ? `${rowA.original.camionero?.nombres ?? ''} ${rowA.original.camionero?.apellidos ?? ''}`.trim()
-            : '';
-          const nombreB = rowB.original?.camionero
-            ? `${rowB.original.camionero?.nombres ?? ''} ${rowB.original.camionero?.apellidos ?? ''}`.trim()
-            : '';
-          return collator.compare(nombreA, nombreB);
+      ),
+      columnHelper.accessor(
+        (row) => sumDelivered(row?.items),
+        {
+          id: 'cantidadEntregada',
+          header: 'Cant. entregada',
+          cell: (info) => numberFormatter.format(info.getValue() ?? 0),
+          meta: { align: 'right' },
+          enableSorting: true,
+          sortingFn: (rowA, rowB) => sumDelivered(rowA.original?.items) - sumDelivered(rowB.original?.items),
         },
-      }),
-      columnHelper.display({
-        id: 'puntoDistribucion',
-        header: 'Punto de distribución',
-        cell: ({ row }) => row.original?.puntoDistribucion ?? row.original?.camion?.camion ?? '—',
-        enableSorting: true,
-        sortingFn: (rowA, rowB) =>
-          collator.compare(
-            rowA.original?.puntoDistribucion ?? rowA.original?.camion?.camion ?? '',
-            rowB.original?.puntoDistribucion ?? rowB.original?.camion?.camion ?? '',
-          ),
-      }),
-      columnHelper.display({
-        id: 'usuario',
-        header: 'Usuario',
-        cell: ({ row }) => {
-          const usuario = row.original?.usuario;
-          return usuario
-            ? `${usuario?.nombres ?? ''} ${usuario?.apellidos ?? ''}`.trim()
-            : '—';
+      ),
+      columnHelper.accessor(
+        (row) => resolvePrecioTotal(row),
+        {
+          id: 'precioTotal',
+          header: 'Precio total',
+          cell: (info) => currencyFormatter.format(info.getValue() ?? 0),
+          meta: { align: 'right' },
+          enableSorting: true,
+          sortingFn: (rowA, rowB) => resolvePrecioTotal(rowA.original) - resolvePrecioTotal(rowB.original),
         },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => {
-          const nombreA = rowA.original?.usuario
-            ? `${rowA.original.usuario?.nombres ?? ''} ${rowA.original.usuario?.apellidos ?? ''}`.trim()
-            : '';
-          const nombreB = rowB.original?.usuario
-            ? `${rowB.original.usuario?.nombres ?? ''} ${rowB.original.usuario?.apellidos ?? ''}`.trim()
-            : '';
-          return collator.compare(nombreA, nombreB);
+      ),
+      columnHelper.accessor(
+        (row) => sumDeliveredTotal(row?.items),
+        {
+          id: 'totalEntregado',
+          header: 'Total entregado',
+          cell: (info) => currencyFormatter.format(info.getValue() ?? 0),
+          meta: { align: 'right' },
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            sumDeliveredTotal(rowA.original?.items) - sumDeliveredTotal(rowB.original?.items),
         },
-      }),
+      ),
+      columnHelper.accessor(
+        (row) => row?.codestado?.estado ?? '',
+        {
+          id: 'estado',
+          header: 'Estado',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
+        },
+      ),
+      columnHelper.accessor(
+        (row) => row?.codcli?.ruta?.ruta ?? row?.camion?.ruta ?? '',
+        {
+          id: 'ruta',
+          header: 'Ruta',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            collator.compare(
+              rowA.original?.codcli?.ruta?.ruta ?? rowA.original?.camion?.ruta ?? '',
+              rowB.original?.codcli?.ruta?.ruta ?? rowB.original?.camion?.ruta ?? '',
+            ),
+        },
+      ),
+      columnHelper.accessor(
+        (row) => {
+          const camionero = row?.camionero;
+          return camionero ? `${camionero?.nombres ?? ''} ${camionero?.apellidos ?? ''}`.trim() : '';
+        },
+        {
+          id: 'camionero',
+          header: 'Camionero',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) => {
+            const nombreA = rowA.original?.camionero
+              ? `${rowA.original.camionero?.nombres ?? ''} ${rowA.original.camionero?.apellidos ?? ''}`.trim()
+              : '';
+            const nombreB = rowB.original?.camionero
+              ? `${rowB.original.camionero?.nombres ?? ''} ${rowB.original.camionero?.apellidos ?? ''}`.trim()
+              : '';
+            return collator.compare(nombreA, nombreB);
+          },
+        },
+      ),
+      columnHelper.accessor(
+        (row) => row?.puntoDistribucion ?? row?.camion?.camion ?? '',
+        {
+          id: 'puntoDistribucion',
+          header: 'Punto de distribución',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) =>
+            collator.compare(
+              rowA.original?.puntoDistribucion ?? rowA.original?.camion?.camion ?? '',
+              rowB.original?.puntoDistribucion ?? rowB.original?.camion?.camion ?? '',
+            ),
+        },
+      ),
+      columnHelper.accessor(
+        (row) => {
+          const usuario = row?.usuario;
+          return usuario ? `${usuario?.nombres ?? ''} ${usuario?.apellidos ?? ''}`.trim() : '';
+        },
+        {
+          id: 'usuario',
+          header: 'Usuario',
+          cell: (info) => info.getValue() || '—',
+          enableSorting: true,
+          sortingFn: (rowA, rowB) => {
+            const nombreA = rowA.original?.usuario
+              ? `${rowA.original.usuario?.nombres ?? ''} ${rowA.original.usuario?.apellidos ?? ''}`.trim()
+              : '';
+            const nombreB = rowB.original?.usuario
+              ? `${rowB.original.usuario?.nombres ?? ''} ${rowB.original.usuario?.apellidos ?? ''}`.trim()
+              : '';
+            return collator.compare(nombreA, nombreB);
+          },
+        },
+      ),
       columnHelper.display({
         id: 'acciones',
         header: 'Acciones',
