@@ -88,6 +88,14 @@ const buildOption = (entity, labelFn) => {
 
 const safeGetFilterValue = (column) => column?.getFilterValue?.() ?? null;
 
+const estadoColorPalette = {
+  'A Preparar': 'info.main',
+  Preparada: 'warning.main',
+  'En Camino': 'primary.main',
+  Entregada: 'success.main',
+  Cancelada: 'error.main',
+};
+
 export default function LogisticsPage() {
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
@@ -221,7 +229,13 @@ export default function LogisticsPage() {
       columnHelper.display({
         id: 'estado',
         header: 'Estado',
-        cell: ({ row }) => row.original?.codestado?.estado ?? '—',
+        cell: ({ row }) => {
+          const estado = row.original?.codestado?.estado;
+          const label = estado ?? '—';
+          return (
+            <Typography sx={{ color: estadoColorPalette[estado] ?? 'text.primary' }}>{label}</Typography>
+          );
+        },
         enableSorting: true,
         sortingFn: (rowA, rowB) =>
           collator.compare(rowA.original?.codestado?.estado ?? '', rowB.original?.codestado?.estado ?? ''),
