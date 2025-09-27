@@ -88,6 +88,20 @@ const buildOption = (entity, labelFn) => {
 
 const safeGetFilterValue = (column) => column?.getFilterValue?.() ?? null;
 
+const SORTING_COLUMN_MAP = {
+  nrodecomanda: 'nrodecomanda',
+  cliente: 'cliente',
+  productoPrincipal: 'productoPrincipal',
+  fecha: 'fecha',
+  precioTotal: 'precioTotal',
+  totalEntregado: 'totalEntregado',
+  estado: 'estado',
+  ruta: 'ruta',
+  camionero: 'camionero',
+  puntoDistribucion: 'puntoDistribucion',
+  usuario: 'usuario',
+};
+
 export default function LogisticsPage() {
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
@@ -199,8 +213,7 @@ export default function LogisticsPage() {
         header: 'Cant. entregada',
         cell: ({ row }) => numberFormatter.format(sumDelivered(row.original?.items)),
         meta: { align: 'right' },
-        enableSorting: true,
-        sortingFn: (rowA, rowB) => sumDelivered(rowA.original?.items) - sumDelivered(rowB.original?.items),
+        enableSorting: false,
       }),
       columnHelper.display({
         id: 'precioTotal',
@@ -355,22 +368,9 @@ export default function LogisticsPage() {
 
   const buildParamsFromFilters = useCallback(() => {
     const params = { page, limit: PAGE_SIZE };
-    const sortingColumnMap = {
-      nrodecomanda: 'nrodecomanda',
-      cliente: 'cliente',
-      productoPrincipal: 'productoPrincipal',
-      fecha: 'fecha',
-      precioTotal: 'precioTotal',
-      totalEntregado: 'totalEntregado',
-      estado: 'codestado',
-      ruta: 'ruta',
-      camionero: 'camionero',
-      puntoDistribucion: 'puntoDistribucion',
-      usuario: 'usuario',
-    };
     const [currentSorting] = sorting;
     if (currentSorting) {
-      const sortField = sortingColumnMap[currentSorting.id];
+      const sortField = SORTING_COLUMN_MAP[currentSorting.id];
       if (sortField) {
         params.sortField = sortField;
         params.sortOrder = currentSorting.desc ? 'desc' : 'asc';
