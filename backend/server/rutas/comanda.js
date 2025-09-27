@@ -185,48 +185,270 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
 
-  const allowedSortFields = new Set([
-    'nrodecomanda',
-    'fecha',
-    'codestado',
-    'puntoDistribucion',
-  ]);
+  // Allowed sortField query parameters: cliente, productoPrincipal, fecha, precioTotal,
+  // totalEntregado, estado, ruta, camionero, puntoDistribucion, usuario, nrodecomanda.
+  const sortFieldMap = {
+    cliente: 'codcli.razonsocial',
+    productoPrincipal: 'sortFields.productoPrincipal',
+    fecha: 'fecha',
+    precioTotal: 'precioTotal',
+    totalEntregado: 'sortFields.totalEntregado',
+    estado: 'codestado.estado',
+    ruta: 'sortFields.ruta',
+    camionero: 'sortFields.camionero',
+    puntoDistribucion: 'sortFields.puntoDistribucion',
+    usuario: 'sortFields.usuario',
+    nrodecomanda: 'nrodecomanda',
+  };
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const mappedSortField = sortField ? sortFieldMap[sortField] : null;
+  const sortStage = mappedSortField
+    ? { [mappedSortField]: sortDirection }
+    : { fecha: -1 };
+  if (mappedSortField !== 'nrodecomanda') {
+    sortStage.nrodecomanda = -1;
+  }
+
+  const pipeline = [
+    { $match: query },
+    {
+      $lookup: {
+        from: 'clientes',
+        let: { clienteId: '$codcli' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$clienteId'] } } },
+          {
+            $lookup: {
+              from: 'rutas',
+              localField: 'ruta',
+              foreignField: '_id',
+              as: 'ruta',
+            },
+          },
+          { $unwind: { path: '$ruta', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'localidads',
+              let: { localidadId: '$localidad' },
+              pipeline: [
+                { $match: { $expr: { $eq: ['$_id', '$$localidadId'] } } },
+                {
+                  $lookup: {
+                    from: 'provincias',
+                    localField: 'provincia',
+                    foreignField: '_id',
+                    as: 'provincia',
+                  },
+                },
+                { $unwind: { path: '$provincia', preserveNullAndEmptyArrays: true } },
+              ],
+              as: 'localidad',
+            },
+          },
+          { $unwind: { path: '$localidad', preserveNullAndEmptyArrays: true } },
+        ],
+        as: 'codcli',
+      },
+    },
+    { $unwind: { path: '$codcli', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'estados',
+        localField: 'codestado',
+        foreignField: '_id',
+        as: 'codestado',
+      },
+    },
+    { $unwind: { path: '$codestado', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'camions',
+        localField: 'camion',
+        foreignField: '_id',
+        as: 'camion',
+      },
+    },
+    { $unwind: { path: '$camion', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        let: { usuarioId: '$usuario' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$usuarioId'] } } },
+          { $project: { nombres: 1, apellidos: 1, role: 1, email: 1 } },
+        ],
+        as: 'usuario',
+      },
+    },
+    { $unwind: { path: '$usuario', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        let: { usuarioId: '$camionero' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$usuarioId'] } } },
+          { $project: { nombres: 1, apellidos: 1, role: 1, email: 1 } },
+        ],
+        as: 'camionero',
+      },
+    },
+    { $unwind: { path: '$camionero', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'listas',
+        let: { listaIds: { $ifNull: ['$items.lista', []] } },
+        pipeline: [
+          { $match: { $expr: { $in: ['$_id', '$$listaIds'] } } },
+        ],
+        as: 'itemsLista',
+      },
+    },
+    {
+      $lookup: {
+        from: 'producservs',
+        let: { productoIds: { $ifNull: ['$items.codprod', []] } },
+        pipeline: [
+          { $match: { $expr: { $in: ['$_id', '$$productoIds'] } } },
+          {
+            $lookup: {
+              from: 'marcas',
+              localField: 'marca',
+              foreignField: '_id',
+              as: 'marca',
+            },
+          },
+          { $unwind: { path: '$marca', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'unidaddemedidas',
+              localField: 'unidaddemedida',
+              foreignField: '_id',
+              as: 'unidaddemedida',
+            },
+          },
+          { $unwind: { path: '$unidaddemedida', preserveNullAndEmptyArrays: true } },
+        ],
+        as: 'itemsProductos',
+      },
+    },
+    {
+      $addFields: {
+        items: {
+          $map: {
+            input: { $ifNull: ['$items', []] },
+            as: 'item',
+            in: {
+              $let: {
+                vars: {
+                  listaDoc: {
+                    $first: {
+                      $filter: {
+                        input: '$itemsLista',
+                        as: 'listaDoc',
+                        cond: { $eq: ['$$listaDoc._id', '$$item.lista'] },
+                      },
+                    },
+                  },
+                  productoDoc: {
+                    $first: {
+                      $filter: {
+                        input: '$itemsProductos',
+                        as: 'productoDoc',
+                        cond: { $eq: ['$$productoDoc._id', '$$item.codprod'] },
+                      },
+                    },
+                  },
+                },
+                in: {
+                  $mergeObjects: [
+                    '$$item',
+                    {
+                      lista: { $ifNull: ['$$listaDoc', '$$item.lista'] },
+                      codprod: { $ifNull: ['$$productoDoc', '$$item.codprod'] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    { $unset: ['itemsLista', 'itemsProductos'] },
+    {
+      $addFields: {
+        sortFields: {
+          productoPrincipal: {
+            $ifNull: [
+              {
+                $let: {
+                  vars: { firstItem: { $first: '$items' } },
+                  in: {
+                    $ifNull: ['$$firstItem.codprod.descripcion', ''],
+                  },
+                },
+              },
+              '',
+            ],
+          },
+          totalEntregado: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ['$items', []] },
+                as: 'item',
+                in: {
+                  $multiply: [
+                    { $ifNull: ['$$item.cantidadentregada', 0] },
+                    { $ifNull: ['$$item.monto', 0] },
+                  ],
+                },
+              },
+            },
+          },
+          ruta: {
+            $ifNull: [
+              { $ifNull: ['$codcli.ruta.ruta', null] },
+              { $ifNull: ['$camion.ruta', ''] },
+            ],
+          },
+          camionero: {
+            $trim: {
+              input: {
+                $concat: [
+                  { $ifNull: ['$camionero.nombres', ''] },
+                  ' ',
+                  { $ifNull: ['$camionero.apellidos', ''] },
+                ],
+              },
+            },
+          },
+          puntoDistribucion: {
+            $ifNull: ['$puntoDistribucion', { $ifNull: ['$camion.camion', ''] }],
+          },
+          usuario: {
+            $trim: {
+              input: {
+                $concat: [
+                  { $ifNull: ['$usuario.nombres', ''] },
+                  ' ',
+                  { $ifNull: ['$usuario.apellidos', ''] },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+    { $sort: sortStage },
+    { $skip: skip },
+    { $limit: limit },
+    { $unset: 'sortFields' },
+  ];
 
   const [total, comandas] = await Promise.all([
     Comanda.countDocuments(query),
-    Comanda.find(query)
-      .sort(sortCriteria)
-      .skip(skip)
-      .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
-      .lean()
-      .exec(),
+    Comanda.aggregate(pipeline).collation({ locale: 'es', strength: 1 }).exec(),
   ]);
 
   const totalPages = Math.ceil(total / limit) || 0;
