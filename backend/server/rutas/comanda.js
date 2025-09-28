@@ -6,6 +6,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Comanda = require('../modelos/comanda');
 const Cliente = require('../modelos/cliente');
+const Ruta = require('../modelos/ruta');
+const Usuario = require('../modelos/usuario');
+const Camion = require('../modelos/camion');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
@@ -55,6 +58,72 @@ const commonPopulate = [
   { path: 'usuario', select: 'role nombres apellidos' },
   { path: 'camionero', select: 'role nombres apellidos' },
 ];
+
+const logisticaPopulate = [
+  {
+    path: 'codcli',
+    populate: [
+      { path: 'ruta' },
+      { path: 'localidad', populate: { path: 'provincia' } },
+    ],
+  },
+  { path: 'items.lista' },
+  {
+    path: 'items.codprod',
+    populate: [
+      { path: 'marca' },
+      { path: 'unidaddemedida' },
+    ],
+  },
+  { path: 'codestado' },
+  { path: 'camion' },
+  { path: 'usuario', select: 'nombres apellidos role email' },
+  { path: 'camionero', select: 'nombres apellidos role email' },
+];
+
+const collatorEs = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+
+const computePrecioTotal = (items) => {
+  if (!Array.isArray(items)) return 0;
+  return items.reduce((sum, item) => {
+    const cantidad = Number(item?.cantidad) || 0;
+    const monto = Number(item?.monto) || 0;
+    return sum + cantidad * monto;
+  }, 0);
+};
+
+const getUserFullName = (user) => `${user?.nombres ?? ''} ${user?.apellidos ?? ''}`.trim();
+
+const getRutaFromComanda = (comanda) =>
+  comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '';
+
+const localSortComparators = {
+  codcli: (a, b) =>
+    collatorEs.compare(a?.codcli?.razonsocial ?? '', b?.codcli?.razonsocial ?? ''),
+  ruta: (a, b) => collatorEs.compare(getRutaFromComanda(a), getRutaFromComanda(b)),
+  camionero: (a, b) =>
+    collatorEs.compare(getUserFullName(a?.camionero), getUserFullName(b?.camionero)),
+  usuario: (a, b) =>
+    collatorEs.compare(getUserFullName(a?.usuario), getUserFullName(b?.usuario)),
+  precioTotal: (a, b) => computePrecioTotal(a?.items) - computePrecioTotal(b?.items),
+};
+
+const createLocalComparator = (field, direction) => {
+  const baseComparator = localSortComparators[field];
+  if (!baseComparator) return null;
+  return (a, b) => {
+    const primary = baseComparator(a, b);
+    if (primary !== 0) {
+      return direction === 1 ? primary : -primary;
+    }
+    const fechaA = a?.fecha ? new Date(a.fecha).getTime() : 0;
+    const fechaB = b?.fecha ? new Date(b.fecha).getTime() : 0;
+    if (fechaA !== fechaB) return fechaB - fechaA;
+    const nroA = a?.nrodecomanda ?? 0;
+    const nroB = b?.nrodecomanda ?? 0;
+    return nroB - nroA;
+  };
+};
 
 // -----------------------------------------------------------------------------
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
@@ -190,48 +259,236 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'fecha',
     'codestado',
     'puntoDistribucion',
+    'codcli',
+    'precioTotal',
+    'camionero',
+    'usuario',
+    'ruta',
   ]);
 
-  const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const computedSortFields = new Set(['codcli', 'precioTotal', 'camionero', 'usuario', 'ruta']);
 
-  const [total, comandas] = await Promise.all([
-    Comanda.countDocuments(query),
-    Comanda.find(query)
+  const sortDirection = sortOrder === 'asc' ? 1 : -1;
+  const defaultSort = { fecha: -1, nrodecomanda: -1 };
+  const sortIsAllowed = sortField && allowedSortFields.has(sortField);
+  const sortCriteria = sortIsAllowed ? { [sortField]: sortDirection } : defaultSort;
+
+  const clienteCollectionName = Cliente.collection.collectionName;
+  const rutaCollectionName = Ruta.collection.collectionName;
+  const usuarioCollectionName = Usuario.collection.collectionName;
+  const camionCollectionName = Camion.collection.collectionName;
+
+  const totalPromise = Comanda.countDocuments(query);
+
+  let comandas;
+  let sortWarning;
+
+  if (sortIsAllowed && computedSortFields.has(sortField)) {
+    try {
+      const pipeline = [{ $match: query }];
+
+      if (sortField === 'precioTotal') {
+        pipeline.push({
+          $addFields: {
+            precioTotal: {
+              $sum: {
+                $map: {
+                  input: { $ifNull: ['$items', []] },
+                  as: 'item',
+                  in: {
+                    $multiply: [
+                      { $ifNull: ['$$item.cantidad', 0] },
+                      { $ifNull: ['$$item.monto', 0] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      if (sortField === 'codcli' || sortField === 'ruta') {
+        pipeline.push(
+          {
+            $lookup: {
+              from: clienteCollectionName,
+              localField: 'codcli',
+              foreignField: '_id',
+              as: 'cliente',
+              pipeline: [
+                {
+                  $lookup: {
+                    from: rutaCollectionName,
+                    localField: 'ruta',
+                    foreignField: '_id',
+                    as: 'ruta',
+                  },
+                },
+                { $unwind: { path: '$ruta', preserveNullAndEmptyArrays: true } },
+              ],
+            },
+          },
+          { $unwind: { path: '$cliente', preserveNullAndEmptyArrays: true } },
+        );
+
+        const addFieldsStage = {};
+        if (sortField === 'codcli') {
+          addFieldsStage.clienteNombre = { $ifNull: ['$cliente.razonsocial', ''] };
+        }
+        if (sortField === 'ruta') {
+          pipeline.push(
+            {
+              $lookup: {
+                from: camionCollectionName,
+                localField: 'camion',
+                foreignField: '_id',
+                as: 'camionDoc',
+              },
+            },
+            { $unwind: { path: '$camionDoc', preserveNullAndEmptyArrays: true } },
+          );
+          addFieldsStage.rutaNombre = {
+            $ifNull: [
+              { $ifNull: ['$cliente.ruta.ruta', '$camionDoc.ruta'] },
+              '',
+            ],
+          };
+        }
+        if (Object.keys(addFieldsStage).length) {
+          pipeline.push({ $addFields: addFieldsStage });
+        }
+      }
+
+      if (sortField === 'camionero') {
+        pipeline.push(
+          {
+            $lookup: {
+              from: usuarioCollectionName,
+              localField: 'camionero',
+              foreignField: '_id',
+              as: 'camioneroDoc',
+            },
+          },
+          { $unwind: { path: '$camioneroDoc', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              camioneroNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$camioneroDoc.nombres', ''] },
+                      ' ',
+                      { $ifNull: ['$camioneroDoc.apellidos', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        );
+      }
+
+      if (sortField === 'usuario') {
+        pipeline.push(
+          {
+            $lookup: {
+              from: usuarioCollectionName,
+              localField: 'usuario',
+              foreignField: '_id',
+              as: 'usuarioDoc',
+            },
+          },
+          { $unwind: { path: '$usuarioDoc', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              usuarioNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$usuarioDoc.nombres', ''] },
+                      ' ',
+                      { $ifNull: ['$usuarioDoc.apellidos', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        );
+      }
+
+      const sortFieldMapping = {
+        codcli: 'clienteNombre',
+        precioTotal: 'precioTotal',
+        camionero: 'camioneroNombre',
+        usuario: 'usuarioNombre',
+        ruta: 'rutaNombre',
+      };
+
+      const mappedField = sortFieldMapping[sortField];
+      if (!mappedField) {
+        throw new Error(`Campo de ordenamiento no soportado: ${sortField}`);
+      }
+      pipeline.push(
+        { $sort: { [mappedField]: sortDirection, fecha: -1, nrodecomanda: -1 } },
+        { $skip: skip },
+        { $limit: limit },
+        { $project: { _id: 1 } },
+      );
+
+      let aggregateQuery = Comanda.aggregate(pipeline);
+      if (['codcli', 'ruta', 'camionero', 'usuario'].includes(sortField)) {
+        aggregateQuery = aggregateQuery.collation({ locale: 'es', strength: 1 });
+      }
+
+      const aggregationResult = await aggregateQuery.exec();
+      const ids = aggregationResult.map((doc) => doc._id);
+
+      if (ids.length) {
+        const docs = await Comanda.find({ _id: { $in: ids } })
+          .populate(logisticaPopulate)
+          .lean()
+          .exec();
+
+        const docsMap = new Map(docs.map((doc) => [String(doc._id), doc]));
+        comandas = ids.map((id) => docsMap.get(String(id))).filter(Boolean);
+      } else {
+        comandas = [];
+      }
+    } catch (error) {
+      const allDocs = await Comanda.find(query)
+        .populate(logisticaPopulate)
+        .lean()
+        .exec();
+
+      const localComparator = createLocalComparator(sortField, sortDirection);
+      if (localComparator) {
+        allDocs.sort(localComparator);
+        comandas = allDocs.slice(skip, skip + limit);
+        sortWarning = `Orden aplicado localmente para ${sortField}.`;
+      } else {
+        comandas = allDocs.slice(skip, skip + limit);
+        sortWarning = `No se pudo ordenar por ${sortField}; se utilizó el orden predeterminado.`;
+      }
+    }
+  } else {
+    comandas = await Comanda.find(query)
       .sort(sortCriteria)
       .skip(skip)
       .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
+      .populate(logisticaPopulate)
       .lean()
-      .exec(),
-  ]);
+      .exec();
+  }
 
+  const total = await totalPromise;
   const totalPages = Math.ceil(total / limit) || 0;
 
-  res.json({ ok: true, page, limit, total, totalPages, comandas });
+  const response = { ok: true, page, limit, total, totalPages, comandas };
+  if (sortWarning) response.sortWarning = sortWarning;
+
+  res.json(response);
 }));
 
 // -----------------------------------------------------------------------------
