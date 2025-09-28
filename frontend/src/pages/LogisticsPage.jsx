@@ -181,12 +181,7 @@ export default function LogisticsPage() {
               </Link>
             );
           },
-          enableSorting: true,
-          sortingFn: (rowA, rowB) =>
-            collator.compare(
-              extractPrimaryProduct(rowA.original?.items),
-              extractPrimaryProduct(rowB.original?.items),
-            ),
+          enableSorting: false,
         },
       ),
       columnHelper.accessor(
