@@ -161,8 +161,6 @@ export default function LogisticsPage() {
           header: 'Cliente',
           cell: (info) => info.getValue() || '—',
           enableSorting: true,
-          sortingFn: (rowA, rowB) =>
-            collator.compare(rowA.original?.codcli?.razonsocial ?? '', rowB.original?.codcli?.razonsocial ?? ''),
         },
       ),
       columnHelper.accessor(
@@ -225,7 +223,6 @@ export default function LogisticsPage() {
           cell: (info) => currencyFormatter.format(info.getValue() ?? 0),
           meta: { align: 'right' },
           enableSorting: true,
-          sortingFn: (rowA, rowB) => resolvePrecioTotal(rowA.original) - resolvePrecioTotal(rowB.original),
         },
       ),
       columnHelper.accessor(
@@ -258,11 +255,6 @@ export default function LogisticsPage() {
           header: 'Ruta',
           cell: (info) => info.getValue() || '—',
           enableSorting: true,
-          sortingFn: (rowA, rowB) =>
-            collator.compare(
-              rowA.original?.codcli?.ruta?.ruta ?? rowA.original?.camion?.ruta ?? '',
-              rowB.original?.codcli?.ruta?.ruta ?? rowB.original?.camion?.ruta ?? '',
-            ),
         },
       ),
       columnHelper.accessor(
@@ -275,15 +267,6 @@ export default function LogisticsPage() {
           header: 'Camionero',
           cell: (info) => info.getValue() || '—',
           enableSorting: true,
-          sortingFn: (rowA, rowB) => {
-            const nombreA = rowA.original?.camionero
-              ? `${rowA.original.camionero?.nombres ?? ''} ${rowA.original.camionero?.apellidos ?? ''}`.trim()
-              : '';
-            const nombreB = rowB.original?.camionero
-              ? `${rowB.original.camionero?.nombres ?? ''} ${rowB.original.camionero?.apellidos ?? ''}`.trim()
-              : '';
-            return collator.compare(nombreA, nombreB);
-          },
         },
       ),
       columnHelper.accessor(
@@ -310,15 +293,6 @@ export default function LogisticsPage() {
           header: 'Usuario',
           cell: (info) => info.getValue() || '—',
           enableSorting: true,
-          sortingFn: (rowA, rowB) => {
-            const nombreA = rowA.original?.usuario
-              ? `${rowA.original.usuario?.nombres ?? ''} ${rowA.original.usuario?.apellidos ?? ''}`.trim()
-              : '';
-            const nombreB = rowB.original?.usuario
-              ? `${rowB.original.usuario?.nombres ?? ''} ${rowB.original.usuario?.apellidos ?? ''}`.trim()
-              : '';
-            return collator.compare(nombreA, nombreB);
-          },
         },
       ),
       columnHelper.display({
@@ -393,6 +367,11 @@ export default function LogisticsPage() {
       fecha: 'fecha',
       estado: 'codestado',
       puntoDistribucion: 'puntoDistribucion',
+      cliente: 'codcli',
+      precioTotal: 'precioTotal',
+      ruta: 'ruta',
+      camionero: 'camionero',
+      usuario: 'usuario',
     };
     const [currentSorting] = sorting;
     if (currentSorting) {
