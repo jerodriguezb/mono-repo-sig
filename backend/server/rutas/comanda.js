@@ -137,35 +137,40 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     if (!isValidObjectId(cliente)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ codcli: cliente });
+    const clienteId = new mongoose.Types.ObjectId(cliente);
+    filters.push({ codcli: clienteId });
   }
 
   if (producto) {
     if (!isValidObjectId(producto)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ 'items.codprod': producto });
+    const productoId = new mongoose.Types.ObjectId(producto);
+    filters.push({ 'items.codprod': productoId });
   }
 
   if (camionero) {
     if (!isValidObjectId(camionero)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ camionero });
+    const camioneroId = new mongoose.Types.ObjectId(camionero);
+    filters.push({ camionero: camioneroId });
   }
 
   if (estado) {
     if (!isValidObjectId(estado)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ codestado: estado });
+    const estadoId = new mongoose.Types.ObjectId(estado);
+    filters.push({ codestado: estadoId });
   }
 
   if (usuario) {
     if (!isValidObjectId(usuario)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ usuario });
+    const usuarioId = new mongoose.Types.ObjectId(usuario);
+    filters.push({ usuario: usuarioId });
   }
   if (puntoDistribucion) {
     filters.push({ puntoDistribucion: { $regex: new RegExp(puntoDistribucion, 'i') } });
