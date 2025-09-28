@@ -185,48 +185,272 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
 
-  const allowedSortFields = new Set([
-    'nrodecomanda',
-    'fecha',
-    'codestado',
-    'puntoDistribucion',
-  ]);
+  const sortFieldMap = {
+    nrodecomanda: 'nrodecomanda',
+    fecha: 'fecha',
+    codestado: 'codestado._id',
+    puntoDistribucion: 'puntoDistribucion',
+    codcli: 'clienteNombre',
+    precioTotal: 'precioTotal',
+    ruta: 'rutaDescripcion',
+    camionero: 'camioneroNombre',
+    usuario: 'usuarioNombre',
+  };
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const mappedSortField = sortField ? sortFieldMap[sortField] : null;
+  const sortStage = {};
+  if (mappedSortField) {
+    sortStage[mappedSortField] = sortDirection;
+  }
+  if (!mappedSortField || mappedSortField !== 'fecha') {
+    sortStage.fecha = -1;
+  }
+  if (!mappedSortField || mappedSortField !== 'nrodecomanda') {
+    sortStage.nrodecomanda = -1;
+  }
+
+  const aggregationPipeline = [
+    { $match: query },
+    {
+      $addFields: {
+        precioTotal: {
+          $sum: {
+            $map: {
+              input: { $ifNull: ['$items', []] },
+              as: 'item',
+              in: {
+                $multiply: [
+                  { $ifNull: ['$$item.cantidad', 0] },
+                  { $ifNull: ['$$item.monto', 0] },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      $lookup: {
+        from: 'clientes',
+        let: { clienteId: '$codcli' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$clienteId'] } } },
+          {
+            $lookup: {
+              from: 'rutas',
+              localField: 'ruta',
+              foreignField: '_id',
+              as: 'ruta',
+            },
+          },
+          { $unwind: { path: '$ruta', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'localidads',
+              localField: 'localidad',
+              foreignField: '_id',
+              as: 'localidad',
+            },
+          },
+          { $unwind: { path: '$localidad', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'provincias',
+              localField: 'localidad.provincia',
+              foreignField: '_id',
+              as: 'localidad_provincia',
+            },
+          },
+          {
+            $unwind: {
+              path: '$localidad_provincia',
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $addFields: {
+              'localidad.provincia': '$localidad_provincia',
+            },
+          },
+          { $project: { localidad_provincia: 0 } },
+        ],
+        as: 'codcli',
+      },
+    },
+    { $unwind: { path: '$codcli', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'estados',
+        localField: 'codestado',
+        foreignField: '_id',
+        as: 'codestado',
+      },
+    },
+    { $unwind: { path: '$codestado', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'camions',
+        localField: 'camion',
+        foreignField: '_id',
+        as: 'camion',
+      },
+    },
+    { $unwind: { path: '$camion', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'usuario',
+        foreignField: '_id',
+        as: 'usuario',
+      },
+    },
+    { $unwind: { path: '$usuario', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usuarios',
+        localField: 'camionero',
+        foreignField: '_id',
+        as: 'camionero',
+      },
+    },
+    { $unwind: { path: '$camionero', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'listas',
+        localField: 'items.lista',
+        foreignField: '_id',
+        as: 'items_listas',
+      },
+    },
+    {
+      $lookup: {
+        from: 'producservs',
+        let: { codigos: '$items.codprod' },
+        pipeline: [
+          { $match: { $expr: { $in: ['$_id', { $ifNull: ['$$codigos', []] }] } } },
+          {
+            $lookup: {
+              from: 'marcas',
+              localField: 'marca',
+              foreignField: '_id',
+              as: 'marca',
+            },
+          },
+          { $unwind: { path: '$marca', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'unidaddemedidas',
+              localField: 'unidaddemedida',
+              foreignField: '_id',
+              as: 'unidaddemedida',
+            },
+          },
+          {
+            $unwind: {
+              path: '$unidaddemedida',
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+        ],
+        as: 'items_codprod',
+      },
+    },
+    {
+      $addFields: {
+        items: {
+          $map: {
+            input: { $ifNull: ['$items', []] },
+            as: 'item',
+            in: {
+              $mergeObjects: [
+                '$$item',
+                {
+                  lista: {
+                    $let: {
+                      vars: {
+                        listaDoc: {
+                          $first: {
+                            $filter: {
+                              input: '$items_listas',
+                              as: 'listaDoc',
+                              cond: { $eq: ['$$listaDoc._id', '$$item.lista'] },
+                            },
+                          },
+                        },
+                      },
+                      in: '$$listaDoc',
+                    },
+                  },
+                  codprod: {
+                    $let: {
+                      vars: {
+                        prodDoc: {
+                          $first: {
+                            $filter: {
+                              input: '$items_codprod',
+                              as: 'prodDoc',
+                              cond: { $eq: ['$$prodDoc._id', '$$item.codprod'] },
+                            },
+                          },
+                        },
+                      },
+                      in: '$$prodDoc',
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        clienteNombre: { $ifNull: ['$codcli.razonsocial', ''] },
+        rutaDescripcion: { $ifNull: ['$codcli.ruta.ruta', ''] },
+        usuarioNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$usuario.nombres', ''] },
+                ' ',
+                { $ifNull: ['$usuario.apellidos', ''] },
+              ],
+            },
+          },
+        },
+        camioneroNombre: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ['$camionero.nombres', ''] },
+                ' ',
+                { $ifNull: ['$camionero.apellidos', ''] },
+              ],
+            },
+          },
+        },
+      },
+    },
+    { $sort: sortStage },
+    { $skip: skip },
+    { $limit: limit },
+    {
+      $project: {
+        items_listas: 0,
+        items_codprod: 0,
+        clienteNombre: 0,
+        rutaDescripcion: 0,
+        usuarioNombre: 0,
+        camioneroNombre: 0,
+      },
+    },
+  ];
 
   const [total, comandas] = await Promise.all([
     Comanda.countDocuments(query),
-    Comanda.find(query)
-      .sort(sortCriteria)
-      .skip(skip)
-      .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
-      .lean()
-      .exec(),
+    Comanda.aggregate(aggregationPipeline).exec(),
   ]);
 
   const totalPages = Math.ceil(total / limit) || 0;
