@@ -362,7 +362,7 @@ export default function LogisticsPage() {
       fecha: 'fecha',
       estado: 'codestado',
       puntoDistribucion: 'puntoDistribucion',
-      cliente: 'codcli',
+      cliente: 'cliente',
       precioTotal: 'precioTotal',
       ruta: 'ruta',
       camionero: 'camionero',
