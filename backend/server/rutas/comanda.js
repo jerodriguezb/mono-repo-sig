@@ -137,35 +137,40 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     if (!isValidObjectId(cliente)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ codcli: cliente });
+    const clienteId = new mongoose.Types.ObjectId(cliente);
+    filters.push({ codcli: clienteId });
   }
 
   if (producto) {
     if (!isValidObjectId(producto)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ 'items.codprod': producto });
+    const productoId = new mongoose.Types.ObjectId(producto);
+    filters.push({ 'items.codprod': productoId });
   }
 
   if (camionero) {
     if (!isValidObjectId(camionero)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ camionero });
+    const camioneroId = new mongoose.Types.ObjectId(camionero);
+    filters.push({ camionero: camioneroId });
   }
 
   if (estado) {
     if (!isValidObjectId(estado)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ codestado: estado });
+    const estadoId = new mongoose.Types.ObjectId(estado);
+    filters.push({ codestado: estadoId });
   }
 
   if (usuario) {
     if (!isValidObjectId(usuario)) {
       return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
     }
-    filters.push({ usuario });
+    const usuarioId = new mongoose.Types.ObjectId(usuario);
+    filters.push({ usuario: usuarioId });
   }
   if (puntoDistribucion) {
     filters.push({ puntoDistribucion: { $regex: new RegExp(puntoDistribucion, 'i') } });
@@ -190,44 +195,254 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'fecha',
     'codestado',
     'puntoDistribucion',
+    'cliente',
+    'precioTotal',
+    'ruta',
+    'camionero',
+    'usuario',
   ]);
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
-  const sortCriteria =
-    sortField && allowedSortFields.has(sortField)
-      ? { [sortField]: sortDirection }
-      : { fecha: -1, nrodecomanda: -1 };
+  const isValidSortField = sortField && allowedSortFields.has(sortField);
 
-  const [total, comandas] = await Promise.all([
+  const buildItemsTotalExpression = () => ({
+    $sum: {
+      $map: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        in: {
+          $multiply: [
+            {
+              $convert: {
+                input: '$$item.cantidad',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+            {
+              $convert: {
+                input: '$$item.monto',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const buildSortPipeline = (field) => {
+    switch (field) {
+      case 'nrodecomanda':
+        return [{ $sort: { nrodecomanda: sortDirection, fecha: -1, _id: sortDirection } }];
+      case 'fecha':
+        return [{ $sort: { fecha: sortDirection, nrodecomanda: sortDirection, _id: sortDirection } }];
+      case 'codestado':
+        return [{ $sort: { codestado: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+      case 'puntoDistribucion':
+        return [{ $sort: { puntoDistribucion: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+      case 'cliente':
+        return [
+          {
+            $lookup: {
+              from: 'clientes',
+              localField: 'codcli',
+              foreignField: '_id',
+              as: '__clienteSort',
+            },
+          },
+          { $unwind: { path: '$__clienteSort', preserveNullAndEmptyArrays: true } },
+          {
+            $sort: {
+              '__clienteSort.razonsocial': sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __clienteSort: '$$REMOVE' } },
+        ];
+      case 'precioTotal':
+        return [
+          {
+            $addFields: {
+              __precioTotalSort: {
+                $let: {
+                  vars: {
+                    existing: {
+                      $convert: {
+                        input: '$precioTotal',
+                        to: 'double',
+                        onNull: null,
+                        onError: null,
+                      },
+                    },
+                  },
+                  in: {
+                    $ifNull: ['$$existing', buildItemsTotalExpression()],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __precioTotalSort: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __precioTotalSort: '$$REMOVE' } },
+        ];
+      case 'ruta':
+        return [
+          {
+            $lookup: {
+              from: 'clientes',
+              localField: 'codcli',
+              foreignField: '_id',
+              as: '__clienteSort',
+            },
+          },
+          { $unwind: { path: '$__clienteSort', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'rutas',
+              localField: '__clienteSort.ruta',
+              foreignField: '_id',
+              as: '__rutaSort',
+            },
+          },
+          { $unwind: { path: '$__rutaSort', preserveNullAndEmptyArrays: true } },
+          {
+            $sort: {
+              '__rutaSort.ruta': sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __clienteSort: '$$REMOVE', __rutaSort: '$$REMOVE' } },
+        ];
+      case 'camionero':
+        return [
+          {
+            $lookup: {
+              from: 'usuarios',
+              localField: 'camionero',
+              foreignField: '_id',
+              as: '__camioneroSort',
+            },
+          },
+          { $unwind: { path: '$__camioneroSort', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              __camioneroNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$__camioneroSort.apellidos', ''] },
+                      ' ',
+                      { $ifNull: ['$__camioneroSort.nombres', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __camioneroNombre: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __camioneroSort: '$$REMOVE', __camioneroNombre: '$$REMOVE' } },
+        ];
+      case 'usuario':
+        return [
+          {
+            $lookup: {
+              from: 'usuarios',
+              localField: 'usuario',
+              foreignField: '_id',
+              as: '__usuarioSort',
+            },
+          },
+          { $unwind: { path: '$__usuarioSort', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              __usuarioNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$__usuarioSort.apellidos', ''] },
+                      ' ',
+                      { $ifNull: ['$__usuarioSort.nombres', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __usuarioNombre: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __usuarioSort: '$$REMOVE', __usuarioNombre: '$$REMOVE' } },
+        ];
+      default:
+        return [{ $sort: { fecha: -1, nrodecomanda: -1, _id: -1 } }];
+    }
+  };
+
+  const logisticsPopulate = [
+    {
+      path: 'codcli',
+      populate: [
+        { path: 'ruta' },
+        { path: 'localidad', populate: { path: 'provincia' } },
+      ],
+    },
+    { path: 'items.lista' },
+    {
+      path: 'items.codprod',
+      populate: [
+        { path: 'marca' },
+        { path: 'unidaddemedida' },
+      ],
+    },
+    { path: 'codestado' },
+    { path: 'camion' },
+    { path: 'usuario', select: 'nombres apellidos role email' },
+    { path: 'camionero', select: 'nombres apellidos role email' },
+  ];
+
+  const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
+  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+
+  const aggregation = Comanda.aggregate(pipeline).collation({
+    locale: 'es',
+    strength: 1,
+    caseLevel: false,
+    numericOrdering: true,
+  });
+
+  const [total, rawComandas] = await Promise.all([
     Comanda.countDocuments(query),
-    Comanda.find(query)
-      .sort(sortCriteria)
-      .skip(skip)
-      .limit(limit)
-      .populate([
-        {
-          path: 'codcli',
-          populate: [
-            { path: 'ruta' },
-            { path: 'localidad', populate: { path: 'provincia' } },
-          ],
-        },
-        { path: 'items.lista' },
-        {
-          path: 'items.codprod',
-          populate: [
-            { path: 'marca' },
-            { path: 'unidaddemedida' },
-          ],
-        },
-        { path: 'codestado' },
-        { path: 'camion' },
-        { path: 'usuario', select: 'nombres apellidos role email' },
-        { path: 'camionero', select: 'nombres apellidos role email' },
-      ])
-      .lean()
-      .exec(),
+    aggregation.exec(),
   ]);
+
+  const comandas = await Comanda.populate(rawComandas, logisticsPopulate);
 
   const totalPages = Math.ceil(total / limit) || 0;
 
