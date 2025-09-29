@@ -41,6 +41,14 @@ import DeleteConfirmationDialog from '../components/logistics/DeleteConfirmation
 const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
 
+const STATUS_CONFIG = [
+  { key: 'A preparar', label: 'A preparar', color: '#1976d2' },
+  { key: 'Preparada', label: 'Preparada', color: '#9c27b0' },
+  { key: 'En distribución', label: 'En distribución', color: '#fdd835' },
+  { key: 'Entrega parcial', label: 'Entrega parcial', color: '#fb8c00' },
+  { key: 'Cerrada', label: 'Cerrada', color: '#2e7d32' },
+];
+
 const numberFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -148,6 +156,22 @@ export default function LogisticsPage() {
   const usuarioTimer = useRef(null);
 
   const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
+
+  const statusCounts = useMemo(() => {
+    const counts = {};
+    STATUS_CONFIG.forEach(({ key }) => {
+      counts[key] = 0;
+    });
+
+    (data ?? []).forEach((comanda) => {
+      const estado = comanda?.codestado?.estado;
+      if (estado && Object.prototype.hasOwnProperty.call(counts, estado)) {
+        counts[estado] += 1;
+      }
+    });
+
+    return counts;
+  }, [data]);
 
   const columns = useMemo(() => [
       {
@@ -879,6 +903,7 @@ export default function LogisticsPage() {
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3, flexWrap: 'wrap', gap: 2 }}>
+
         <Stack direction="row" alignItems="center" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
           <Typography variant="h4">Logística</Typography>
           <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', flexGrow: 0 }}>
@@ -904,6 +929,7 @@ export default function LogisticsPage() {
             </Stack>
           </Paper>
         </Stack>
+
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleExportCsv}>
             Exportar CSV
