@@ -10,6 +10,7 @@ const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
 const Counter = require('../modelos/counter');
+const { buildComandaGroups, sanitizeGrouping } = require('../utils/comandas');
 const {
   verificaToken,
   verificaAdmin_role,
@@ -110,6 +111,7 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     puntoDistribucion,
     sortField,
     sortOrder,
+    groupBy,
   } = req.query;
 
   const filters = [{ activo: true }];
@@ -189,6 +191,19 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
   }
 
   const query = filters.length === 1 ? filters[0] : { $and: filters };
+
+  const grouping = sanitizeGrouping(
+    typeof groupBy === 'string'
+      ? groupBy
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : Array.isArray(groupBy)
+      ? groupBy
+      : [],
+  );
+
+  const isGroupingActive = grouping.length > 0;
 
   const allowedSortFields = new Set([
     'nrodecomanda',
@@ -428,7 +443,37 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
   ];
 
   const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
-  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+  const basePipeline = [{ $match: query }, ...sortPipeline];
+
+  if (isGroupingActive) {
+    const aggregation = Comanda.aggregate(basePipeline).collation({
+      locale: 'es',
+      strength: 1,
+      caseLevel: false,
+      numericOrdering: true,
+    });
+
+    const [total, rawComandas] = await Promise.all([
+      Comanda.countDocuments(query),
+      aggregation.exec(),
+    ]);
+
+    const populatedComandas = await Comanda.populate(rawComandas, logisticsPopulate);
+    const groups = buildComandaGroups(populatedComandas, grouping);
+
+    return res.json({
+      ok: true,
+      page: 1,
+      limit: populatedComandas.length,
+      total,
+      totalPages: 1,
+      comandas: populatedComandas,
+      groups,
+      grouping,
+    });
+  }
+
+  const pipeline = [...basePipeline, { $skip: skip }, { $limit: limit }];
 
   const aggregation = Comanda.aggregate(pipeline).collation({
     locale: 'es',
@@ -446,7 +491,7 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
 
   const totalPages = Math.ceil(total / limit) || 0;
 
-  res.json({ ok: true, page, limit, total, totalPages, comandas });
+  res.json({ ok: true, page, limit, total, totalPages, comandas, groups: [], grouping: [] });
 }));
 
 // -----------------------------------------------------------------------------

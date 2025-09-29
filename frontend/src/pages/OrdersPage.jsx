@@ -30,7 +30,6 @@ import {
   getCoreRowModel,
   getExpandedRowModel,
   getFilteredRowModel,
-  getGroupedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import jsPDF from 'jspdf';
@@ -48,12 +47,48 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
 const sumCantidad = (items = []) =>
   items.reduce((acc, item) => acc + Number(item?.cantidad ?? 0), 0);
 
-const extractPrimaryProduct = (items = []) => {
+const formatProductsSummary = (items = []) => {
   if (!Array.isArray(items) || items.length === 0) return '—';
-  const [primary] = items;
-  const descripcion = primary?.codprod?.descripcion ?? '';
-  const presentacion = primary?.codprod?.presentacion ?? '';
-  return [descripcion, presentacion].filter(Boolean).join(' – ') || '—';
+
+  const summaries = items
+    .map((item) => {
+      const descripcionValue = item?.codprod?.descripcion;
+      const presentacionValue = item?.codprod?.presentacion;
+      const descripcion = typeof descripcionValue === 'string' ? descripcionValue.trim() : '';
+      const presentacion =
+        typeof presentacionValue === 'string' ? presentacionValue.trim() : '';
+      const cantidadText = String(item?.cantidad ?? '').trim();
+      const label = [descripcion, presentacion].filter(Boolean).join(' ').trim();
+      if (!label || !cantidadText) return '';
+      return `${label} (${cantidadText})`;
+    })
+    .filter(Boolean);
+
+  return summaries.length ? summaries.join(' - ') : '—';
+};
+
+const buildGroupRow = (group, level = 0) => {
+  const childGroups = Array.isArray(group?.groups) ? group.groups : [];
+  const comandaRows = Array.isArray(group?.comandas) ? group.comandas : [];
+  const subGroupRows = childGroups.map((child) => buildGroupRow(child, level + 1));
+  const subRows = [...subGroupRows, ...comandaRows];
+
+  return {
+    __isGroup: true,
+    __groupId: group?.columnId ?? '',
+    __groupValue: group?.value ?? '—',
+    __groupKey: group?.id ?? `${group?.columnId ?? 'group'}-${group?.value ?? '—'}`,
+    __groupLevel: level,
+    __groupLeafCount: Number(group?.count ?? comandaRows.length ?? 0),
+    __groupCantidadTotal: Number(group?.cantidadTotal ?? 0),
+    __groupPath: Array.isArray(group?.path) ? group.path : [],
+    subRows,
+  };
+};
+
+const buildGroupedRows = (groups = []) => {
+  if (!Array.isArray(groups) || !groups.length) return [];
+  return groups.map((group) => buildGroupRow(group, 0));
 };
 
 const buildOption = (id, label, raw = null) => {
@@ -77,9 +112,11 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(false);
   const [columnFilters, setColumnFilters] = useState([]);
   const [sorting, setSorting] = useState([]);
+  const [grouping, setGrouping] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
   const [page, setPage] = useState(0);
   const [estadoId, setEstadoId] = useState(null);
+  const [allComandas, setAllComandas] = useState([]);
 
   const [clienteOptions, setClienteOptions] = useState([]);
   const [rutaOptions, setRutaOptions] = useState([]);
@@ -151,21 +188,32 @@ export default function OrdersPage() {
   }, []);
 
   const fetchOrders = useCallback(
-    async (paramsEstadoId, currentPage) => {
+    async (paramsEstadoId, currentPage, currentGrouping) => {
       if (!paramsEstadoId) return;
       setLoading(true);
       try {
-        const { data: response } = await api.get('/comandas/logistica', {
-          params: { estado: paramsEstadoId, page: currentPage + 1, limit: PAGE_SIZE },
-        });
-        const comandas = response?.comandas ?? [];
-        setData(comandas);
-        setTotal(response?.total ?? comandas.length);
+        const activeGrouping = Array.isArray(currentGrouping) ? currentGrouping.filter(Boolean) : [];
+        const params = activeGrouping.length
+          ? { estado: paramsEstadoId, groupBy: activeGrouping.join(',') }
+          : { estado: paramsEstadoId, page: currentPage + 1, limit: PAGE_SIZE };
+        const { data: response } = await api.get('/comandas/logistica', { params });
+        const comandas = Array.isArray(response?.comandas) ? response.comandas : [];
+        const groups = Array.isArray(response?.groups) ? response.groups : [];
+        if (activeGrouping.length) {
+          setData(buildGroupedRows(groups));
+          setAllComandas(comandas);
+          setTotal(response?.total ?? comandas.length);
+        } else {
+          setData(comandas);
+          setAllComandas(comandas);
+          setTotal(response?.total ?? comandas.length);
+        }
         setRowSelection({});
         refreshOptions(comandas);
       } catch (error) {
         console.error('Error obteniendo órdenes', error);
         setData([]);
+        setAllComandas([]);
         setTotal(0);
         refreshOptions([]);
       } finally {
@@ -181,79 +229,123 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (estadoId) {
-      fetchOrders(estadoId, page);
+      fetchOrders(estadoId, page, grouping);
     }
-  }, [estadoId, fetchOrders, page]);
+  }, [estadoId, fetchOrders, page, grouping]);
 
   const columns = useMemo(
     () => [
-      columnHelper.accessor('nrodecomanda', {
-        header: 'Nro. comanda',
-        cell: (info) => info.getValue() ?? '—',
-        aggregatedCell: () => '—',
-        enableSorting: true,
-        enableGrouping: true,
-        sortingFn: 'alphanumeric',
-      }),
-      columnHelper.accessor((row) => row?.codcli?.razonsocial ?? '', {
+      columnHelper.accessor(
+        (row) => {
+          if (row?.__isGroup) {
+            return row.__groupId === 'nrodecomanda' ? row.__groupValue ?? '—' : '—';
+          }
+          return row?.nrodecomanda ?? null;
+        },
+        {
+          id: 'nrodecomanda',
+          header: 'Nro. comanda',
+          cell: (info) => info.getValue() ?? '—',
+          aggregatedCell: () => '—',
+          enableSorting: true,
+          enableGrouping: true,
+          sortingFn: 'alphanumeric',
+        },
+      ),
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return row.__groupId === 'cliente' ? row.__groupValue ?? '—' : '—';
+        }
+        return row?.codcli?.razonsocial ?? '';
+      }, {
         id: 'cliente',
         header: 'Cliente',
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
+          if (row.original?.__isGroup) return true;
           if (!value?.id) return true;
           return (row.original?.codcli?._id ?? '') === value.id;
         },
       }),
-      columnHelper.accessor((row) => row?.codcli?.ruta?.ruta ?? row?.camion?.ruta ?? '', {
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return row.__groupId === 'ruta' ? row.__groupValue ?? '—' : '—';
+        }
+        return row?.codcli?.ruta?.ruta ?? row?.camion?.ruta ?? '';
+      }, {
         id: 'ruta',
         header: 'Ruta',
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
+          if (row.original?.__isGroup) return true;
           if (!value?.label) return true;
           const ruta = row.original?.codcli?.ruta?.ruta ?? row.original?.camion?.ruta ?? '';
           return ruta === value.label;
         },
       }),
-      columnHelper.accessor((row) => extractPrimaryProduct(row?.items), {
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return row.__groupId === 'producto' ? row.__groupValue ?? '—' : '—';
+        }
+        return formatProductsSummary(row?.items);
+      }, {
         id: 'producto',
-        header: 'Producto principal',
+        header: 'Productos',
         cell: (info) => info.getValue() || '—',
         enableSorting: false,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
+          if (row.original?.__isGroup) return true;
           if (!value?.id) return true;
           return (row.original?.items ?? []).some((item) => (item?.codprod?._id ?? '') === value.id);
         },
       }),
-      columnHelper.accessor((row) => row?.items?.[0]?.codprod?.rubro?.descripcion ?? '', {
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return row.__groupId === 'rubro' ? row.__groupValue ?? '—' : '—';
+        }
+        return row?.items?.[0]?.codprod?.rubro?.descripcion ?? '';
+      }, {
         id: 'rubro',
         header: 'Rubro',
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
+          if (row.original?.__isGroup) return true;
           if (!value?.id) return true;
           return (row.original?.items ?? []).some(
             (item) => (item?.codprod?.rubro?._id ?? '') === value.id,
           );
         },
       }),
-      columnHelper.accessor((row) => row?.camion?.camion ?? '', {
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return row.__groupId === 'camion' ? row.__groupValue ?? '—' : '—';
+        }
+        return row?.camion?.camion ?? '';
+      }, {
         id: 'camion',
         header: 'Camión',
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
+          if (row.original?.__isGroup) return true;
           if (!value?.label) return true;
           return (row.original?.camion?.camion ?? '') === value.label;
         },
       }),
-      columnHelper.accessor((row) => sumCantidad(row?.items), {
+      columnHelper.accessor((row) => {
+        if (row?.__isGroup) {
+          return Number(row.__groupCantidadTotal ?? 0);
+        }
+        return sumCantidad(row?.items);
+      }, {
         id: 'cantidadTotal',
         header: 'Cantidad total',
         cell: (info) => numberFormatter.format(info.getValue() ?? 0),
@@ -272,6 +364,17 @@ export default function OrdersPage() {
     [],
   );
 
+  const handleGroupingChange = useCallback(
+    (updater) => {
+      setGrouping((prev) => {
+        const nextValue = typeof updater === 'function' ? updater(prev) : updater;
+        return Array.isArray(nextValue) ? nextValue : [];
+      });
+      setPage(0);
+    },
+    [],
+  );
+
   const table = useReactTable({
     data,
     columns,
@@ -279,21 +382,28 @@ export default function OrdersPage() {
       columnFilters,
       sorting,
       rowSelection,
+      grouping,
     },
+    manualGrouping: true,
     enableGrouping: true,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
+    onGroupingChange: handleGroupingChange,
     getCoreRowModel: getCoreRowModel(),
-    getGroupedRowModel: getGroupedRowModel(),
+    getSubRows: (row) => row?.subRows ?? [],
     getExpandedRowModel: getExpandedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
 
   const filteredRows = table.getFilteredRowModel().flatRows;
-  const totalRegistros = filteredRows.length;
-  const totalBultos = filteredRows.reduce(
-    (acc, row) => acc + sumCantidad(row.original?.items),
+  const hasGrouping = grouping.length > 0;
+  const exportableRows = hasGrouping
+    ? allComandas
+    : filteredRows.map((row) => row.original);
+  const totalRegistros = exportableRows.length;
+  const totalBultos = exportableRows.reduce(
+    (acc, comanda) => acc + sumCantidad(comanda?.items),
     0,
   );
 
@@ -306,23 +416,22 @@ export default function OrdersPage() {
   );
 
   const handleExportCsv = useCallback(() => {
-    if (!filteredRows.length) return;
+    if (!exportableRows.length) return;
     const headers = [
       'Nro. comanda',
       'Cliente',
       'Ruta',
-      'Producto',
+      'Productos',
       'Rubro',
       'Camión',
       'Cantidad total',
     ];
-    const rows = filteredRows.map((row) => {
-      const comanda = row.original;
+    const rows = exportableRows.map((comanda) => {
       return [
         comanda?.nrodecomanda ?? '',
         comanda?.codcli?.razonsocial ?? '',
         comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        extractPrimaryProduct(comanda?.items),
+        formatProductsSummary(comanda?.items),
         comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
         comanda?.camion?.camion ?? '',
         numberFormatter.format(sumCantidad(comanda?.items)),
@@ -340,30 +449,27 @@ export default function OrdersPage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [filteredRows]);
+  }, [exportableRows]);
 
   const handleExportPdf = useCallback(() => {
     const doc = new jsPDF({ orientation: 'landscape' });
     doc.setFontSize(14);
     doc.text('Órdenes – A preparar', 14, 18);
-    const body = filteredRows.map((row) => {
-      const comanda = row.original;
-      return [
-        comanda?.nrodecomanda ?? '',
-        comanda?.codcli?.razonsocial ?? '',
-        comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        extractPrimaryProduct(comanda?.items),
-        comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
-        comanda?.camion?.camion ?? '',
-        numberFormatter.format(sumCantidad(comanda?.items)),
-      ];
-    });
+    const body = exportableRows.map((comanda) => [
+      comanda?.nrodecomanda ?? '',
+      comanda?.codcli?.razonsocial ?? '',
+      comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
+      formatProductsSummary(comanda?.items),
+      comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
+      comanda?.camion?.camion ?? '',
+      numberFormatter.format(sumCantidad(comanda?.items)),
+    ]);
     autoTable(doc, {
       head: [[
         'Nro. comanda',
         'Cliente',
         'Ruta',
-        'Producto',
+        'Productos',
         'Rubro',
         'Camión',
         'Cantidad total',
@@ -372,7 +478,7 @@ export default function OrdersPage() {
       startY: 24,
     });
     doc.save('ordenes_a_preparar.pdf');
-  }, [filteredRows]);
+  }, [exportableRows]);
 
   return (
     <Stack spacing={3} sx={{ p: 2 }}>
@@ -383,7 +489,7 @@ export default function OrdersPage() {
             variant="outlined"
             startIcon={<FileDownloadIcon />}
             onClick={handleExportCsv}
-            disabled={!filteredRows.length}
+            disabled={!exportableRows.length}
           >
             Exportar CSV
           </Button>
@@ -392,7 +498,7 @@ export default function OrdersPage() {
             color="secondary"
             startIcon={<PictureAsPdfIcon />}
             onClick={handleExportPdf}
-            disabled={!filteredRows.length}
+            disabled={!exportableRows.length}
           >
             Exportar PDF
           </Button>
@@ -485,27 +591,50 @@ export default function OrdersPage() {
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {cell.getIsGrouped() ? (
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <IconButton size="small" onClick={row.getToggleExpandedHandler()}>
-                            {row.getIsExpanded() ? (
-                              <ExpandLessIcon fontSize="inherit" />
-                            ) : (
-                              <ExpandMoreIcon fontSize="inherit" />
-                            )}
-                          </IconButton>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                            <Typography component="span" variant="caption" sx={{ ml: 1 }}>
-                              ({row.subRows.length})
-                            </Typography>
-                          </Typography>
-                        </Stack>
-                      ) : cell.getIsAggregated() ? (
-                        flexRender(cell.column.columnDef.aggregatedCell ?? cell.column.columnDef.cell, cell.getContext())
-                      ) : cell.getIsPlaceholder() ? null : (
-                        flexRender(cell.column.columnDef.cell, cell.getContext())
-                      )}
+                      {(() => {
+                        const originalRow = row.original ?? {};
+                        const isGroupRow = Boolean(originalRow.__isGroup);
+                        const isGroupedCell = isGroupRow && cell.column.id === originalRow.__groupId;
+                        if (isGroupRow && isGroupedCell) {
+                          return (
+                            <Stack direction="row" alignItems="center" spacing={1}>
+                              <IconButton size="small" onClick={row.getToggleExpandedHandler()} disabled={!row.getCanExpand()}>
+                                {row.getIsExpanded() ? (
+                                  <ExpandLessIcon fontSize="inherit" />
+                                ) : (
+                                  <ExpandMoreIcon fontSize="inherit" />
+                                )}
+                              </IconButton>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                <Typography component="span" variant="caption" sx={{ ml: 1 }}>
+                                  ({originalRow.__groupLeafCount ?? row.subRows.length})
+                                </Typography>
+                              </Typography>
+                            </Stack>
+                          );
+                        }
+
+                        if (isGroupRow) {
+                          return flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          );
+                        }
+
+                        if (cell.getIsAggregated()) {
+                          return flexRender(
+                            cell.column.columnDef.aggregatedCell ?? cell.column.columnDef.cell,
+                            cell.getContext(),
+                          );
+                        }
+
+                        if (cell.getIsPlaceholder()) {
+                          return null;
+                        }
+
+                        return flexRender(cell.column.columnDef.cell, cell.getContext());
+                      })()}
                     </TableCell>
                   ))}
                 </TableRow>
@@ -524,14 +653,16 @@ export default function OrdersPage() {
           </Table>
           {loading && <LinearProgress />}
         </TableContainer>
-        <TablePagination
-          component="div"
-          count={total}
-          page={page}
-          onPageChange={(event, newPage) => setPage(newPage)}
-          rowsPerPage={PAGE_SIZE}
-          rowsPerPageOptions={[PAGE_SIZE]}
-        />
+        {!hasGrouping && (
+          <TablePagination
+            component="div"
+            count={total}
+            page={page}
+            onPageChange={(event, newPage) => setPage(newPage)}
+            rowsPerPage={PAGE_SIZE}
+            rowsPerPageOptions={[PAGE_SIZE]}
+          />
+        )}
       </Paper>
 
       <Box>
