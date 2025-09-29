@@ -28,6 +28,7 @@ import Inventory2Icon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import ListAltIcon from '@mui/icons-material/ListAlt';
 import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
@@ -42,7 +43,9 @@ const navItems = [
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
   { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
+
   { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
+
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
