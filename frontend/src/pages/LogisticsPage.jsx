@@ -96,6 +96,30 @@ const buildOption = (entity, labelFn) => {
 
 const safeGetFilterValue = (column) => column?.getFilterValue?.() ?? null;
 
+const STATUS_KEYS = {
+  A_PREPARAR: 'aPreparar',
+  PREPARADA: 'preparada',
+  EN_DISTRIBUCION: 'enDistribucion',
+  ENTREGA_PARCIAL: 'entregaParcial',
+  CERRADA: 'cerrada',
+};
+
+const statusConfig = [
+  { key: STATUS_KEYS.A_PREPARAR, label: 'A preparar', color: 'warning.main' },
+  { key: STATUS_KEYS.PREPARADA, label: 'Preparada', color: 'info.main' },
+  { key: STATUS_KEYS.EN_DISTRIBUCION, label: 'En distribución', color: 'primary.main' },
+  { key: STATUS_KEYS.ENTREGA_PARCIAL, label: 'Entrega parcial', color: 'secondary.main' },
+  { key: STATUS_KEYS.CERRADA, label: 'Cerrada', color: 'success.main' },
+];
+
+const buildEmptyStatusSummary = () => ({
+  [STATUS_KEYS.A_PREPARAR]: 0,
+  [STATUS_KEYS.PREPARADA]: 0,
+  [STATUS_KEYS.EN_DISTRIBUCION]: 0,
+  [STATUS_KEYS.ENTREGA_PARCIAL]: 0,
+  [STATUS_KEYS.CERRADA]: 0,
+});
+
 export default function LogisticsPage() {
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
@@ -111,6 +135,8 @@ export default function LogisticsPage() {
   const [savingLogistics, setSavingLogistics] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [statusSummary, setStatusSummary] = useState(() => buildEmptyStatusSummary());
+  const [statusLoading, setStatusLoading] = useState(false);
 
   const [estados, setEstados] = useState([]);
   const [camiones, setCamiones] = useState([]);
@@ -375,9 +401,9 @@ export default function LogisticsPage() {
 
   const selectedComandas = table.getSelectedRowModel().flatRows.map((row) => row.original);
 
-  const showSnackbar = (message, severity = 'success') => {
+  const showSnackbar = useCallback((message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
-  };
+  }, []);
 
   const buildParamsFromFilters = useCallback(() => {
     const params = { page, limit: PAGE_SIZE };
@@ -453,11 +479,60 @@ export default function LogisticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [buildParamsFromFilters]);
+  }, [buildParamsFromFilters, showSnackbar]);
+
+  const fetchStatusSummary = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const { data: response } = await api.get('/comandas');
+      const comandas = response?.comandas ?? [];
+      const summary = buildEmptyStatusSummary();
+      comandas.forEach((comanda) => {
+        if (comanda?.activo === false) return;
+        const rawEstado = comanda?.codestado?.estado ?? '';
+        if (!rawEstado) return;
+        const normalized = rawEstado
+          .normalize('NFD')
+          .replace(/\p{Diacritic}/gu, '')
+          .toLowerCase()
+          .trim();
+        switch (normalized) {
+          case 'a preparar':
+            summary[STATUS_KEYS.A_PREPARAR] += 1;
+            break;
+          case 'preparada':
+            summary[STATUS_KEYS.PREPARADA] += 1;
+            break;
+          case 'en distribucion':
+            summary[STATUS_KEYS.EN_DISTRIBUCION] += 1;
+            break;
+          case 'entrega parcial':
+            summary[STATUS_KEYS.ENTREGA_PARCIAL] += 1;
+            break;
+          case 'cerrada':
+            summary[STATUS_KEYS.CERRADA] += 1;
+            break;
+          default:
+            break;
+        }
+      });
+      setStatusSummary(summary);
+    } catch (error) {
+      console.error('Error obteniendo resumen de estados', error);
+      setStatusSummary(buildEmptyStatusSummary());
+      showSnackbar('No se pudo obtener el resumen de estados', 'error');
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [showSnackbar]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([fetchComandas(), fetchStatusSummary()]);
+  }, [fetchComandas, fetchStatusSummary]);
 
   useEffect(() => {
-    fetchComandas();
-  }, [fetchComandas]);
+    refreshData();
+  }, [refreshData]);
 
   useEffect(() => {
     const loadStaticData = async () => {
@@ -484,7 +559,7 @@ export default function LogisticsPage() {
       }
     };
     loadStaticData();
-  }, []);
+  }, [showSnackbar]);
 
   useEffect(() => () => {
     if (clienteTimer.current) clearTimeout(clienteTimer.current);
@@ -618,7 +693,7 @@ export default function LogisticsPage() {
       );
       showSnackbar('Actualización logística completada');
       setLogisticsDialog({ open: false, comandas: [] });
-      fetchComandas();
+      refreshData();
     } catch (error) {
       console.error('Error actualizando logística', error);
       showSnackbar('No se pudo actualizar la logística', 'error');
@@ -635,7 +710,7 @@ export default function LogisticsPage() {
       );
       showSnackbar('Comandas eliminadas correctamente');
       setDeleteDialog({ open: false, comandas: [] });
-      fetchComandas();
+      refreshData();
     } catch (error) {
       console.error('Error eliminando comandas', error);
       showSnackbar('No se pudieron eliminar las comandas', 'error');
@@ -754,7 +829,7 @@ export default function LogisticsPage() {
   };
 
   const handleReload = () => {
-    fetchComandas();
+    refreshData();
   };
 
   const clienteColumn = table.getColumn('cliente');
@@ -828,27 +903,33 @@ export default function LogisticsPage() {
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3, flexWrap: 'wrap', gap: 2 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+
+        <Stack direction="row" alignItems="center" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
           <Typography variant="h4">Logística</Typography>
-          <Stack direction="row" spacing={2} flexWrap="wrap">
-            {STATUS_CONFIG.map((status) => (
-              <Stack key={status.key} direction="row" spacing={1} alignItems="center">
-                <Box
-                  sx={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    bgcolor: status.color,
-                    boxShadow: `0 0 0 2px rgba(0, 0, 0, 0.08)`,
-                  }}
-                />
-                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                  {`${status.label}: ${statusCounts[status.key] ?? 0}`}
-                </Typography>
-              </Stack>
-            ))}
-          </Stack>
-        </Box>
+          <Paper elevation={0} sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', flexGrow: 0 }}>
+            <Stack direction="row" spacing={2} useFlexGap flexWrap="wrap">
+              {statusConfig.map((status) => (
+                <Stack key={status.key} direction="row" spacing={1} alignItems="center">
+                  <Box
+                    sx={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      bgcolor: status.color,
+                    }}
+                  />
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    {status.label}:{' '}
+                    <Box component="span" sx={{ fontWeight: 700 }}>
+                      {statusLoading ? '—' : statusSummary[status.key] ?? 0}
+                    </Box>
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Paper>
+        </Stack>
+
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleExportCsv}>
             Exportar CSV
