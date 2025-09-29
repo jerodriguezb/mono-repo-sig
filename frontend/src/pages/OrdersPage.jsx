@@ -48,12 +48,24 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
 const sumCantidad = (items = []) =>
   items.reduce((acc, item) => acc + Number(item?.cantidad ?? 0), 0);
 
-const extractPrimaryProduct = (items = []) => {
+const formatProductsSummary = (items = []) => {
   if (!Array.isArray(items) || items.length === 0) return '—';
-  const [primary] = items;
-  const descripcion = primary?.codprod?.descripcion ?? '';
-  const presentacion = primary?.codprod?.presentacion ?? '';
-  return [descripcion, presentacion].filter(Boolean).join(' – ') || '—';
+
+  const summaries = items
+    .map((item) => {
+      const descripcionValue = item?.codprod?.descripcion;
+      const presentacionValue = item?.codprod?.presentacion;
+      const descripcion = typeof descripcionValue === 'string' ? descripcionValue.trim() : '';
+      const presentacion =
+        typeof presentacionValue === 'string' ? presentacionValue.trim() : '';
+      const cantidadText = String(item?.cantidad ?? '').trim();
+      const label = [descripcion, presentacion].filter(Boolean).join(' ').trim();
+      if (!label || !cantidadText) return '';
+      return `${label} (${cantidadText})`;
+    })
+    .filter(Boolean);
+
+  return summaries.length ? summaries.join(' - ') : '—';
 };
 
 const buildOption = (id, label, raw = null) => {
@@ -218,9 +230,9 @@ export default function OrdersPage() {
           return ruta === value.label;
         },
       }),
-      columnHelper.accessor((row) => extractPrimaryProduct(row?.items), {
+      columnHelper.accessor((row) => formatProductsSummary(row?.items), {
         id: 'producto',
-        header: 'Producto principal',
+        header: 'Productos',
         cell: (info) => info.getValue() || '—',
         enableSorting: false,
         enableGrouping: true,
@@ -311,7 +323,7 @@ export default function OrdersPage() {
       'Nro. comanda',
       'Cliente',
       'Ruta',
-      'Producto',
+      'Productos',
       'Rubro',
       'Camión',
       'Cantidad total',
@@ -322,7 +334,7 @@ export default function OrdersPage() {
         comanda?.nrodecomanda ?? '',
         comanda?.codcli?.razonsocial ?? '',
         comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        extractPrimaryProduct(comanda?.items),
+        formatProductsSummary(comanda?.items),
         comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
         comanda?.camion?.camion ?? '',
         numberFormatter.format(sumCantidad(comanda?.items)),
@@ -352,7 +364,7 @@ export default function OrdersPage() {
         comanda?.nrodecomanda ?? '',
         comanda?.codcli?.razonsocial ?? '',
         comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        extractPrimaryProduct(comanda?.items),
+        formatProductsSummary(comanda?.items),
         comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
         comanda?.camion?.camion ?? '',
         numberFormatter.format(sumCantidad(comanda?.items)),
@@ -363,7 +375,7 @@ export default function OrdersPage() {
         'Nro. comanda',
         'Cliente',
         'Ruta',
-        'Producto',
+        'Productos',
         'Rubro',
         'Camión',
         'Cantidad total',
