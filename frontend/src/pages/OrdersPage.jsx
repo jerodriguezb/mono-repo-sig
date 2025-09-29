@@ -187,6 +187,14 @@ export default function OrdersPage() {
 
   const columns = useMemo(
     () => [
+      columnHelper.accessor('nrodecomanda', {
+        header: 'Nro. comanda',
+        cell: (info) => info.getValue() ?? '—',
+        aggregatedCell: () => '—',
+        enableSorting: true,
+        enableGrouping: true,
+        sortingFn: 'alphanumeric',
+      }),
       columnHelper.accessor((row) => row?.codcli?.razonsocial ?? '', {
         id: 'cliente',
         header: 'Cliente',
@@ -299,10 +307,19 @@ export default function OrdersPage() {
 
   const handleExportCsv = useCallback(() => {
     if (!filteredRows.length) return;
-    const headers = ['Cliente', 'Ruta', 'Producto', 'Rubro', 'Camión', 'Cantidad total'];
+    const headers = [
+      'Nro. comanda',
+      'Cliente',
+      'Ruta',
+      'Producto',
+      'Rubro',
+      'Camión',
+      'Cantidad total',
+    ];
     const rows = filteredRows.map((row) => {
       const comanda = row.original;
       return [
+        comanda?.nrodecomanda ?? '',
         comanda?.codcli?.razonsocial ?? '',
         comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
         extractPrimaryProduct(comanda?.items),
@@ -332,6 +349,7 @@ export default function OrdersPage() {
     const body = filteredRows.map((row) => {
       const comanda = row.original;
       return [
+        comanda?.nrodecomanda ?? '',
         comanda?.codcli?.razonsocial ?? '',
         comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
         extractPrimaryProduct(comanda?.items),
@@ -341,7 +359,15 @@ export default function OrdersPage() {
       ];
     });
     autoTable(doc, {
-      head: [['Cliente', 'Ruta', 'Producto', 'Rubro', 'Camión', 'Cantidad total']],
+      head: [[
+        'Nro. comanda',
+        'Cliente',
+        'Ruta',
+        'Producto',
+        'Rubro',
+        'Camión',
+        'Cantidad total',
+      ]],
       body,
       startY: 24,
     });
