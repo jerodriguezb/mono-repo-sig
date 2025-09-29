@@ -275,12 +275,18 @@ export default function ComandasPage() {
       alert('Seleccione un cliente');
       return;
     }
+    const usuarioId = localStorage.getItem('id');
+    if (!usuarioId) {
+      alert('No se pudo identificar al usuario. Inicie sesión nuevamente.');
+      return;
+    }
     // El número de comanda se genera en el backend mediante mongoose-sequence,
     // por lo que no se envía desde el cliente.
     const payload = {
       codcli: clienteSel._id,
       fecha: new Date().toISOString(),
       codestado: ESTADO_A_PREPARAR,
+      usuario: usuarioId,
       items: items.map(({ codprod, lista, cantidad, precio }) => ({
         codprod,
         lista,
@@ -291,6 +297,9 @@ export default function ComandasPage() {
     try {
       setIsSaving(true);
       const { data } = await api.post('/comandas', payload);
+      if (!data?.comanda?.usuario) {
+        console.warn('La comanda guardada no incluye el usuario en la respuesta del backend.');
+      }
       setSavedComanda({ ...data.comanda, cliente: clienteSel });
       dispatch({ type: 'clear' });
       setBusqueda('');
