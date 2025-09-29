@@ -340,7 +340,11 @@ export default function ComandasPage() {
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ flexWrap: 'wrap' }}
+      >
         <TextField
           label="Buscar"
           value={busqueda}
@@ -374,7 +378,7 @@ export default function ComandasPage() {
           loading={clienteLoading}
           noOptionsText={clienteNoOpts}
           renderInput={(params) => <TextField {...params} label="Cliente" />}
-          sx={{ minWidth: 240 }}
+          sx={{ width: { xs: '100%', sm: 480 } }}
         />
       </Stack>
 
