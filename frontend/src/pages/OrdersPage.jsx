@@ -28,9 +28,7 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
-  getExpandedRowModel,
   getFilteredRowModel,
-  getGroupedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import jsPDF from 'jspdf';
@@ -44,6 +42,16 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
+
+const GROUPABLE_COLUMNS = new Set(['nrodecomanda', 'cliente', 'ruta', 'producto', 'rubro', 'camion']);
+const GROUP_LABELS = {
+  nrodecomanda: 'Nro. comanda',
+  cliente: 'Cliente',
+  ruta: 'Ruta',
+  producto: 'Productos',
+  rubro: 'Rubro',
+  camion: 'Camión',
+};
 
 const sumCantidad = (items = []) =>
   items.reduce((acc, item) => acc + Number(item?.cantidad ?? 0), 0);
@@ -68,6 +76,39 @@ const formatProductsSummary = (items = []) => {
   return summaries.length ? summaries.join(' - ') : '—';
 };
 
+const aggregateGroupProducts = (orders = []) => {
+  const map = new Map();
+  orders.forEach((order) => {
+    (order?.items ?? []).forEach((item) => {
+      const descripcion = typeof item?.codprod?.descripcion === 'string' ? item.codprod.descripcion.trim() : '';
+      const presentacion = typeof item?.codprod?.presentacion === 'string' ? item.codprod.presentacion.trim() : '';
+      const label = [descripcion, presentacion].filter(Boolean).join(' ').trim();
+      if (!label) return;
+      const cantidad = Number(item?.cantidad ?? 0);
+      const current = map.get(label) ?? 0;
+      map.set(label, current + (Number.isFinite(cantidad) ? cantidad : 0));
+    });
+  });
+  const entries = Array.from(map.entries()).map(([label, quantity]) => ({ label, quantity }));
+  const summary = entries.length
+    ? entries
+        .map(({ label, quantity }) => `${label} (${numberFormatter.format(quantity)})`)
+        .join(' - ')
+    : '—';
+  return { entries, summary };
+};
+
+const buildGroupTitle = (groupBy, values = {}) => {
+  if (!Array.isArray(groupBy) || !groupBy.length) return '';
+  return groupBy
+    .map((field) => {
+      const label = GROUP_LABELS[field] ?? field;
+      const value = values[field] ?? '—';
+      return `${label}: ${value}`;
+    })
+    .join(' • ');
+};
+
 const buildOption = (id, label, raw = null) => {
   if (!id || !label) return null;
   return { id, label, raw };
@@ -84,7 +125,7 @@ const buildFiltersUpdater = (id, value) => (prev) => {
 };
 
 export default function OrdersPage() {
-  const [data, setData] = useState([]);
+  const [tableData, setTableData] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [columnFilters, setColumnFilters] = useState([]);
@@ -92,6 +133,9 @@ export default function OrdersPage() {
   const [rowSelection, setRowSelection] = useState({});
   const [page, setPage] = useState(0);
   const [estadoId, setEstadoId] = useState(null);
+  const [groupBy, setGroupBy] = useState([]);
+  const [groupedData, setGroupedData] = useState(null);
+  const [expandedGroups, setExpandedGroups] = useState({});
 
   const [clienteOptions, setClienteOptions] = useState([]);
   const [rutaOptions, setRutaOptions] = useState([]);
@@ -163,23 +207,34 @@ export default function OrdersPage() {
   }, []);
 
   const fetchOrders = useCallback(
-    async (paramsEstadoId, currentPage) => {
+    async (paramsEstadoId, currentPage, currentGroupBy) => {
       if (!paramsEstadoId) return;
       setLoading(true);
       try {
         const { data: response } = await api.get('/comandas/logistica', {
-          params: { estado: paramsEstadoId, page: currentPage + 1, limit: PAGE_SIZE },
+          params: {
+            estado: paramsEstadoId,
+            page: currentPage + 1,
+            limit: PAGE_SIZE,
+            groupBy: currentGroupBy,
+          },
         });
         const comandas = response?.comandas ?? [];
-        setData(comandas);
-        setTotal(response?.total ?? comandas.length);
+        const grouped = Array.isArray(response?.grouped?.buckets) ? response.grouped : null;
+        const ordersForTable = Array.isArray(currentGroupBy) && currentGroupBy.length && grouped
+          ? grouped.buckets.flatMap((bucket) => bucket?.orders ?? [])
+          : comandas;
+        setTableData(ordersForTable);
+        setGroupedData(grouped);
+        setTotal(response?.total ?? ordersForTable.length);
         setRowSelection({});
-        refreshOptions(comandas);
+        refreshOptions(ordersForTable);
       } catch (error) {
         console.error('Error obteniendo órdenes', error);
-        setData([]);
+        setTableData([]);
         setTotal(0);
         refreshOptions([]);
+        setGroupedData(null);
       } finally {
         setLoading(false);
       }
@@ -193,9 +248,25 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (estadoId) {
-      fetchOrders(estadoId, page);
+      fetchOrders(estadoId, page, groupBy);
     }
-  }, [estadoId, fetchOrders, page]);
+  }, [estadoId, fetchOrders, page, groupBy]);
+
+  useEffect(() => {
+    if (!groupBy.length || !groupedData) {
+      setExpandedGroups({});
+      return;
+    }
+    setExpandedGroups((prev) => {
+      const next = {};
+      groupedData.buckets.forEach((bucket) => {
+        const key = bucket?.key ?? '';
+        if (!key) return;
+        next[key] = typeof prev[key] === 'boolean' ? prev[key] : true;
+      });
+      return next;
+    });
+  }, [groupBy, groupedData]);
 
   const columns = useMemo(
     () => [
@@ -285,20 +356,17 @@ export default function OrdersPage() {
   );
 
   const table = useReactTable({
-    data,
+    data: tableData,
     columns,
     state: {
       columnFilters,
       sorting,
       rowSelection,
     },
-    enableGrouping: true,
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
-    getGroupedRowModel: getGroupedRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
   });
 
@@ -308,6 +376,54 @@ export default function OrdersPage() {
     (acc, row) => acc + sumCantidad(row.original?.items),
     0,
   );
+
+  const filteredRowMap = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach((row) => {
+      const id = row.original?._id ?? row.id;
+      if (id) {
+        map.set(String(id), row);
+      }
+    });
+    return map;
+  }, [filteredRows]);
+
+  const visibleGroupedBuckets = useMemo(() => {
+    if (!groupBy.length || !groupedData) return [];
+    return (groupedData.buckets ?? [])
+      .map((bucket) => {
+        const rows = (bucket?.orders ?? [])
+          .map((order) => filteredRowMap.get(String(order?._id)))
+          .filter(Boolean);
+        if (!rows.length) return null;
+        const orders = rows.map((row) => row.original);
+        const totalCantidadGrupo = orders.reduce(
+          (acc, order) => acc + sumCantidad(order?.items),
+          0,
+        );
+        const { summary } = aggregateGroupProducts(orders);
+        return {
+          key: bucket?.key ?? rows[0].id,
+          title: buildGroupTitle(groupBy, bucket?.groupValues ?? {}),
+          groupValues: bucket?.groupValues ?? {},
+          rows,
+          count: orders.length,
+          totalCantidad: totalCantidadGrupo,
+          productosResumen: summary,
+        };
+      })
+      .filter(Boolean);
+  }, [groupBy, groupedData, filteredRowMap]);
+
+  const handleToggleGroup = useCallback((columnId) => {
+    if (!GROUPABLE_COLUMNS.has(columnId)) return;
+    setGroupBy((prev) => {
+      const exists = prev.includes(columnId);
+      const next = exists ? prev.filter((id) => id !== columnId) : [...prev, columnId];
+      setPage(0);
+      return next;
+    });
+  }, []);
 
   const handleFilterChange = useCallback(
     (id) => (event, value) => {
@@ -466,17 +582,18 @@ export default function OrdersPage() {
                     <TableCell key={header.id} colSpan={header.colSpan}>
                       {header.isPlaceholder ? null : (
                         <Stack direction="row" alignItems="center" spacing={1}>
-                          {header.column.getCanGroup() && (
+                          {GROUPABLE_COLUMNS.has(header.column.id) && (
                             <Tooltip
                               title={
-                                header.column.getIsGrouped()
+                                groupBy.includes(header.column.id)
                                   ? 'Quitar agrupación'
                                   : 'Agrupar por esta columna'
                               }
                             >
                               <IconButton
                                 size="small"
-                                onClick={header.column.getToggleGroupingHandler()}
+                                color={groupBy.includes(header.column.id) ? 'primary' : 'default'}
+                                onClick={() => handleToggleGroup(header.column.id)}
                               >
                                 <GroupWorkIcon fontSize="inherit" />
                               </IconButton>
@@ -493,35 +610,75 @@ export default function OrdersPage() {
               ))}
             </TableHead>
             <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {cell.getIsGrouped() ? (
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <IconButton size="small" onClick={row.getToggleExpandedHandler()}>
-                            {row.getIsExpanded() ? (
-                              <ExpandLessIcon fontSize="inherit" />
-                            ) : (
-                              <ExpandMoreIcon fontSize="inherit" />
-                            )}
-                          </IconButton>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                            <Typography component="span" variant="caption" sx={{ ml: 1 }}>
-                              ({row.subRows.length})
-                            </Typography>
-                          </Typography>
-                        </Stack>
-                      ) : cell.getIsAggregated() ? (
-                        flexRender(cell.column.columnDef.aggregatedCell ?? cell.column.columnDef.cell, cell.getContext())
-                      ) : cell.getIsPlaceholder() ? null : (
-                        flexRender(cell.column.columnDef.cell, cell.getContext())
-                      )}
-                    </TableCell>
+              {groupBy.length === 0
+                ? table.getRowModel().rows.map((row) => (
+                    <TableRow key={row.id}>
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : visibleGroupedBuckets.map((bucket) => (
+                    <React.Fragment key={bucket.key}>
+                      <TableRow>
+                        {table.getVisibleLeafColumns().map((column) => {
+                          let content = '—';
+                          if (column.id === 'nrodecomanda') {
+                            content = (
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() =>
+                                    setExpandedGroups((prev) => ({
+                                      ...prev,
+                                      [bucket.key]: !prev[bucket.key],
+                                    }))
+                                  }
+                                >
+                                  {expandedGroups[bucket.key] ? (
+                                    <ExpandLessIcon fontSize="inherit" />
+                                  ) : (
+                                    <ExpandMoreIcon fontSize="inherit" />
+                                  )}
+                                </IconButton>
+                                <Stack spacing={0.5}>
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    {bucket.title || 'Grupo'}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {bucket.count} órdenes
+                                  </Typography>
+                                </Stack>
+                              </Stack>
+                            );
+                          } else if (column.id === 'producto') {
+                            content = bucket.productosResumen ?? '—';
+                          } else if (column.id === 'cantidadTotal') {
+                            content = numberFormatter.format(bucket.totalCantidad ?? 0);
+                          } else if (GROUPABLE_COLUMNS.has(column.id) && bucket.groupValues[column.id]) {
+                            content = bucket.groupValues[column.id];
+                          }
+                          return (
+                            <TableCell key={column.id}>
+                              <Typography variant="body2">{content}</Typography>
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                      {expandedGroups[bucket.key] &&
+                        bucket.rows.map((row) => (
+                          <TableRow key={row.id}>
+                            {row.getVisibleCells().map((cell) => (
+                              <TableCell key={cell.id}>
+                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                    </React.Fragment>
                   ))}
-                </TableRow>
-              ))}
             </TableBody>
             <TableFooter>
               <TableRow>
