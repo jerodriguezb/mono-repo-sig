@@ -37,6 +37,456 @@ const parseDate = (value) => {
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
+const parseGroupBy = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.filter((field) => typeof field === 'string' && field.trim()).map((field) => field.trim());
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((field) => typeof field === 'string' && field.trim()).map((field) => field.trim());
+      }
+    } catch (error) {
+      // Ignored — fallback to comma split
+    }
+    return value
+      .split(',')
+      .map((field) => field.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const allowedGroupFields = new Set(['nrodecomanda', 'cliente', 'ruta', 'producto', 'rubro', 'camion']);
+
+const formatGroupKeyValue = (raw) => {
+  if (raw === null || typeof raw === 'undefined') return '—';
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    return trimmed.length ? trimmed : '—';
+  }
+  return String(raw);
+};
+
+const reduceProductEntries = (orders = []) => {
+  const map = new Map();
+  for (const order of orders) {
+    const items = Array.isArray(order?.items) ? order.items : [];
+    for (const item of items) {
+      const descripcion = typeof item?.codprod?.descripcion === 'string' ? item.codprod.descripcion.trim() : '';
+      const presentacion = typeof item?.codprod?.presentacion === 'string' ? item.codprod.presentacion.trim() : '';
+      const label = [descripcion, presentacion].filter(Boolean).join(' ').trim();
+      if (!label) continue;
+      const cantidad = Number(item?.cantidad ?? 0);
+      const current = map.get(label) ?? 0;
+      map.set(label, current + (Number.isFinite(cantidad) ? cantidad : 0));
+    }
+  }
+  const products = Array.from(map.entries()).map(([label, quantity]) => ({
+    label,
+    quantity,
+  }));
+  const resumen = products.length
+    ? products
+        .map(({ label, quantity }) => `${label} (${Number.isFinite(quantity) ? Math.round(quantity) : 0})`)
+        .join(' - ')
+    : '—';
+  return { products, resumen };
+};
+
+const buildGroupingPopulateStages = () => [
+  {
+    $lookup: {
+      from: 'clientes',
+      localField: 'codcli',
+      foreignField: '_id',
+      as: 'codcli',
+    },
+  },
+  { $unwind: { path: '$codcli', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'rutas',
+      localField: 'codcli.ruta',
+      foreignField: '_id',
+      as: '__rutaDoc',
+    },
+  },
+  { $unwind: { path: '$__rutaDoc', preserveNullAndEmptyArrays: true } },
+  {
+    $set: {
+      codcli: {
+        $cond: [
+          { $ifNull: ['$codcli', false] },
+          {
+            $mergeObjects: [
+              '$codcli',
+              {
+                ruta: {
+                  $cond: [
+                    { $ifNull: ['$__rutaDoc', false] },
+                    { _id: '$__rutaDoc._id', ruta: '$__rutaDoc.ruta' },
+                    '$codcli.ruta',
+                  ],
+                },
+              },
+            ],
+          },
+          '$codcli',
+        ],
+      },
+    },
+  },
+  { $unset: ['__rutaDoc'] },
+  {
+    $lookup: {
+      from: 'camions',
+      localField: 'camion',
+      foreignField: '_id',
+      as: 'camion',
+    },
+  },
+  { $unwind: { path: '$camion', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'usuarios',
+      localField: 'usuario',
+      foreignField: '_id',
+      as: 'usuario',
+    },
+  },
+  { $unwind: { path: '$usuario', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'usuarios',
+      localField: 'camionero',
+      foreignField: '_id',
+      as: 'camionero',
+    },
+  },
+  { $unwind: { path: '$camionero', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'estados',
+      localField: 'codestado',
+      foreignField: '_id',
+      as: 'codestado',
+    },
+  },
+  { $unwind: { path: '$codestado', preserveNullAndEmptyArrays: true } },
+  {
+    $lookup: {
+      from: 'producservs',
+      localField: 'items.codprod',
+      foreignField: '_id',
+      as: '__productos',
+    },
+  },
+  {
+    $lookup: {
+      from: 'rubros',
+      localField: '__productos.rubro',
+      foreignField: '_id',
+      as: '__rubros',
+    },
+  },
+  {
+    $addFields: {
+      items: {
+        $map: {
+          input: { $ifNull: ['$items', []] },
+          as: 'item',
+          in: {
+            cantidad: '$$item.cantidad',
+            monto: '$$item.monto',
+            cantidadentregada: '$$item.cantidadentregada',
+            entregado: '$$item.entregado',
+            lista: '$$item.lista',
+            codprod: {
+              $let: {
+                vars: {
+                  producto: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: '$__productos',
+                          as: 'prod',
+                          cond: { $eq: ['$$prod._id', '$$item.codprod'] },
+                        },
+                      },
+                      0,
+                    ],
+                  },
+                },
+                in: {
+                  $cond: [
+                    { $ifNull: ['$$producto', false] },
+                    {
+                      _id: '$$producto._id',
+                      descripcion: '$$producto.descripcion',
+                      presentacion: '$$producto.presentacion',
+                      rubro: {
+                        $let: {
+                          vars: {
+                            rubro: {
+                              $arrayElemAt: [
+                                {
+                                  $filter: {
+                                    input: '$__rubros',
+                                    as: 'rubro',
+                                    cond: { $eq: ['$$rubro._id', '$$producto.rubro'] },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                          },
+                          in: {
+                            $cond: [
+                              { $ifNull: ['$$rubro', false] },
+                              {
+                                _id: '$$rubro._id',
+                                descripcion: '$$rubro.descripcion',
+                              },
+                              null,
+                            ],
+                          },
+                        },
+                      },
+                    },
+                    null,
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  { $unset: ['__productos', '__rubros'] },
+  {
+    $addFields: {
+      rutaNombre: {
+        $cond: [
+          {
+            $gt: [
+              { $strLenCP: { $ifNull: ['$codcli.ruta.ruta', ''] } },
+              0,
+            ],
+          },
+          '$codcli.ruta.ruta',
+          { $ifNull: ['$camion.ruta', ''] },
+        ],
+      },
+      totalCantidad: {
+        $sum: {
+          $map: {
+            input: { $ifNull: ['$items', []] },
+            as: 'item',
+            in: {
+              $convert: {
+                input: '$$item.cantidad',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          },
+        },
+      },
+      rubroNombre: {
+        $let: {
+          vars: {
+            firstRubro: {
+              $first: {
+                $filter: {
+                  input: { $ifNull: ['$items', []] },
+                  as: 'item',
+                  cond: {
+                    $and: [
+                      { $ifNull: ['$$item.codprod', false] },
+                      {
+                        $gt: [
+                          { $strLenCP: { $ifNull: ['$$item.codprod.rubro.descripcion', ''] } },
+                          0,
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          in: {
+            $ifNull: ['$$firstRubro.codprod.rubro.descripcion', ''],
+          },
+        },
+      },
+    },
+  },
+  {
+    $addFields: {
+      productoResumen: {
+        $let: {
+          vars: {
+            entries: {
+              $filter: {
+                input: {
+                  $map: {
+                    input: { $ifNull: ['$items', []] },
+                    as: 'item',
+                    in: {
+                      $cond: [
+                        {
+                          $and: [
+                            { $ifNull: ['$$item.codprod', false] },
+                            {
+                              $gt: [
+                                {
+                                  $strLenCP: {
+                                    $trim: {
+                                      input: {
+                                        $concat: [
+                                          { $ifNull: ['$$item.codprod.descripcion', ''] },
+                                          ' ',
+                                          { $ifNull: ['$$item.codprod.presentacion', ''] },
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                        {
+                          $concat: [
+                            {
+                              $trim: {
+                                input: {
+                                  $concat: [
+                                    { $ifNull: ['$$item.codprod.descripcion', ''] },
+                                    ' ',
+                                    { $ifNull: ['$$item.codprod.presentacion', ''] },
+                                  ],
+                                },
+                              },
+                            },
+                            ' (',
+                            {
+                              $toString: {
+                                $round: [
+                                  {
+                                    $convert: {
+                                      input: '$$item.cantidad',
+                                      to: 'double',
+                                      onNull: 0,
+                                      onError: 0,
+                                    },
+                                  },
+                                  0,
+                                ],
+                              },
+                            },
+                            ')',
+                          ],
+                        },
+                        null,
+                      ],
+                    },
+                  },
+                },
+                as: 'entry',
+                cond: { $ne: ['$$entry', null] },
+              },
+            },
+          },
+          in: {
+            $cond: [
+              { $gt: [{ $size: '$$entries' }, 0] },
+              {
+                $reduce: {
+                  input: '$$entries',
+                  initialValue: '',
+                  in: {
+                    $cond: [
+                      { $eq: ['$$value', ''] },
+                      '$$this',
+                      { $concat: ['$$value', ' - ', '$$this'] },
+                    ],
+                  },
+                },
+              },
+              '—',
+            ],
+          },
+        },
+      },
+    },
+  },
+];
+
+const buildGroupPipeline = (query, groupBy, sortPipeline) => {
+  if (!groupBy.length) return [];
+  const stages = [
+    { $match: query },
+    ...(Array.isArray(sortPipeline) ? sortPipeline : [{ $sort: { fecha: -1, nrodecomanda: -1, _id: -1 } }]),
+    ...buildGroupingPopulateStages(),
+    { $sort: { fecha: -1, nrodecomanda: -1, _id: -1 } },
+  ];
+
+  const groupId = {};
+  for (const field of groupBy) {
+    switch (field) {
+      case 'nrodecomanda':
+        groupId.nrodecomanda = '$nrodecomanda';
+        break;
+      case 'cliente':
+        groupId.cliente = { $ifNull: ['$codcli.razonsocial', ''] };
+        break;
+      case 'ruta':
+        groupId.ruta = { $ifNull: ['$rutaNombre', ''] };
+        break;
+      case 'producto':
+        groupId.producto = { $ifNull: ['$productoResumen', ''] };
+        break;
+      case 'rubro':
+        groupId.rubro = { $ifNull: ['$rubroNombre', ''] };
+        break;
+      case 'camion':
+        groupId.camion = { $ifNull: ['$camion.camion', ''] };
+        break;
+      default:
+        break;
+    }
+  }
+
+  stages.push({
+    $group: {
+      _id: groupId,
+      count: { $sum: 1 },
+      totalCantidad: { $sum: { $ifNull: ['$totalCantidad', 0] } },
+      orders: { $push: '$$ROOT' },
+    },
+  });
+
+  if (groupBy.length) {
+    const sortStage = {
+      $sort: groupBy.reduce((acc, field) => {
+        acc[`_id.${field}`] = 1;
+        return acc;
+      }, {}),
+    };
+    stages.push(sortStage);
+  }
+
+  return stages;
+};
+
 /**
  * Conjunto de poblados comunes a la mayoría de endpoints.
  */
@@ -110,6 +560,7 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     puntoDistribucion,
     sortField,
     sortOrder,
+    groupBy: groupByRaw,
   } = req.query;
 
   const filters = [{ activo: true }];
@@ -201,6 +652,10 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'camionero',
     'usuario',
   ]);
+
+  const groupBy = Array.from(
+    new Set(parseGroupBy(groupByRaw).filter((field) => allowedGroupFields.has(field))),
+  );
 
   const sortDirection = sortOrder === 'asc' ? 1 : -1;
   const isValidSortField = sortField && allowedSortFields.has(sortField);
@@ -437,16 +892,59 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     numericOrdering: true,
   });
 
-  const [total, rawComandas] = await Promise.all([
+  const groupingPipeline = groupBy.length ? buildGroupPipeline(query, groupBy, sortPipeline) : null;
+  const groupingAggregation = groupingPipeline
+    ? Comanda.aggregate(groupingPipeline).collation({
+        locale: 'es',
+        strength: 1,
+        caseLevel: false,
+        numericOrdering: true,
+      })
+    : null;
+
+  const [total, rawComandas, groupedRaw] = await Promise.all([
     Comanda.countDocuments(query),
     aggregation.exec(),
+    groupingAggregation ? groupingAggregation.exec() : Promise.resolve(null),
   ]);
 
   const comandas = await Comanda.populate(rawComandas, logisticsPopulate);
 
   const totalPages = Math.ceil(total / limit) || 0;
+  let grouped = null;
 
-  res.json({ ok: true, page, limit, total, totalPages, comandas });
+  if (groupedRaw && Array.isArray(groupedRaw)) {
+    const buckets = groupedRaw.map((bucket) => {
+      const orders = Array.isArray(bucket?.orders) ? bucket.orders : [];
+      const groupValues = {};
+      for (const field of groupBy) {
+        const rawValue = bucket?._id ? bucket._id[field] : null;
+        groupValues[field] = formatGroupKeyValue(rawValue);
+      }
+      const { products, resumen } = reduceProductEntries(orders);
+      const key = groupBy
+        .map((field) => formatGroupKeyValue(bucket?._id ? bucket._id[field] : null))
+        .join(' | ');
+
+      return {
+        key: key || (orders[0]?._id ? String(orders[0]._id) : ''),
+        groupValues,
+        count: bucket?.count ?? orders.length,
+        totalCantidad: bucket?.totalCantidad ?? 0,
+        productos: products,
+        productosResumen: resumen,
+        orders,
+      };
+    });
+
+    grouped = {
+      groupBy,
+      buckets,
+      totalOrders: buckets.reduce((acc, bucket) => acc + (bucket.orders?.length ?? 0), 0),
+    };
+  }
+
+  res.json({ ok: true, page, limit, total, totalPages, comandas, grouped });
 }));
 
 // -----------------------------------------------------------------------------
