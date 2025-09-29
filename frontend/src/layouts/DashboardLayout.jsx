@@ -30,6 +30,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
+import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -41,6 +42,7 @@ const navItems = [
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
   { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
+  { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
@@ -109,18 +111,25 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => (
-            <ListItemButton
-              key={path}
-              component={Link}
-              to={path}
-              selected={pathname.startsWith(path)}
-              onClick={() => setOpen(false)}
-            >
-              <ListItemIcon>{icon}</ListItemIcon>
-              <ListItemText primary={label} />
-            </ListItemButton>
-          ))}
+          {navItems.map(({ label, path, icon }) => {
+            const isSelected =
+              path === '/ordenes'
+                ? pathname.startsWith('/ordenes')
+                : pathname.startsWith(path);
+
+            return (
+              <ListItemButton
+                key={path}
+                component={Link}
+                to={path}
+                selected={isSelected}
+                onClick={() => setOpen(false)}
+              >
+                <ListItemIcon>{icon}</ListItemIcon>
+                <ListItemText primary={label} />
+              </ListItemButton>
+            );
+          })}
         </List>
       </Drawer>
 
