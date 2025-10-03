@@ -13,7 +13,6 @@ import {
   TableContainer,
   TableFooter,
   TableHead,
-  TablePagination,
   TableRow,
   TextField,
   Tooltip,
@@ -37,7 +36,6 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
 
-const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
 
 const numberFormatter = new Intl.NumberFormat('es-AR', {
@@ -62,12 +60,10 @@ const buildFiltersUpdater = (id, value) => (prev) => {
 
 export default function OrdersPage() {
   const [data, setData] = useState([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [columnFilters, setColumnFilters] = useState([]);
   const [sorting, setSorting] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
-  const [page, setPage] = useState(0);
   const [estadoId, setEstadoId] = useState(null);
 
   const [clienteOptions, setClienteOptions] = useState([]);
@@ -140,12 +136,12 @@ export default function OrdersPage() {
   }, []);
 
   const fetchOrders = useCallback(
-    async (paramsEstadoId, currentPage) => {
+    async (paramsEstadoId) => {
       if (!paramsEstadoId) return;
       setLoading(true);
       try {
-        const { data: response } = await api.get('/comandas/logistica', {
-          params: { estado: paramsEstadoId, page: currentPage + 1, limit: PAGE_SIZE },
+        const { data: response } = await api.get('/comandas', {
+          params: { estado: paramsEstadoId },
         });
         const comandas = response?.comandas ?? [];
         const items = comandas.flatMap((comanda) => {
@@ -172,17 +168,12 @@ export default function OrdersPage() {
             showCamion: index === 0,
           }));
         });
-        const totalItems = items.length;
-        const pageStart = currentPage * PAGE_SIZE;
-        const pageItems = items.slice(pageStart, pageStart + PAGE_SIZE);
-        setData(pageItems);
-        setTotal(totalItems);
+        setData(items);
         setRowSelection({});
         refreshOptions(comandas);
       } catch (error) {
         console.error('Error obteniendo órdenes', error);
         setData([]);
-        setTotal(0);
         refreshOptions([]);
       } finally {
         setLoading(false);
@@ -197,9 +188,9 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (estadoId) {
-      fetchOrders(estadoId, page);
+      fetchOrders(estadoId);
     }
-  }, [estadoId, fetchOrders, page]);
+  }, [estadoId, fetchOrders]);
 
   const columns = useMemo(
     () => [
@@ -323,7 +314,6 @@ export default function OrdersPage() {
   const handleFilterChange = useCallback(
     (id) => (event, value) => {
       setColumnFilters(buildFiltersUpdater(id, value));
-      setPage(0);
     },
     [],
   );
@@ -547,14 +537,6 @@ export default function OrdersPage() {
           </Table>
           {loading && <LinearProgress />}
         </TableContainer>
-        <TablePagination
-          component="div"
-          count={total}
-          page={page}
-          onPageChange={(event, newPage) => setPage(newPage)}
-          rowsPerPage={PAGE_SIZE}
-          rowsPerPageOptions={[PAGE_SIZE]}
-        />
       </Paper>
 
       <Box>
