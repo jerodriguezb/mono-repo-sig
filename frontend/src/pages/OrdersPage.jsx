@@ -87,24 +87,17 @@ export default function OrdersPage() {
 
   const refreshOptions = useCallback((comandas = []) => {
     const clienteMap = new Map();
-    const rutaMap = new Map();
     const productoMap = new Map();
-    const rubroMap = new Map();
     const camionMap = new Map();
 
     comandas.forEach((comanda) => {
       const clienteId = comanda?.codcli?._id ?? null;
       const clienteLabel = comanda?.codcli?.razonsocial ?? '';
-      const rutaId = comanda?.codcli?.ruta?._id ?? comanda?.camion?.rutaId ?? null;
-      const rutaLabel = comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '';
       const camionId = comanda?.camion?._id ?? null;
       const camionLabel = comanda?.camion?.camion ?? '';
 
       if (clienteId && clienteLabel && !clienteMap.has(clienteId)) {
         clienteMap.set(clienteId, buildOption(clienteId, clienteLabel, comanda?.codcli ?? null));
-      }
-      if (rutaLabel && !rutaMap.has(rutaLabel)) {
-        rutaMap.set(rutaLabel, buildOption(rutaId ?? rutaLabel, rutaLabel));
       }
       if (camionLabel && !camionMap.has(camionLabel)) {
         camionMap.set(camionLabel, buildOption(camionId ?? camionLabel, camionLabel));
@@ -113,22 +106,15 @@ export default function OrdersPage() {
       (comanda?.items ?? []).forEach((item) => {
         const productoId = item?.codprod?._id ?? null;
         const productoLabel = item?.codprod?.descripcion ?? '';
-        const rubroId = item?.codprod?.rubro?._id ?? null;
-        const rubroLabel = item?.codprod?.rubro?.descripcion ?? '';
 
         if (productoId && productoLabel && !productoMap.has(productoId)) {
           productoMap.set(productoId, buildOption(productoId, productoLabel, item?.codprod ?? null));
-        }
-        if (rubroId && rubroLabel && !rubroMap.has(rubroId)) {
-          rubroMap.set(rubroId, buildOption(rubroId, rubroLabel));
         }
       });
     });
 
     setClienteOptions(Array.from(clienteMap.values()));
-    setRutaOptions((prev) => mergeOptions(prev, Array.from(rutaMap.values())));
     setProductoOptions(Array.from(productoMap.values()));
-    setRubroOptions((prev) => mergeOptions(prev, Array.from(rubroMap.values())));
     setCamionOptions(Array.from(camionMap.values()));
   }, []);
 
@@ -137,13 +123,12 @@ export default function OrdersPage() {
       const { data: response } = await api.get('/rutas');
       const rutas = Array.isArray(response) ? response : response?.rutas ?? [];
       const options = rutas
-        .map((ruta) =>
-          buildOption(
-            ruta?._id ?? ruta?.ruta ?? '',
-            ruta?.ruta ?? ruta?.descripcion ?? '',
-            ruta ?? null,
-          ),
-        )
+        .map((ruta) => {
+          const id = ruta?._id ?? ruta?.ruta ?? '';
+          const label = ruta?.ruta ?? ruta?.descripcion ?? '';
+          if (!id || !label) return null;
+          return { id, label };
+        })
         .filter(Boolean);
       setRutaOptions((prev) => mergeOptions(prev, options));
     } catch (error) {
