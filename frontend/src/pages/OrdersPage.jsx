@@ -48,6 +48,19 @@ const buildOption = (id, label, raw = null) => {
   return { id, label, raw };
 };
 
+const mergeOptions = (prev = [], next = []) => {
+  const map = new Map();
+  [...prev, ...next].forEach((option) => {
+    if (!option) return;
+    const key = option.id ?? option.label;
+    if (!key) return;
+    if (!map.has(key)) {
+      map.set(key, option);
+    }
+  });
+  return Array.from(map.values());
+};
+
 const findFilterValue = (filters, id) => filters.find((filter) => filter.id === id)?.value ?? null;
 
 const buildFiltersUpdater = (id, value) => (prev) => {
@@ -113,10 +126,48 @@ export default function OrdersPage() {
     });
 
     setClienteOptions(Array.from(clienteMap.values()));
-    setRutaOptions(Array.from(rutaMap.values()));
+    setRutaOptions((prev) => mergeOptions(prev, Array.from(rutaMap.values())));
     setProductoOptions(Array.from(productoMap.values()));
-    setRubroOptions(Array.from(rubroMap.values()));
+    setRubroOptions((prev) => mergeOptions(prev, Array.from(rubroMap.values())));
     setCamionOptions(Array.from(camionMap.values()));
+  }, []);
+
+  const fetchRutas = useCallback(async () => {
+    try {
+      const { data: response } = await api.get('/rutas');
+      const rutas = Array.isArray(response) ? response : response?.rutas ?? [];
+      const options = rutas
+        .map((ruta) =>
+          buildOption(
+            ruta?._id ?? ruta?.ruta ?? '',
+            ruta?.ruta ?? ruta?.descripcion ?? '',
+            ruta ?? null,
+          ),
+        )
+        .filter(Boolean);
+      setRutaOptions((prev) => mergeOptions(prev, options));
+    } catch (error) {
+      console.error('Error obteniendo rutas', error);
+    }
+  }, []);
+
+  const fetchRubros = useCallback(async () => {
+    try {
+      const { data: response } = await api.get('/rubros');
+      const rubros = Array.isArray(response) ? response : response?.rubros ?? [];
+      const options = rubros
+        .map((rubro) =>
+          buildOption(
+            rubro?._id ?? rubro?.codrubro ?? '',
+            rubro?.rubro ?? rubro?.descripcion ?? '',
+            rubro ?? null,
+          ),
+        )
+        .filter(Boolean);
+      setRubroOptions((prev) => mergeOptions(prev, options));
+    } catch (error) {
+      console.error('Error obteniendo rubros', error);
+    }
   }, []);
 
   const fetchEstados = useCallback(async () => {
@@ -185,6 +236,11 @@ export default function OrdersPage() {
   useEffect(() => {
     fetchEstados();
   }, [fetchEstados]);
+
+  useEffect(() => {
+    fetchRutas();
+    fetchRubros();
+  }, [fetchRutas, fetchRubros]);
 
   useEffect(() => {
     if (estadoId) {
