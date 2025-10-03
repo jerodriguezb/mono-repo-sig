@@ -45,26 +45,6 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
   maximumFractionDigits: 0,
 });
 
-const formatProductsSummary = (items = []) => {
-  if (!Array.isArray(items) || items.length === 0) return '—';
-
-  const summaries = items
-    .map((item) => {
-      const descripcionValue = item?.codprod?.descripcion;
-      const presentacionValue = item?.codprod?.presentacion;
-      const descripcion = typeof descripcionValue === 'string' ? descripcionValue.trim() : '';
-      const presentacion =
-        typeof presentacionValue === 'string' ? presentacionValue.trim() : '';
-      const cantidadText = String(item?.cantidad ?? '').trim();
-      const label = [descripcion, presentacion].filter(Boolean).join(' ').trim();
-      if (!label || !cantidadText) return '';
-      return `${label} (${cantidadText})`;
-    })
-    .filter(Boolean);
-
-  return summaries.length ? summaries.join(' - ') : '—';
-};
-
 const buildOption = (id, label, raw = null) => {
   if (!id || !label) return null;
   return { id, label, raw };
@@ -254,12 +234,13 @@ export default function OrdersPage() {
           return ruta === value.label;
         },
       }),
-      columnHelper.accessor((row) => formatProductsSummary([row]), {
+      columnHelper.accessor((row) => row?.codprod?.descripcion ?? '', {
         id: 'producto',
-        header: 'Productos',
+        header: 'Producto',
         cell: (info) => info.getValue() || '—',
-        enableSorting: false,
+        enableSorting: true,
         enableGrouping: true,
+        sortingFn: 'alphanumeric',
         filterFn: (row, columnId, value) => {
           if (!value?.id) return true;
           return (row.original?.codprod?._id ?? '') === value.id;
@@ -271,6 +252,7 @@ export default function OrdersPage() {
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
+        sortingFn: 'alphanumeric',
         filterFn: (row, columnId, value) => {
           if (!value?.id) return true;
           return (row.original?.codprod?.rubro?._id ?? '') === value.id;
@@ -279,19 +261,19 @@ export default function OrdersPage() {
       columnHelper.accessor((row) => row?.camion?.camion ?? '', {
         id: 'camion',
         header: 'Camión',
-        cell: (info) =>
-          info.row.original?.showCamion ? info.getValue() || '—' : '',
+        cell: (info) => (info.row.original?.showCamion ? info.getValue() || '—' : ''),
         aggregatedCell: () => '—',
         enableSorting: true,
         enableGrouping: true,
+        sortingFn: 'alphanumeric',
         filterFn: (row, columnId, value) => {
           if (!value?.label) return true;
           return (row.original?.camion?.camion ?? '') === value.label;
         },
       }),
       columnHelper.accessor((row) => Number(row?.cantidad ?? 0), {
-        id: 'cantidadTotal',
-        header: 'Cantidad total',
+        id: 'cantidad',
+        header: 'Cantidad',
         cell: (info) => numberFormatter.format(info.getValue() ?? 0),
         aggregatedCell: (info) => numberFormatter.format(info.getValue() ?? 0),
         footer: (info) => {
@@ -303,6 +285,11 @@ export default function OrdersPage() {
         aggregationFn: 'sum',
         enableSorting: true,
         enableGrouping: true,
+        sortingFn: (rowA, rowB) => {
+          const a = Number(rowA.original?.cantidad ?? 0);
+          const b = Number(rowB.original?.cantidad ?? 0);
+          return a === b ? 0 : a > b ? 1 : -1;
+        },
       }),
     ],
     [],
@@ -347,10 +334,10 @@ export default function OrdersPage() {
       'Nro. comanda',
       'Cliente',
       'Ruta',
-      'Productos',
+      'Producto',
       'Rubro',
       'Camión',
-      'Cantidad total',
+      'Cantidad',
     ];
     const rows = filteredRows.map((row) => {
       const item = row.original;
@@ -358,9 +345,9 @@ export default function OrdersPage() {
         item?.nrodecomanda ?? '',
         item?.codcli?.razonsocial ?? '',
         item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
-        formatProductsSummary([item]),
+        item?.codprod?.descripcion ?? '',
         item?.codprod?.rubro?.descripcion ?? '',
-        item?.camion?.camion ?? '',
+        item?.showCamion ? item?.camion?.camion ?? '' : '',
         numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
     });
@@ -388,9 +375,9 @@ export default function OrdersPage() {
         item?.nrodecomanda ?? '',
         item?.codcli?.razonsocial ?? '',
         item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
-        formatProductsSummary([item]),
+        item?.codprod?.descripcion ?? '',
         item?.codprod?.rubro?.descripcion ?? '',
-        item?.camion?.camion ?? '',
+        item?.showCamion ? item?.camion?.camion ?? '' : '',
         numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
     });
@@ -399,10 +386,10 @@ export default function OrdersPage() {
         'Nro. comanda',
         'Cliente',
         'Ruta',
-        'Productos',
+        'Producto',
         'Rubro',
         'Camión',
-        'Cantidad total',
+        'Cantidad',
       ]],
       body,
       startY: 24,
