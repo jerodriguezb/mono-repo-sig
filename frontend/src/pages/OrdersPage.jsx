@@ -305,11 +305,18 @@ export default function OrdersPage() {
   });
 
   const filteredRows = table.getFilteredRowModel().flatRows;
-  const totalRegistros = filteredRows.length;
-  const totalBultos = filteredRows.reduce(
-    (acc, row) => acc + Number(row.original?.cantidad ?? 0),
-    0,
-  );
+
+  const { totalRegistros, totalBultos } = useMemo(() => {
+    const totalCantidad = filteredRows.reduce(
+      (acc, row) => acc + Number(row.original?.cantidad ?? 0),
+      0,
+    );
+
+    return {
+      totalRegistros: filteredRows.length,
+      totalBultos: totalCantidad,
+    };
+  }, [filteredRows]);
 
   const handleFilterChange = useCallback(
     (id) => (event, value) => {
