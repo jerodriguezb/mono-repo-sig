@@ -45,9 +45,6 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
   maximumFractionDigits: 0,
 });
 
-const sumCantidad = (items = []) =>
-  items.reduce((acc, item) => acc + Number(item?.cantidad ?? 0), 0);
-
 const formatProductsSummary = (items = []) => {
   if (!Array.isArray(items) || items.length === 0) return '—';
 
@@ -171,8 +168,35 @@ export default function OrdersPage() {
           params: { estado: paramsEstadoId, page: currentPage + 1, limit: PAGE_SIZE },
         });
         const comandas = response?.comandas ?? [];
-        setData(comandas);
-        setTotal(response?.total ?? comandas.length);
+        const items = comandas.flatMap((comanda) => {
+          const comandaItems = Array.isArray(comanda?.items) ? comanda.items : [];
+          if (!comandaItems.length) {
+            return [
+              {
+                comandaId: comanda?._id ?? null,
+                nrodecomanda: comanda?.nrodecomanda ?? '',
+                codcli: comanda?.codcli ?? null,
+                camion: comanda?.camion ?? null,
+                cantidad: 0,
+                codprod: null,
+                showCamion: true,
+              },
+            ];
+          }
+          return comandaItems.map((item, index) => ({
+            ...item,
+            comandaId: comanda?._id ?? null,
+            nrodecomanda: comanda?.nrodecomanda ?? '',
+            codcli: comanda?.codcli ?? null,
+            camion: comanda?.camion ?? null,
+            showCamion: index === 0,
+          }));
+        });
+        const totalItems = items.length;
+        const pageStart = currentPage * PAGE_SIZE;
+        const pageItems = items.slice(pageStart, pageStart + PAGE_SIZE);
+        setData(pageItems);
+        setTotal(totalItems);
         setRowSelection({});
         refreshOptions(comandas);
       } catch (error) {
@@ -230,7 +254,7 @@ export default function OrdersPage() {
           return ruta === value.label;
         },
       }),
-      columnHelper.accessor((row) => formatProductsSummary(row?.items), {
+      columnHelper.accessor((row) => formatProductsSummary([row]), {
         id: 'producto',
         header: 'Productos',
         cell: (info) => info.getValue() || '—',
@@ -238,10 +262,10 @@ export default function OrdersPage() {
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
           if (!value?.id) return true;
-          return (row.original?.items ?? []).some((item) => (item?.codprod?._id ?? '') === value.id);
+          return (row.original?.codprod?._id ?? '') === value.id;
         },
       }),
-      columnHelper.accessor((row) => row?.items?.[0]?.codprod?.rubro?.descripcion ?? '', {
+      columnHelper.accessor((row) => row?.codprod?.rubro?.descripcion ?? '', {
         id: 'rubro',
         header: 'Rubro',
         cell: (info) => info.getValue() || '—',
@@ -249,15 +273,15 @@ export default function OrdersPage() {
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
           if (!value?.id) return true;
-          return (row.original?.items ?? []).some(
-            (item) => (item?.codprod?.rubro?._id ?? '') === value.id,
-          );
+          return (row.original?.codprod?.rubro?._id ?? '') === value.id;
         },
       }),
       columnHelper.accessor((row) => row?.camion?.camion ?? '', {
         id: 'camion',
         header: 'Camión',
-        cell: (info) => info.getValue() || '—',
+        cell: (info) =>
+          info.row.original?.showCamion ? info.getValue() || '—' : '',
+        aggregatedCell: () => '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
@@ -265,7 +289,7 @@ export default function OrdersPage() {
           return (row.original?.camion?.camion ?? '') === value.label;
         },
       }),
-      columnHelper.accessor((row) => sumCantidad(row?.items), {
+      columnHelper.accessor((row) => Number(row?.cantidad ?? 0), {
         id: 'cantidadTotal',
         header: 'Cantidad total',
         cell: (info) => numberFormatter.format(info.getValue() ?? 0),
@@ -273,7 +297,7 @@ export default function OrdersPage() {
         footer: (info) => {
           const totalCantidad = info.table
             .getFilteredRowModel()
-            .flatRows.reduce((acc, row) => acc + sumCantidad(row.original?.items), 0);
+            .flatRows.reduce((acc, row) => acc + Number(row.original?.cantidad ?? 0), 0);
           return numberFormatter.format(totalCantidad);
         },
         aggregationFn: 'sum',
@@ -305,7 +329,7 @@ export default function OrdersPage() {
   const filteredRows = table.getFilteredRowModel().flatRows;
   const totalRegistros = filteredRows.length;
   const totalBultos = filteredRows.reduce(
-    (acc, row) => acc + sumCantidad(row.original?.items),
+    (acc, row) => acc + Number(row.original?.cantidad ?? 0),
     0,
   );
 
@@ -329,15 +353,15 @@ export default function OrdersPage() {
       'Cantidad total',
     ];
     const rows = filteredRows.map((row) => {
-      const comanda = row.original;
+      const item = row.original;
       return [
-        comanda?.nrodecomanda ?? '',
-        comanda?.codcli?.razonsocial ?? '',
-        comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        formatProductsSummary(comanda?.items),
-        comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
-        comanda?.camion?.camion ?? '',
-        numberFormatter.format(sumCantidad(comanda?.items)),
+        item?.nrodecomanda ?? '',
+        item?.codcli?.razonsocial ?? '',
+        item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
+        formatProductsSummary([item]),
+        item?.codprod?.rubro?.descripcion ?? '',
+        item?.camion?.camion ?? '',
+        numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
     });
     const content = [headers, ...rows]
@@ -359,15 +383,15 @@ export default function OrdersPage() {
     doc.setFontSize(14);
     doc.text('Órdenes – A preparar', 14, 18);
     const body = filteredRows.map((row) => {
-      const comanda = row.original;
+      const item = row.original;
       return [
-        comanda?.nrodecomanda ?? '',
-        comanda?.codcli?.razonsocial ?? '',
-        comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '',
-        formatProductsSummary(comanda?.items),
-        comanda?.items?.[0]?.codprod?.rubro?.descripcion ?? '',
-        comanda?.camion?.camion ?? '',
-        numberFormatter.format(sumCantidad(comanda?.items)),
+        item?.nrodecomanda ?? '',
+        item?.codcli?.razonsocial ?? '',
+        item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
+        formatProductsSummary([item]),
+        item?.codprod?.rubro?.descripcion ?? '',
+        item?.camion?.camion ?? '',
+        numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
     });
     autoTable(doc, {
