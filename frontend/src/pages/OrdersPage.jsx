@@ -85,58 +85,39 @@ export default function OrdersPage() {
   const [rubroOptions, setRubroOptions] = useState([]);
   const [camionOptions, setCamionOptions] = useState([]);
 
-  const refreshOptions = useCallback((comandas = []) => {
-    const clienteMap = new Map();
-    const rutaMap = new Map();
-    const productoMap = new Map();
-    const rubroMap = new Map();
-    const camionMap = new Map();
-
-    comandas.forEach((comanda) => {
-      const clienteId = comanda?.codcli?._id ?? null;
-      const clienteLabel = comanda?.codcli?.razonsocial ?? '';
-      const rutaId = comanda?.codcli?.ruta?._id ?? comanda?.camion?.rutaId ?? null;
-      const rutaLabel = comanda?.codcli?.ruta?.ruta ?? comanda?.camion?.ruta ?? '';
-      const camionId = comanda?.camion?._id ?? null;
-      const camionLabel = comanda?.camion?.camion ?? '';
-
-      if (clienteId && clienteLabel && !clienteMap.has(clienteId)) {
-        clienteMap.set(clienteId, buildOption(clienteId, clienteLabel, comanda?.codcli ?? null));
-      }
-      if (rutaLabel && !rutaMap.has(rutaLabel)) {
-        rutaMap.set(rutaLabel, buildOption(rutaId ?? rutaLabel, rutaLabel));
-      }
-      if (camionLabel && !camionMap.has(camionLabel)) {
-        camionMap.set(camionLabel, buildOption(camionId ?? camionLabel, camionLabel));
-      }
-
-      (comanda?.items ?? []).forEach((item) => {
-        const productoId = item?.codprod?._id ?? null;
-        const productoLabel = item?.codprod?.descripcion ?? '';
-        const rubroId = item?.codprod?.rubro?._id ?? null;
-        const rubroLabel = item?.codprod?.rubro?.descripcion ?? '';
-
-        if (productoId && productoLabel && !productoMap.has(productoId)) {
-          productoMap.set(productoId, buildOption(productoId, productoLabel, item?.codprod ?? null));
-        }
-        if (rubroId && rubroLabel && !rubroMap.has(rubroId)) {
-          rubroMap.set(rubroId, buildOption(rubroId, rubroLabel));
-        }
-      });
+  const rutaById = useMemo(() => {
+    const map = new Map();
+    rutaOptions.forEach((option) => {
+      if (!option?.id || map.has(option.id)) return;
+      map.set(option.id, option);
     });
+    return map;
+  }, [rutaOptions]);
 
-    setClienteOptions(Array.from(clienteMap.values()));
-    setRutaOptions((prev) => mergeOptions(prev, Array.from(rutaMap.values())));
-    setProductoOptions(Array.from(productoMap.values()));
-    setRubroOptions((prev) => mergeOptions(prev, Array.from(rubroMap.values())));
-    setCamionOptions(Array.from(camionMap.values()));
-  }, []);
+  const rubroById = useMemo(() => {
+    const map = new Map();
+    rubroOptions.forEach((option) => {
+      if (!option?.id || map.has(option.id)) return;
+      map.set(option.id, option);
+    });
+    return map;
+  }, [rubroOptions]);
 
-  const fetchRutas = useCallback(async () => {
+  const loadCatalogues = useCallback(async () => {
     try {
-      const { data: response } = await api.get('/rutas');
-      const rutas = Array.isArray(response) ? response : response?.rutas ?? [];
-      const options = rutas
+      const [{ data: rutasResponse }, { data: rubrosResponse }] = await Promise.all([
+        api.get('/rutas'),
+        api.get('/rubros'),
+      ]);
+
+      const rutas = Array.isArray(rutasResponse)
+        ? rutasResponse
+        : rutasResponse?.rutas ?? [];
+      const rubros = Array.isArray(rubrosResponse)
+        ? rubrosResponse
+        : rubrosResponse?.rubros ?? [];
+
+      const rutaOptionsFromApi = rutas
         .map((ruta) =>
           buildOption(
             ruta?._id ?? ruta?.ruta ?? '',
@@ -145,17 +126,8 @@ export default function OrdersPage() {
           ),
         )
         .filter(Boolean);
-      setRutaOptions((prev) => mergeOptions(prev, options));
-    } catch (error) {
-      console.error('Error obteniendo rutas', error);
-    }
-  }, []);
 
-  const fetchRubros = useCallback(async () => {
-    try {
-      const { data: response } = await api.get('/rubros');
-      const rubros = Array.isArray(response) ? response : response?.rubros ?? [];
-      const options = rubros
+      const rubroOptionsFromApi = rubros
         .map((rubro) =>
           buildOption(
             rubro?._id ?? rubro?.codrubro ?? '',
@@ -164,11 +136,148 @@ export default function OrdersPage() {
           ),
         )
         .filter(Boolean);
-      setRubroOptions((prev) => mergeOptions(prev, options));
+
+      setRutaOptions((prev) => mergeOptions(prev, rutaOptionsFromApi));
+      setRubroOptions((prev) => mergeOptions(prev, rubroOptionsFromApi));
     } catch (error) {
-      console.error('Error obteniendo rubros', error);
+      console.error('Error obteniendo catálogos de rutas/rubros', error);
     }
   }, []);
+
+  const getRutaId = useCallback((row) => {
+    if (!row) return null;
+    const rutaValue = row?.codcli?.ruta;
+    if (rutaValue && typeof rutaValue === 'object') {
+      return rutaValue?._id ?? rutaValue?.id ?? null;
+    }
+    if (typeof rutaValue === 'string') {
+      return rutaValue;
+    }
+    const camionRutaId = row?.camion?.rutaId;
+    if (camionRutaId) return camionRutaId;
+    return null;
+  }, []);
+
+  const getRutaLabel = useCallback(
+    (row) => {
+      if (!row) return '';
+      const rutaValue = row?.codcli?.ruta;
+      if (rutaValue && typeof rutaValue === 'object') {
+        return rutaValue?.ruta ?? rutaValue?.descripcion ?? '';
+      }
+
+      const rutaId = getRutaId(row);
+      if (rutaId && rutaById.has(rutaId)) {
+        return rutaById.get(rutaId)?.label ?? '';
+      }
+
+      return row?.camion?.ruta ?? '';
+    },
+    [getRutaId, rutaById],
+  );
+
+  const getRubroId = useCallback((row) => {
+    if (!row) return null;
+    const rubroValue = row?.codprod?.rubro;
+    if (rubroValue && typeof rubroValue === 'object') {
+      return rubroValue?._id ?? rubroValue?.id ?? rubroValue?.codrubro ?? null;
+    }
+    if (typeof rubroValue === 'string') {
+      return rubroValue;
+    }
+    return null;
+  }, []);
+
+  const getRubroLabel = useCallback(
+    (row) => {
+      if (!row) return '';
+      const rubroValue = row?.codprod?.rubro;
+      if (rubroValue && typeof rubroValue === 'object') {
+        return rubroValue?.descripcion ?? rubroValue?.rubro ?? '';
+      }
+
+      const rubroId = getRubroId(row);
+      if (rubroId && rubroById.has(rubroId)) {
+        return rubroById.get(rubroId)?.label ?? '';
+      }
+
+      return '';
+    },
+    [getRubroId, rubroById],
+  );
+
+  const refreshOptions = useCallback(
+    (comandas = []) => {
+      const clienteMap = new Map();
+      const productoMap = new Map();
+      const camionMap = new Map();
+      const rutaMap = new Map();
+      const rubroMap = new Map();
+
+      comandas.forEach((comanda) => {
+        const clienteId = comanda?.codcli?._id ?? null;
+        const clienteLabel = comanda?.codcli?.razonsocial ?? '';
+        const camionId = comanda?.camion?._id ?? null;
+        const camionLabel = comanda?.camion?.camion ?? '';
+        const rutaId = getRutaId(comanda);
+        const rutaLabel = getRutaLabel(comanda);
+
+        if (clienteId && clienteLabel && !clienteMap.has(clienteId)) {
+          clienteMap.set(
+            clienteId,
+            buildOption(clienteId, clienteLabel, comanda?.codcli ?? null),
+          );
+        }
+
+        if ((rutaId || rutaLabel) && !rutaMap.has(rutaId ?? rutaLabel)) {
+          const label = rutaLabel || rutaById.get(rutaId)?.label || '';
+          if (label) {
+            rutaMap.set(rutaId ?? label, buildOption(rutaId ?? label, label));
+          }
+        }
+
+        if (camionLabel && !camionMap.has(camionLabel)) {
+          camionMap.set(camionLabel, buildOption(camionId ?? camionLabel, camionLabel));
+        }
+
+        (comanda?.items ?? []).forEach((item) => {
+          const productoId = item?.codprod?._id ?? null;
+          const productoLabel = item?.codprod?.descripcion ?? '';
+          const rubroId = getRubroId(item);
+          const rubroLabel = getRubroLabel(item);
+
+          if (productoId && productoLabel && !productoMap.has(productoId)) {
+            productoMap.set(
+              productoId,
+              buildOption(productoId, productoLabel, item?.codprod ?? null),
+            );
+          }
+
+          if ((rubroId || rubroLabel) && !rubroMap.has(rubroId ?? rubroLabel)) {
+            const label = rubroLabel || rubroById.get(rubroId)?.label || '';
+            if (label) {
+              rubroMap.set(rubroId ?? label, buildOption(rubroId ?? label, label));
+            }
+          }
+        });
+      });
+
+      setClienteOptions(Array.from(clienteMap.values()));
+      setProductoOptions(Array.from(productoMap.values()));
+      setCamionOptions(Array.from(camionMap.values()));
+
+      const rutaExtras = Array.from(rutaMap.values());
+      if (rutaExtras.length) {
+        setRutaOptions((prev) => mergeOptions(prev, rutaExtras));
+      }
+
+      const rubroExtras = Array.from(rubroMap.values());
+      if (rubroExtras.length) {
+        setRubroOptions((prev) => mergeOptions(prev, rubroExtras));
+      }
+    },
+    [getRutaId, getRutaLabel, getRubroId, getRubroLabel, rutaById, rubroById],
+  );
 
   const fetchEstados = useCallback(async () => {
     try {
@@ -238,9 +347,8 @@ export default function OrdersPage() {
   }, [fetchEstados]);
 
   useEffect(() => {
-    fetchRutas();
-    fetchRubros();
-  }, [fetchRutas, fetchRubros]);
+    loadCatalogues();
+  }, [loadCatalogues]);
 
   useEffect(() => {
     if (estadoId) {
@@ -269,16 +377,15 @@ export default function OrdersPage() {
           return (row.original?.codcli?._id ?? '') === value.id;
         },
       }),
-      columnHelper.accessor((row) => row?.codcli?.ruta?.ruta ?? row?.camion?.ruta ?? '', {
+      columnHelper.accessor((row) => getRutaLabel(row), {
         id: 'ruta',
         header: 'Ruta',
         cell: (info) => info.getValue() || '—',
         enableSorting: true,
         enableGrouping: true,
         filterFn: (row, columnId, value) => {
-          if (!value?.label) return true;
-          const ruta = row.original?.codcli?.ruta?.ruta ?? row.original?.camion?.ruta ?? '';
-          return ruta === value.label;
+          if (!value?.id) return true;
+          return getRutaId(row.original) === value.id;
         },
       }),
       columnHelper.accessor((row) => row?.codprod?.descripcion ?? '', {
@@ -293,7 +400,7 @@ export default function OrdersPage() {
           return (row.original?.codprod?._id ?? '') === value.id;
         },
       }),
-      columnHelper.accessor((row) => row?.codprod?.rubro?.descripcion ?? '', {
+      columnHelper.accessor((row) => getRubroLabel(row), {
         id: 'rubro',
         header: 'Rubro',
         cell: (info) => info.getValue() || '—',
@@ -302,7 +409,7 @@ export default function OrdersPage() {
         sortingFn: 'alphanumeric',
         filterFn: (row, columnId, value) => {
           if (!value?.id) return true;
-          return (row.original?.codprod?.rubro?._id ?? '') === value.id;
+          return getRubroId(row.original) === value.id;
         },
       }),
       columnHelper.accessor((row) => row?.camion?.camion ?? '', {
@@ -339,7 +446,16 @@ export default function OrdersPage() {
         },
       }),
     ],
-    [],
+    [
+      getRutaId,
+      getRutaLabel,
+      getRubroId,
+      getRubroLabel,
+      rutaById,
+      rubroById,
+      rutaOptions,
+      rubroOptions,
+    ],
   );
 
   const table = useReactTable({
@@ -397,9 +513,9 @@ export default function OrdersPage() {
       return [
         item?.nrodecomanda ?? '',
         item?.codcli?.razonsocial ?? '',
-        item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
+        getRutaLabel(item),
         item?.codprod?.descripcion ?? '',
-        item?.codprod?.rubro?.descripcion ?? '',
+        getRubroLabel(item),
         item?.showCamion ? item?.camion?.camion ?? '' : '',
         numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
@@ -416,7 +532,7 @@ export default function OrdersPage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [filteredRows]);
+  }, [filteredRows, getRutaLabel, getRubroLabel]);
 
   const handleExportPdf = useCallback(() => {
     const doc = new jsPDF({ orientation: 'landscape' });
@@ -427,9 +543,9 @@ export default function OrdersPage() {
       return [
         item?.nrodecomanda ?? '',
         item?.codcli?.razonsocial ?? '',
-        item?.codcli?.ruta?.ruta ?? item?.camion?.ruta ?? '',
+        getRutaLabel(item),
         item?.codprod?.descripcion ?? '',
-        item?.codprod?.rubro?.descripcion ?? '',
+        getRubroLabel(item),
         item?.showCamion ? item?.camion?.camion ?? '' : '',
         numberFormatter.format(Number(item?.cantidad ?? 0)),
       ];
@@ -448,7 +564,7 @@ export default function OrdersPage() {
       startY: 24,
     });
     doc.save('ordenes_a_preparar.pdf');
-  }, [filteredRows]);
+  }, [filteredRows, getRutaLabel, getRubroLabel]);
 
   return (
     <Stack spacing={3} sx={{ p: 2 }}>
