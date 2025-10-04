@@ -50,7 +50,7 @@ const buildOption = (id, label, raw = null) => {
 
 const mergeOptions = (prev = [], next = []) => {
   const map = new Map();
-  [...prev, ...next].forEach((option) => {
+  prev.forEach((option) => {
     if (!option) return;
     const key = option.id ?? option.label;
     if (!key) return;
@@ -58,6 +58,20 @@ const mergeOptions = (prev = [], next = []) => {
       map.set(key, option);
     }
   });
+
+  const initialSize = map.size;
+
+  next.forEach((option) => {
+    if (!option) return;
+    const key = option.id ?? option.label;
+    if (!key || map.has(key)) return;
+    map.set(key, option);
+  });
+
+  if (map.size === initialSize) {
+    return prev;
+  }
+
   return Array.from(map.values());
 };
 
