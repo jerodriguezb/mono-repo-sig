@@ -60,15 +60,30 @@ const commonPopulate = [
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandas', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500 } = req.query;
-  const comandas = await Comanda.find()
+  const { desde = 0, limite = 500, estado } = req.query;
+
+  if (estado && !isValidObjectId(estado)) {
+    return res.json({ ok: true, comandas: [], cantidad: 0 });
+  }
+
+  const query = {};
+
+  if (estado) {
+    const estadoId = new mongoose.Types.ObjectId(estado);
+    query.codestado = estadoId;
+  }
+
+  const comandas = await Comanda.find(query)
     // .skip(toNumber(desde, 0))
     // .limit(toNumber(limite, 500))
     .sort('nrodecomanda')
     .populate(commonPopulate)
     .lean()
     .exec();
-  const cantidad = await Comanda.countDocuments({ activo: true });
+  const cantidadQuery = estado
+    ? { codestado: query.codestado, activo: true }
+    : { activo: true };
+  const cantidad = await Comanda.countDocuments(cantidadQuery);
   res.json({ ok: true, comandas, cantidad });
 }));
 
