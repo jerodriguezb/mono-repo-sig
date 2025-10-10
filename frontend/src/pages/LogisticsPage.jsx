@@ -49,6 +49,39 @@ const STATUS_CONFIG = [
   { key: 'Cerrada', label: 'Cerrada', color: '#2e7d32' },
 ];
 
+const normalizeEstadoNombre = (value) =>
+  (value ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+
+const STATUS_ORDER_MAP = STATUS_CONFIG.reduce((acc, status, index) => {
+  acc[normalizeEstadoNombre(status.label ?? status.key)] = index;
+  return acc;
+}, {});
+
+const RESTRICTED_STATUS_SET = new Set(
+  ['En distribución', 'Entrega parcial', 'Cerrada'].map((name) => normalizeEstadoNombre(name)),
+);
+
+const resolveEstadoOrden = (estadoObj) => {
+  if (!estadoObj) return null;
+  const rawOrden = estadoObj?.orden;
+  if (rawOrden !== undefined && rawOrden !== null) {
+    const numericOrden = Number(rawOrden);
+    if (!Number.isNaN(numericOrden)) {
+      return numericOrden;
+    }
+  }
+  const normalizedName = normalizeEstadoNombre(estadoObj?.estado ?? estadoObj?.label ?? '');
+  if (!normalizedName) return null;
+  if (Object.prototype.hasOwnProperty.call(STATUS_ORDER_MAP, normalizedName)) {
+    return STATUS_ORDER_MAP[normalizedName];
+  }
+  return null;
+};
+
 const numberFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -156,22 +189,6 @@ export default function LogisticsPage() {
   const usuarioTimer = useRef(null);
 
   const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
-
-  const statusCounts = useMemo(() => {
-    const counts = {};
-    STATUS_CONFIG.forEach(({ key }) => {
-      counts[key] = 0;
-    });
-
-    (data ?? []).forEach((comanda) => {
-      const estado = comanda?.codestado?.estado;
-      if (estado && Object.prototype.hasOwnProperty.call(counts, estado)) {
-        counts[estado] += 1;
-      }
-    });
-
-    return counts;
-  }, [data]);
 
   const columns = useMemo(() => [
       {
@@ -677,6 +694,37 @@ export default function LogisticsPage() {
       showSnackbar('Seleccioná un estado logístico', 'warning');
       return;
     }
+
+    const nextEstado = estadoById.get(estado);
+    if (!nextEstado) {
+      showSnackbar('Seleccioná un estado logístico válido', 'warning');
+      return;
+    }
+
+    const nextOrder = resolveEstadoOrden(nextEstado);
+    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
+      const currentEstado = comanda?.codestado;
+      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
+      if (!RESTRICTED_STATUS_SET.has(currentName)) {
+        return false;
+      }
+
+      const currentOrder = resolveEstadoOrden(currentEstado);
+      if (currentOrder === null || nextOrder === null) {
+        return false;
+      }
+
+      return nextOrder < currentOrder;
+    });
+
+    if (invalidTransition) {
+      showSnackbar(
+        'No se puede realizar la operación porque intenta volver a estados anteriores.',
+        'warning',
+      );
+      return;
+    }
+
     setSavingLogistics(true);
     try {
       const payload = {
@@ -868,6 +916,15 @@ export default function LogisticsPage() {
     () => camiones.map((camion) => buildOption(camion, (c) => c.camion ?? '—')).filter(Boolean),
     [camiones],
   );
+  const estadoById = useMemo(() => {
+    const map = new Map();
+    (estados ?? []).forEach((estadoItem) => {
+      if (estadoItem?._id) {
+        map.set(estadoItem._id, estadoItem);
+      }
+    });
+    return map;
+  }, [estados]);
   const puntoDistribucionOption = puntoDistribucionValue
     ? { id: puntoDistribucionValue, label: puntoDistribucionValue }
     : null;
@@ -1083,14 +1140,6 @@ export default function LogisticsPage() {
                 onClick={() => setLogisticsDialog({ open: true, comandas: selectedComandas })}
               >
                 Asignar logística
-              </Button>
-              <Button
-                startIcon={<DeleteOutlineIcon />}
-                variant="outlined"
-                color="error"
-                onClick={() => setDeleteDialog({ open: true, comandas: selectedComandas })}
-              >
-                Eliminar seleccionadas
               </Button>
             </Stack>
           </Stack>
