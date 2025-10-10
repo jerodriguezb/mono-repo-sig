@@ -65,6 +65,14 @@ const RESTRICTED_STATUS_SET = new Set(
   ['En distribución', 'Entrega parcial', 'Cerrada'].map((name) => normalizeEstadoNombre(name)),
 );
 
+const NORMALIZED_CERRADA_STATUS = normalizeEstadoNombre('Cerrada');
+
+const isComandaCerrada = (comanda) =>
+  normalizeEstadoNombre(comanda?.codestado?.estado ?? '') === NORMALIZED_CERRADA_STATUS;
+
+const DELETE_CERRADA_MESSAGE =
+  'No se puede realizar la operación porque la comanda tiene estado Cerrada.';
+
 const resolveEstadoOrden = (estadoObj) => {
   if (!estadoObj) return null;
   const rawOrden = estadoObj?.orden;
@@ -189,6 +197,31 @@ export default function LogisticsPage() {
   const usuarioTimer = useRef(null);
 
   const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
+
+  const showSnackbar = useCallback((message, severity = 'success') => {
+    setSnackbar({ open: true, message, severity });
+  }, []);
+
+  const handleDeleteRequest = useCallback(
+    (comandasParam) => {
+      const comandasList = (Array.isArray(comandasParam)
+        ? comandasParam
+        : [comandasParam]
+      ).filter(Boolean);
+
+      if (comandasList.length === 0) {
+        return;
+      }
+
+      if (comandasList.some(isComandaCerrada)) {
+        showSnackbar(DELETE_CERRADA_MESSAGE, 'warning');
+        return;
+      }
+
+      setDeleteDialog({ open: true, comandas: comandasList });
+    },
+    [setDeleteDialog, showSnackbar],
+  );
 
   const columns = useMemo(() => [
       {
@@ -373,7 +406,7 @@ export default function LogisticsPage() {
             <Tooltip title="Eliminar comanda">
               <IconButton
                 color="error"
-                onClick={() => setDeleteDialog({ open: true, comandas: [row.original] })}
+                onClick={() => handleDeleteRequest([row.original])}
               >
                 <DeleteOutlineIcon />
               </IconButton>
@@ -384,7 +417,7 @@ export default function LogisticsPage() {
         enableColumnFilter: false,
         meta: { align: 'center' },
       }),
-    ], [collator]);
+    ], [collator, handleDeleteRequest]);
 
   const handleSortingChange = useCallback((updater) => {
     setSorting((prev) => {
@@ -417,11 +450,6 @@ export default function LogisticsPage() {
   });
 
   const selectedComandas = table.getSelectedRowModel().flatRows.map((row) => row.original);
-
-  const showSnackbar = useCallback((message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity });
-  }, []);
-
   const buildParamsFromFilters = useCallback(() => {
     const params = { page, limit: PAGE_SIZE };
     const sortingColumnMap = {
@@ -751,6 +779,13 @@ export default function LogisticsPage() {
   };
 
   const handleDeleteConfirm = async () => {
+    const comandasToDelete = deleteDialog.comandas ?? [];
+    if (comandasToDelete.some(isComandaCerrada)) {
+      showSnackbar(DELETE_CERRADA_MESSAGE, 'warning');
+      setDeleteDialog({ open: false, comandas: [] });
+      return;
+    }
+
     setDeleting(true);
     try {
       await Promise.all(
