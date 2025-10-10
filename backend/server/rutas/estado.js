@@ -19,6 +19,13 @@ const asyncHandler = (fn) => (req, res, next) => {
 
 const toNumber = (v, def) => Number(v ?? def);
 
+const normalizeEstadoNombre = (value = '') =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+
 // -----------------------------------------------------------------------------
 // 1. LISTAR ESTADOS ACTIVOS -----------------------------------------------------
 // -----------------------------------------------------------------------------
@@ -95,14 +102,29 @@ router.delete(
   '/estados/:id',
   [verificaToken, verificaAdmin_role],
   asyncHandler(async (req, res) => {
+    const estadoActual = await Estado.findById(req.params.id).exec();
+
+    if (!estadoActual)
+      return res.status(404).json({ ok: false, err: { message: 'Estado no encontrado' } });
+
+    if (normalizeEstadoNombre(estadoActual.estado) === 'cerrada') {
+      return res.status(400).json({
+        ok: false,
+        err: {
+          message: 'No se puede realizar la operación porque está volviendo a estados anteriores.',
+        },
+      });
+    }
+
+    if (!estadoActual.activo) {
+      return res.json({ ok: true, estado: estadoActual });
+    }
+
     const estadoBorrado = await Estado.findByIdAndUpdate(
       req.params.id,
       { activo: false },
       { new: true }
     ).exec();
-
-    if (!estadoBorrado)
-      return res.status(404).json({ ok: false, err: { message: 'Estado no encontrado' } });
 
     res.json({ ok: true, estado: estadoBorrado });
   })
