@@ -690,10 +690,91 @@ router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler
 // 12. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
 // -----------------------------------------------------------------------------
 router.delete('/comandas/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
-  const comandaBorrada = await Comanda.findByIdAndUpdate(req.params.id, { activo: false }, { new: true })
+  const session = await Comanda.startSession();
+  let transactionError = null;
+  let comandaId = null;
+
+  try {
+    await session.withTransaction(async () => {
+      const comanda = await Comanda.findById(req.params.id).session(session).exec();
+
+      if (!comanda) {
+        const error = new Error('Comanda no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      comandaId = comanda._id;
+
+      if (comanda.activo === false) {
+        return;
+      }
+
+      const tipomovDevolucion = await Tipomovimiento.findOne({ movimiento: 'DEVOLUCION' })
+        .session(session)
+        .exec();
+
+      if (!tipomovDevolucion) {
+        const error = new Error('Tipo de movimiento DEVOLUCION no encontrado');
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const usuarioId = req.usuario?._id ?? comanda.usuario ?? null;
+      const now = new Date();
+
+      for (const item of comanda.items ?? []) {
+        const codprodId = item?.codprod?._id ?? item?.codprod;
+        const cantidad = Number(item?.cantidad ?? 0);
+
+        if (!codprodId || !Number.isFinite(cantidad) || cantidad <= 0) continue;
+
+        await Producserv.updateOne(
+          { _id: codprodId },
+          { $inc: { stkactual: cantidad } },
+          { session },
+        );
+
+        const stock = new Stock({
+          codprod: codprodId,
+          nrodecomanda: comanda.nrodecomanda,
+          movimiento: tipomovDevolucion._id,
+          cantidad,
+          fecha: now,
+          usuario: usuarioId,
+        });
+
+        await stock.save({ session });
+      }
+
+      comanda.activo = false;
+      await comanda.save({ session });
+    });
+  } catch (error) {
+    transactionError = error;
+  } finally {
+    await session.endSession();
+  }
+
+  if (transactionError) {
+    if (transactionError.statusCode === 404) {
+      return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+    }
+    if (transactionError.statusCode === 500) {
+      return res.status(500).json({ ok: false, err: { message: transactionError.message } });
+    }
+    throw transactionError;
+  }
+
+  const comandaBorrada = await Comanda.findById(comandaId ?? req.params.id)
     .populate(commonPopulate)
+    .lean()
     .exec();
-  if (!comandaBorrada) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+
+  if (!comandaBorrada) {
+    return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+  }
+
   res.json({ ok: true, comanda: comandaBorrada });
 }));
 
