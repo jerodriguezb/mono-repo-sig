@@ -37,6 +37,7 @@ import api from '../api/axios';
 import ItemsModal from '../components/logistics/ItemsModal.jsx';
 import LogisticsActionDialog from '../components/logistics/LogisticsActionDialog.jsx';
 import DeleteConfirmationDialog from '../components/logistics/DeleteConfirmationDialog.jsx';
+import LogisticsMassUpdateConfirmationDialog from '../components/logistics/LogisticsMassUpdateConfirmationDialog.jsx';
 
 const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
@@ -60,10 +61,6 @@ const STATUS_ORDER_MAP = STATUS_CONFIG.reduce((acc, status, index) => {
   acc[normalizeEstadoNombre(status.label ?? status.key)] = index;
   return acc;
 }, {});
-
-const RESTRICTED_STATUS_SET = new Set(
-  ['En distribución', 'Entrega parcial', 'Cerrada'].map((name) => normalizeEstadoNombre(name)),
-);
 
 const NORMALIZED_CERRADA_STATUS = normalizeEstadoNombre('Cerrada');
 
@@ -135,6 +132,15 @@ const buildOption = (entity, labelFn) => {
   };
 };
 
+const formatPersonName = (person) => {
+  if (!person) return '—';
+  const fullName = `${person?.nombres ?? ''} ${person?.apellidos ?? ''}`.trim();
+  if (fullName) return fullName;
+  return person?.razonsocial ?? person?.nombre ?? person?.usuario ?? '—';
+};
+
+const formatCamionLabel = (camion) => camion?.camion ?? camion?.label ?? '—';
+
 const safeGetFilterValue = (column) => column?.getFilterValue?.() ?? null;
 
 const STATUS_KEYS = {
@@ -172,6 +178,7 @@ export default function LogisticsPage() {
   const [rowSelection, setRowSelection] = useState({});
   const [itemsModal, setItemsModal] = useState({ open: false, comanda: null });
   const [logisticsDialog, setLogisticsDialog] = useState({ open: false, comandas: [] });
+  const [logisticsReview, setLogisticsReview] = useState({ open: false, plan: [], selection: null });
   const [deleteDialog, setDeleteDialog] = useState({ open: false, comandas: [] });
   const [savingLogistics, setSavingLogistics] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -201,6 +208,27 @@ export default function LogisticsPage() {
   const showSnackbar = useCallback((message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
   }, []);
+
+
+  const camioneroById = useMemo(() => {
+    const map = new Map();
+    (camioneros ?? []).forEach((camionero) => {
+      if (camionero?._id) {
+        map.set(camionero._id, camionero);
+      }
+    });
+    return map;
+  }, [camioneros]);
+
+  const camionById = useMemo(() => {
+    const map = new Map();
+    (camiones ?? []).forEach((camion) => {
+      if (camion?._id) {
+        map.set(camion._id, camion);
+      }
+    });
+    return map;
+  }, [camiones]);
 
   const handleDeleteRequest = useCallback(
     (comandasParam) => {
@@ -717,7 +745,7 @@ export default function LogisticsPage() {
     }, 300);
   }, []);
 
-  const handleLogisticsSubmit = async ({ estado, camionero, camion, puntoDistribucion }) => {
+  const handleLogisticsSubmit = ({ estado, camionero, camion, puntoDistribucion }) => {
     if (!estado) {
       showSnackbar('Seleccioná un estado logístico', 'warning');
       return;
@@ -729,45 +757,182 @@ export default function LogisticsPage() {
       return;
     }
 
-    const nextOrder = resolveEstadoOrden(nextEstado);
-    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
-      const currentEstado = comanda?.codestado;
-      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
-      if (!RESTRICTED_STATUS_SET.has(currentName)) {
-        return false;
-      }
+    const comandasSeleccionadas = logisticsDialog.comandas ?? [];
+    if (comandasSeleccionadas.length === 0) {
+      showSnackbar('Seleccioná al menos una comanda para actualizar', 'warning');
+      return;
+    }
 
-      const currentOrder = resolveEstadoOrden(currentEstado);
+    const nextOrder = resolveEstadoOrden(nextEstado);
+    const invalidComandas = comandasSeleccionadas.filter((comanda) => {
+      const currentOrder = resolveEstadoOrden(comanda?.codestado);
       if (currentOrder === null || nextOrder === null) {
         return false;
       }
-
       return nextOrder < currentOrder;
     });
 
-    if (invalidTransition) {
-      showSnackbar(
-        'No se puede realizar la operación porque intenta volver a estados anteriores.',
-        'warning',
-      );
+    if (invalidComandas.length > 0) {
+      const invalidNumbers = invalidComandas
+        .map((comanda) => comanda?.nrodecomanda)
+        .filter(Boolean)
+        .join(', ');
+      const warningMessage = invalidNumbers
+        ? `No se puede realizar la operación porque intenta volver a estados anteriores (${invalidNumbers}).`
+        : 'No se puede realizar la operación porque intenta volver a estados anteriores.';
+      showSnackbar(warningMessage, 'warning');
+      return;
+    }
+
+    const selectedCamionero = camionero ? camioneroById.get(camionero) : null;
+    const selectedCamion = camion ? camionById.get(camion) : null;
+    const selectedCamioneroLabel = selectedCamionero ? formatPersonName(selectedCamionero) : null;
+    const selectedCamionLabel = selectedCamion ? formatCamionLabel(selectedCamion) : null;
+    const puntoDistribucionValue = (puntoDistribucion ?? '').trim();
+
+    const plan = comandasSeleccionadas.map((comanda) => {
+      const payload = { codestado: estado };
+      const updates = [];
+      const unchanged = [];
+
+      const currentEstadoId = comanda?.codestado?._id ?? comanda?.codestado ?? null;
+      const currentEstadoLabel = comanda?.codestado?.estado ?? 'Sin estado asignado';
+      if (!currentEstadoId || currentEstadoId !== estado) {
+        updates.push({
+          key: 'estado',
+          description: currentEstadoId
+            ? `Estado logístico: de ${currentEstadoLabel} a ${nextEstado?.estado ?? '—'}.`
+            : `Estado logístico: se asignará ${nextEstado?.estado ?? '—'}.`,
+        });
+      } else {
+        unchanged.push({
+          key: 'estado',
+          description: `Estado logístico: se mantiene en ${currentEstadoLabel || 'Sin estado asignado'}.`,
+        });
+      }
+
+      const hasCamionero = Boolean(comanda?.camionero?._id ?? comanda?.camionero);
+      if (camionero && !hasCamionero) {
+        payload.camionero = camionero;
+        updates.push({
+          key: 'camionero',
+          description: `Camionero / Chofer: se asignará ${selectedCamioneroLabel ?? 'el valor seleccionado'}.`,
+        });
+      } else if (camionero && hasCamionero) {
+        const currentCamioneroLabel = formatPersonName(comanda?.camionero);
+        unchanged.push({
+          key: 'camionero',
+          description: `Camionero / Chofer: se mantiene ${currentCamioneroLabel} (ya cuenta con un valor asignado).`,
+        });
+      } else if (hasCamionero) {
+        const currentCamioneroLabel = formatPersonName(comanda?.camionero);
+        unchanged.push({
+          key: 'camionero',
+          description: `Camionero / Chofer: se mantiene ${currentCamioneroLabel}.`,
+        });
+      } else {
+        unchanged.push({
+          key: 'camionero',
+          description: 'Camionero / Chofer: no se seleccionó un valor.',
+        });
+      }
+
+      const hasCamion = Boolean(comanda?.camion?._id ?? comanda?.camion);
+      if (camion && !hasCamion) {
+        payload.camion = camion;
+        updates.push({
+          key: 'camion',
+          description: selectedCamionLabel
+            ? `Punto de distribución (catálogo): se asociará ${selectedCamionLabel}.`
+            : 'Punto de distribución (catálogo): se asignará el valor seleccionado.',
+        });
+      } else if (camion && hasCamion) {
+        const currentCamionLabel = formatCamionLabel(comanda?.camion);
+        unchanged.push({
+          key: 'camion',
+          description: `Punto de distribución (catálogo): se mantiene ${currentCamionLabel} (ya cuenta con un valor asignado).`,
+        });
+      } else if (hasCamion) {
+        const currentCamionLabel = formatCamionLabel(comanda?.camion);
+        unchanged.push({
+          key: 'camion',
+          description: `Punto de distribución (catálogo): se mantiene ${currentCamionLabel}.`,
+        });
+      } else {
+        unchanged.push({
+          key: 'camion',
+          description: 'Punto de distribución (catálogo): no se seleccionó un valor.',
+        });
+      }
+
+      const currentPuntoDistribucion = (comanda?.puntoDistribucion ?? '').trim();
+      const hasPuntoDistribucion = currentPuntoDistribucion.length > 0;
+      if (puntoDistribucionValue && !hasPuntoDistribucion) {
+        payload.puntoDistribucion = puntoDistribucionValue;
+        updates.push({
+          key: 'puntoDistribucion',
+          description: `Detalle del punto de distribución: se completará con "${puntoDistribucionValue}".`,
+        });
+      } else if (puntoDistribucionValue && hasPuntoDistribucion) {
+        unchanged.push({
+          key: 'puntoDistribucion',
+          description: `Detalle del punto de distribución: se mantiene "${currentPuntoDistribucion}" (ya cuenta con un valor asignado).`,
+        });
+      } else if (hasPuntoDistribucion) {
+        unchanged.push({
+          key: 'puntoDistribucion',
+          description: `Detalle del punto de distribución: se mantiene "${currentPuntoDistribucion}".`,
+        });
+      } else {
+        unchanged.push({
+          key: 'puntoDistribucion',
+          description: 'Detalle del punto de distribución: no se ingresó un valor.',
+        });
+      }
+
+      return {
+        comanda,
+        payload,
+        updates,
+        unchanged,
+      };
+    });
+
+    setLogisticsReview({
+      open: true,
+      plan,
+      selection: {
+        estado: nextEstado?.estado ?? '—',
+        camionero: selectedCamioneroLabel,
+        camion: selectedCamionLabel,
+        puntoDistribucion: puntoDistribucionValue || null,
+      },
+    });
+  };
+
+  const handleCancelLogisticsReview = () => {
+    setLogisticsReview({ open: false, plan: [], selection: null });
+  };
+
+  const handleConfirmLogisticsReview = async () => {
+    const plan = logisticsReview.plan ?? [];
+    const itemsWithChanges = plan.filter(
+      (item) => (item?.updates ?? []).length > 0 && item?.comanda?._id,
+    );
+
+    if (itemsWithChanges.length === 0) {
+      showSnackbar('No hay cambios para aplicar.', 'info');
+      handleCancelLogisticsReview();
       return;
     }
 
     setSavingLogistics(true);
     try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
-      if (camion) payload.camion = camion;
-
       await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
-          api.put(`/comandas/${comanda._id}`, payload),
-        ),
+        itemsWithChanges.map((item) => api.put(`/comandas/${item.comanda._id}`, item.payload)),
       );
       showSnackbar('Actualización logística completada');
+      handleCancelLogisticsReview();
       setLogisticsDialog({ open: false, comandas: [] });
       refreshData();
     } catch (error) {
@@ -776,6 +941,11 @@ export default function LogisticsPage() {
     } finally {
       setSavingLogistics(false);
     }
+  };
+
+  const handleLogisticsDialogClose = () => {
+    setLogisticsDialog({ open: false, comandas: [] });
+    handleCancelLogisticsReview();
   };
 
   const handleDeleteConfirm = async () => {
@@ -1286,11 +1456,20 @@ export default function LogisticsPage() {
       <LogisticsActionDialog
         open={logisticsDialog.open}
         comandas={logisticsDialog.comandas}
-        onClose={() => setLogisticsDialog({ open: false, comandas: [] })}
+        onClose={handleLogisticsDialogClose}
         onSubmit={handleLogisticsSubmit}
         estados={estados}
         camioneros={camioneros}
         camiones={camiones}
+        loading={savingLogistics}
+      />
+
+      <LogisticsMassUpdateConfirmationDialog
+        open={logisticsReview.open}
+        plan={logisticsReview.plan}
+        selection={logisticsReview.selection}
+        onCancel={handleCancelLogisticsReview}
+        onConfirm={handleConfirmLogisticsReview}
         loading={savingLogistics}
       />
 
