@@ -84,9 +84,9 @@ export default function LogisticsActionDialog({
   const handleSubmit = (evt) => {
     evt?.preventDefault?.();
     onSubmit?.({
-      estado: estadoSel?.id ?? null,
-      camionero: camioneroSel?.id ?? null,
-      camion: camionSel?.id ?? null,
+      estado: estadoSel ?? null,
+      camionero: camioneroSel ?? null,
+      camion: camionSel ?? null,
       puntoDistribucion: puntoDistribucion?.trim() || null,
     });
   };
