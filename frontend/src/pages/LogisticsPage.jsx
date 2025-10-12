@@ -37,6 +37,7 @@ import api from '../api/axios';
 import ItemsModal from '../components/logistics/ItemsModal.jsx';
 import LogisticsActionDialog from '../components/logistics/LogisticsActionDialog.jsx';
 import DeleteConfirmationDialog from '../components/logistics/DeleteConfirmationDialog.jsx';
+import LogisticsBulkConfirmationDialog from '../components/logistics/LogisticsBulkConfirmationDialog.jsx';
 
 const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
@@ -100,6 +101,13 @@ const currencyFormatter = new Intl.NumberFormat('es-AR', {
   currency: 'ARS',
   minimumFractionDigits: 2,
 });
+
+const formatPersonName = (person) =>
+  `${person?.nombres ?? ''} ${person?.apellidos ?? ''}`.replace(/\s+/g, ' ').trim();
+
+const formatCamioneroName = (person) => formatPersonName(person) || 'Sin datos';
+
+const formatCamionName = (camion) => camion?.camion ?? 'Sin datos';
 
 const sumDelivered = (items = []) =>
   items.reduce((acc, item) => acc + Number(item?.cantidadentregada ?? 0), 0);
@@ -172,6 +180,7 @@ export default function LogisticsPage() {
   const [rowSelection, setRowSelection] = useState({});
   const [itemsModal, setItemsModal] = useState({ open: false, comanda: null });
   const [logisticsDialog, setLogisticsDialog] = useState({ open: false, comandas: [] });
+  const [logisticsConfirmation, setLogisticsConfirmation] = useState({ open: false, items: [] });
   const [deleteDialog, setDeleteDialog] = useState({ open: false, comandas: [] });
   const [savingLogistics, setSavingLogistics] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -717,58 +726,208 @@ export default function LogisticsPage() {
     }, 300);
   }, []);
 
-  const handleLogisticsSubmit = async ({ estado, camionero, camion, puntoDistribucion }) => {
-    if (!estado) {
-      showSnackbar('Seleccioná un estado logístico', 'warning');
-      return;
-    }
-
-    const nextEstado = estadoById.get(estado);
-    if (!nextEstado) {
-      showSnackbar('Seleccioná un estado logístico válido', 'warning');
-      return;
-    }
-
-    const nextOrder = resolveEstadoOrden(nextEstado);
-    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
-      const currentEstado = comanda?.codestado;
-      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
-      if (!RESTRICTED_STATUS_SET.has(currentName)) {
-        return false;
+  const estadoById = useMemo(() => {
+    const map = new Map();
+    (estados ?? []).forEach((estadoItem) => {
+      if (estadoItem?._id) {
+        map.set(estadoItem._id, estadoItem);
       }
-
-      const currentOrder = resolveEstadoOrden(currentEstado);
-      if (currentOrder === null || nextOrder === null) {
-        return false;
-      }
-
-      return nextOrder < currentOrder;
     });
+    return map;
+  }, [estados]);
 
-    if (invalidTransition) {
-      showSnackbar(
-        'No se puede realizar la operación porque intenta volver a estados anteriores.',
-        'warning',
-      );
+  const camioneroById = useMemo(() => {
+    const map = new Map();
+    (camioneros ?? []).forEach((camioneroItem) => {
+      if (camioneroItem?._id) {
+        map.set(camioneroItem._id, camioneroItem);
+      }
+    });
+    return map;
+  }, [camioneros]);
+
+  const camionById = useMemo(() => {
+    const map = new Map();
+    (camiones ?? []).forEach((camionItem) => {
+      if (camionItem?._id) {
+        map.set(camionItem._id, camionItem);
+      }
+    });
+    return map;
+  }, [camiones]);
+
+  const handleLogisticsSubmit = useCallback(
+    ({ estado, camionero, camion, puntoDistribucion }) => {
+      const comandasSeleccionadas = logisticsDialog.comandas ?? [];
+
+      if (!estado) {
+        showSnackbar('Seleccioná un estado logístico', 'warning');
+        return;
+      }
+
+      const nextEstado = estadoById.get(estado);
+      if (!nextEstado) {
+        showSnackbar('Seleccioná un estado logístico válido', 'warning');
+        return;
+      }
+
+      const nextOrder = resolveEstadoOrden(nextEstado);
+      const invalidTransition = comandasSeleccionadas.some((comanda) => {
+        const currentEstado = comanda?.codestado;
+        const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
+        if (!RESTRICTED_STATUS_SET.has(currentName)) {
+          return false;
+        }
+
+        const currentOrder = resolveEstadoOrden(currentEstado);
+        if (currentOrder === null || nextOrder === null) {
+          return false;
+        }
+
+        return nextOrder < currentOrder;
+      });
+
+      if (invalidTransition) {
+        showSnackbar(
+          'No se puede realizar la operación porque intenta volver a estados anteriores.',
+          'warning',
+        );
+        return;
+      }
+
+      const nextCamionero = camionero ? camioneroById.get(camionero) : null;
+      const nextCamion = camion ? camionById.get(camion) : null;
+      const trimmedPunto = puntoDistribucion?.trim() ?? '';
+      const nextEstadoNombre = nextEstado?.estado ?? '—';
+
+      const items = comandasSeleccionadas.map((comanda) => {
+        const changes = [];
+        const preserved = [];
+        const payload = {};
+
+        const currentEstadoId = comanda?.codestado?._id;
+        const currentEstadoNombre = comanda?.codestado?.estado ?? 'Sin estado asignado';
+
+        if (!currentEstadoId || currentEstadoId !== estado) {
+          payload.codestado = estado;
+          changes.push({
+            field: 'Estado logístico',
+            details: `De ${currentEstadoNombre} a ${nextEstadoNombre}`,
+          });
+        } else {
+          preserved.push({
+            field: 'Estado logístico',
+            details: `Se mantiene en ${currentEstadoNombre}`,
+          });
+        }
+
+        if (camionero) {
+          if (!comanda?.camionero?._id) {
+            payload.camionero = camionero;
+            changes.push({
+              field: 'Camionero / Chofer',
+              details: `Asignar ${formatCamioneroName(nextCamionero)}`,
+            });
+          } else {
+            preserved.push({
+              field: 'Camionero / Chofer',
+              details: `Ya asignado: ${formatCamioneroName(comanda.camionero)}`,
+            });
+          }
+        } else {
+          preserved.push({
+            field: 'Camionero / Chofer',
+            details: 'No se seleccionó un camionero para este cambio.',
+          });
+        }
+
+        if (camion) {
+          if (!comanda?.camion?._id) {
+            payload.camion = camion;
+            changes.push({
+              field: 'Camión / Punto logístico',
+              details: `Asignar ${formatCamionName(nextCamion)}`,
+            });
+          } else {
+            preserved.push({
+              field: 'Camión / Punto logístico',
+              details: `Ya asignado: ${formatCamionName(comanda.camion)}`,
+            });
+          }
+        } else {
+          preserved.push({
+            field: 'Camión / Punto logístico',
+            details: 'No se seleccionó un camión para este cambio.',
+          });
+        }
+
+        if (trimmedPunto) {
+          const hasExistingPunto = Boolean((comanda?.puntoDistribucion ?? '').trim());
+          if (!hasExistingPunto) {
+            payload.puntoDistribucion = trimmedPunto;
+            changes.push({
+              field: 'Detalle del punto de distribución',
+              details: `Asignar ${trimmedPunto}`,
+            });
+          } else {
+            preserved.push({
+              field: 'Detalle del punto de distribución',
+              details: `Ya definido: ${comanda?.puntoDistribucion}`,
+            });
+          }
+        } else {
+          preserved.push({
+            field: 'Detalle del punto de distribución',
+            details: 'No se ingresó un detalle para este cambio.',
+          });
+        }
+
+        const hasChanges = Object.keys(payload).length > 0;
+
+        if (!hasChanges) {
+          preserved.push({
+            field: 'Sin cambios',
+            details: 'La comanda ya cuenta con la información asignada.',
+          });
+        }
+
+        return {
+          comanda,
+          payload,
+          changes,
+          preserved,
+          hasChanges,
+        };
+      });
+
+      const hasAnyChange = items.some((item) => item.hasChanges);
+
+      if (!hasAnyChange) {
+        showSnackbar('Las comandas seleccionadas ya tienen los datos asignados.', 'info');
+        return;
+      }
+
+      setLogisticsConfirmation({ open: true, items });
+      setLogisticsDialog({ open: false, comandas: [] });
+    },
+    [logisticsDialog, estadoById, camioneroById, camionById, showSnackbar],
+  );
+
+  const handleLogisticsConfirmApply = useCallback(async () => {
+    const updatesToApply = (logisticsConfirmation.items ?? []).filter((item) => item.hasChanges);
+
+    if (updatesToApply.length === 0) {
+      setLogisticsConfirmation({ open: false, items: [] });
       return;
     }
 
     setSavingLogistics(true);
     try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
-      if (camion) payload.camion = camion;
-
       await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
-          api.put(`/comandas/${comanda._id}`, payload),
-        ),
+        updatesToApply.map((item) => api.put(`/comandas/${item.comanda._id}`, item.payload)),
       );
       showSnackbar('Actualización logística completada');
-      setLogisticsDialog({ open: false, comandas: [] });
+      setLogisticsConfirmation({ open: false, items: [] });
       refreshData();
     } catch (error) {
       console.error('Error actualizando logística', error);
@@ -776,7 +935,12 @@ export default function LogisticsPage() {
     } finally {
       setSavingLogistics(false);
     }
-  };
+  }, [logisticsConfirmation.items, refreshData, showSnackbar]);
+
+  const handleLogisticsConfirmClose = useCallback(() => {
+    if (savingLogistics) return;
+    setLogisticsConfirmation({ open: false, items: [] });
+  }, [savingLogistics]);
 
   const handleDeleteConfirm = async () => {
     const comandasToDelete = deleteDialog.comandas ?? [];
@@ -951,15 +1115,6 @@ export default function LogisticsPage() {
     () => camiones.map((camion) => buildOption(camion, (c) => c.camion ?? '—')).filter(Boolean),
     [camiones],
   );
-  const estadoById = useMemo(() => {
-    const map = new Map();
-    (estados ?? []).forEach((estadoItem) => {
-      if (estadoItem?._id) {
-        map.set(estadoItem._id, estadoItem);
-      }
-    });
-    return map;
-  }, [estados]);
   const puntoDistribucionOption = puntoDistribucionValue
     ? { id: puntoDistribucionValue, label: puntoDistribucionValue }
     : null;
@@ -1292,6 +1447,14 @@ export default function LogisticsPage() {
         camioneros={camioneros}
         camiones={camiones}
         loading={savingLogistics}
+      />
+
+      <LogisticsBulkConfirmationDialog
+        open={logisticsConfirmation.open}
+        items={logisticsConfirmation.items}
+        loading={savingLogistics}
+        onClose={handleLogisticsConfirmClose}
+        onConfirm={handleLogisticsConfirmApply}
       />
 
       <DeleteConfirmationDialog
