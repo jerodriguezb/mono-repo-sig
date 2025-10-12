@@ -330,7 +330,7 @@ export default function LogisticsPage() {
         (row) => sumDeliveredTotal(row?.items),
         {
           id: 'totalEntregado',
-          header: 'Total entregado',
+          header: 'Precio Total entregado',
           cell: (info) => currencyFormatter.format(info.getValue() ?? 0),
           meta: { align: 'right' },
           enableSorting: true,
