@@ -145,6 +145,12 @@ const STATUS_KEYS = {
   CERRADA: 'cerrada',
 };
 
+const MASS_ASSIGNMENT_TYPES = {
+  ESTADO: 'estado',
+  CAMIONERO: 'camionero',
+  PUNTO_DISTRIBUCION: 'puntoDistribucion',
+};
+
 const statusConfig = [
   { key: STATUS_KEYS.A_PREPARAR, label: 'A preparar', color: 'warning.main' },
   { key: STATUS_KEYS.PREPARADA, label: 'Preparada', color: 'info.main' },
@@ -717,64 +723,103 @@ export default function LogisticsPage() {
     }, 300);
   }, []);
 
-  const handleLogisticsSubmit = async ({ estado, camionero, camion, puntoDistribucion }) => {
-    if (!estado) {
-      showSnackbar('Seleccioná un estado logístico', 'warning');
+  const handleLogisticsSubmit = async (action) => {
+    const comandasToUpdate = logisticsDialog.comandas ?? [];
+    if (comandasToUpdate.length === 0) {
+      showSnackbar('Seleccioná al menos una comanda para actualizar', 'warning');
       return;
     }
 
-    const nextEstado = estadoById.get(estado);
-    if (!nextEstado) {
-      showSnackbar('Seleccioná un estado logístico válido', 'warning');
+    if (!action?.type) {
+      showSnackbar('Seleccioná el campo que querés actualizar', 'warning');
       return;
     }
 
-    const nextOrder = resolveEstadoOrden(nextEstado);
-    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
-      const currentEstado = comanda?.codestado;
-      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
-      if (!RESTRICTED_STATUS_SET.has(currentName)) {
-        return false;
+    const performUpdate = async (payload, successMessage) => {
+      setSavingLogistics(true);
+      try {
+        await Promise.all(
+          comandasToUpdate.map((comanda) => api.put(`/comandas/${comanda._id}`, payload)),
+        );
+        showSnackbar(successMessage);
+        setLogisticsDialog({ open: false, comandas: [] });
+        refreshData();
+      } catch (error) {
+        console.error('Error actualizando logística', error);
+        showSnackbar('No se pudo actualizar la logística', 'error');
+      } finally {
+        setSavingLogistics(false);
       }
+    };
 
-      const currentOrder = resolveEstadoOrden(currentEstado);
-      if (currentOrder === null || nextOrder === null) {
-        return false;
+    switch (action.type) {
+      case MASS_ASSIGNMENT_TYPES.ESTADO: {
+        const estado = action.estado;
+        if (!estado) {
+          showSnackbar('Seleccioná un estado logístico', 'warning');
+          return;
+        }
+
+        const nextEstado = estadoById.get(estado);
+        if (!nextEstado) {
+          showSnackbar('Seleccioná un estado logístico válido', 'warning');
+          return;
+        }
+
+        const nextOrder = resolveEstadoOrden(nextEstado);
+        const invalidTransition = comandasToUpdate.some((comanda) => {
+          const currentEstado = comanda?.codestado;
+          const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
+          if (!RESTRICTED_STATUS_SET.has(currentName)) {
+            return false;
+          }
+
+          const currentOrder = resolveEstadoOrden(currentEstado);
+          if (currentOrder === null || nextOrder === null) {
+            return false;
+          }
+
+          return nextOrder < currentOrder;
+        });
+
+        if (invalidTransition) {
+          showSnackbar(
+            'No se puede realizar la operación porque intenta volver a estados anteriores.',
+            'warning',
+          );
+          return;
+        }
+
+        await performUpdate({ codestado: estado }, 'Estado logístico actualizado');
+        return;
       }
+      case MASS_ASSIGNMENT_TYPES.CAMIONERO: {
+        const camionero = action.camionero;
+        if (!camionero) {
+          showSnackbar('Seleccioná un camionero', 'warning');
+          return;
+        }
 
-      return nextOrder < currentOrder;
-    });
+        await performUpdate({ camionero }, 'Camionero asignado correctamente');
+        return;
+      }
+      case MASS_ASSIGNMENT_TYPES.PUNTO_DISTRIBUCION: {
+        const puntoDistribucion = action.puntoDistribucion?.trim();
+        if (!puntoDistribucion) {
+          showSnackbar('Ingresá un punto de distribución', 'warning');
+          return;
+        }
 
-    if (invalidTransition) {
-      showSnackbar(
-        'No se puede realizar la operación porque intenta volver a estados anteriores.',
-        'warning',
-      );
-      return;
-    }
+        const payload = { puntoDistribucion };
+        if (action.camion) {
+          payload.camion = action.camion;
+        }
 
-    setSavingLogistics(true);
-    try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
-      if (camion) payload.camion = camion;
-
-      await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
-          api.put(`/comandas/${comanda._id}`, payload),
-        ),
-      );
-      showSnackbar('Actualización logística completada');
-      setLogisticsDialog({ open: false, comandas: [] });
-      refreshData();
-    } catch (error) {
-      console.error('Error actualizando logística', error);
-      showSnackbar('No se pudo actualizar la logística', 'error');
-    } finally {
-      setSavingLogistics(false);
+        await performUpdate(payload, 'Punto de distribución actualizado');
+        return;
+      }
+      default:
+        showSnackbar('Seleccioná un campo válido para actualizar', 'warning');
     }
   };
 
