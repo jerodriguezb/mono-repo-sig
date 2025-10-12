@@ -753,21 +753,58 @@ export default function LogisticsPage() {
       return;
     }
 
+    const trimmedPuntoDistribucion = (puntoDistribucion ?? '').trim();
+
+    const pendingUpdates = (logisticsDialog.comandas ?? []).map((comanda) => {
+      const payload = {};
+      let hasChanges = false;
+
+      const currentEstadoId =
+        comanda?.codestado?._id ?? comanda?.codestado?.id ?? comanda?.codestado ?? null;
+      if (estado && String(currentEstadoId ?? '') !== String(estado)) {
+        payload.codestado = estado;
+        hasChanges = true;
+      }
+
+      if (camionero && !comanda?.camionero) {
+        payload.camionero = camionero;
+        hasChanges = true;
+      }
+
+      if (camion && !comanda?.camion) {
+        payload.camion = camion;
+        hasChanges = true;
+      }
+
+      const currentPuntoDistribucion = (comanda?.puntoDistribucion ?? '').trim();
+      if (trimmedPuntoDistribucion && !currentPuntoDistribucion) {
+        payload.puntoDistribucion = trimmedPuntoDistribucion;
+        hasChanges = true;
+      }
+
+      return { comanda, payload, hasChanges };
+    });
+
+    const updatesToApply = pendingUpdates.filter((item) => item.hasChanges);
+
+    if (updatesToApply.length === 0) {
+      showSnackbar(
+        'No hay cambios para aplicar. Todas las comandas mantienen sus valores actuales.',
+        'info',
+      );
+      return;
+    }
+
     setSavingLogistics(true);
     try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
-      if (camion) payload.camion = camion;
-
       await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
+        updatesToApply.map(({ comanda, payload }) =>
           api.put(`/comandas/${comanda._id}`, payload),
         ),
       );
-      showSnackbar('Actualización logística completada');
+      showSnackbar(
+        'Actualización logística completada. Los campos ya asignados se mantuvieron sin cambios.',
+      );
       setLogisticsDialog({ open: false, comandas: [] });
       refreshData();
     } catch (error) {
