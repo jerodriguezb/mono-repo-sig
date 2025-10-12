@@ -37,6 +37,8 @@ import api from '../api/axios';
 import ItemsModal from '../components/logistics/ItemsModal.jsx';
 import LogisticsActionDialog from '../components/logistics/LogisticsActionDialog.jsx';
 import DeleteConfirmationDialog from '../components/logistics/DeleteConfirmationDialog.jsx';
+import LogisticsMassUpdateConfirmationDialog from '../components/logistics/LogisticsMassUpdateConfirmationDialog.jsx';
+import { buildMassUpdatePlan, detectStateRegression } from '../utils/logisticsMassUpdate.js';
 
 const PAGE_SIZE = 20;
 const columnHelper = createColumnHelper();
@@ -176,6 +178,7 @@ export default function LogisticsPage() {
   const [savingLogistics, setSavingLogistics] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [massUpdatePreview, setMassUpdatePreview] = useState({ open: false, plan: null });
   const [statusSummary, setStatusSummary] = useState(() => buildEmptyStatusSummary());
   const [statusLoading, setStatusLoading] = useState(false);
 
@@ -717,57 +720,80 @@ export default function LogisticsPage() {
     }, 300);
   }, []);
 
-  const handleLogisticsSubmit = async ({ estado, camionero, camion, puntoDistribucion }) => {
-    if (!estado) {
-      showSnackbar('Seleccioná un estado logístico', 'warning');
-      return;
-    }
-
-    const nextEstado = estadoById.get(estado);
-    if (!nextEstado) {
-      showSnackbar('Seleccioná un estado logístico válido', 'warning');
-      return;
-    }
-
-    const nextOrder = resolveEstadoOrden(nextEstado);
-    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
-      const currentEstado = comanda?.codestado;
-      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
-      if (!RESTRICTED_STATUS_SET.has(currentName)) {
-        return false;
+  const handleLogisticsSubmit = useCallback(
+    ({ estado, camionero, camion, puntoDistribucion }) => {
+      if (!estado?.id) {
+        showSnackbar('Seleccioná un estado logístico', 'warning');
+        return;
       }
 
-      const currentOrder = resolveEstadoOrden(currentEstado);
-      if (currentOrder === null || nextOrder === null) {
-        return false;
+      const nextEstado = estadoById.get(estado.id);
+      if (!nextEstado) {
+        showSnackbar('Seleccioná un estado logístico válido', 'warning');
+        return;
       }
 
-      return nextOrder < currentOrder;
-    });
+      const invalidTransition = detectStateRegression({
+        comandas: logisticsDialog.comandas ?? [],
+        nextEstado,
+        resolveEstadoOrden,
+        restrictedStatusSet: RESTRICTED_STATUS_SET,
+        normalizeEstadoNombre,
+      });
 
-    if (invalidTransition) {
-      showSnackbar(
-        'No se puede realizar la operación porque intenta volver a estados anteriores.',
-        'warning',
-      );
+      if (invalidTransition) {
+        showSnackbar(
+          'No se puede realizar la operación porque intenta volver a estados anteriores.',
+          'warning',
+        );
+        return;
+      }
+
+      const plan = buildMassUpdatePlan({
+        comandas: logisticsDialog.comandas ?? [],
+        selections: {
+          estado,
+          camionero,
+          camion,
+          puntoDistribucion,
+        },
+      });
+
+      if (!plan.hasChanges) {
+        showSnackbar('No hay cambios para aplicar.', 'info');
+        return;
+      }
+
+      setMassUpdatePreview({ open: true, plan });
+    },
+    [estadoById, logisticsDialog, showSnackbar],
+  );
+
+  const handleCloseLogisticsDialog = useCallback(() => {
+    setLogisticsDialog({ open: false, comandas: [] });
+    setMassUpdatePreview({ open: false, plan: null });
+  }, []);
+
+  const handleCloseMassUpdatePreview = useCallback(() => {
+    setMassUpdatePreview({ open: false, plan: null });
+  }, []);
+
+  const handleConfirmMassUpdate = useCallback(async () => {
+    const updates = (massUpdatePreview.plan?.comandas ?? [])
+      .map((item) => ({ id: item.id, payload: item.payload ?? {} }))
+      .filter((item) => item.id && Object.keys(item.payload).length > 0);
+
+    if (updates.length === 0) {
+      showSnackbar('No hay cambios para aplicar.', 'info');
+      setMassUpdatePreview({ open: false, plan: null });
       return;
     }
 
     setSavingLogistics(true);
     try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
-      if (camion) payload.camion = camion;
-
-      await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
-          api.put(`/comandas/${comanda._id}`, payload),
-        ),
-      );
+      await Promise.all(updates.map((item) => api.put(`/comandas/${item.id}`, item.payload)));
       showSnackbar('Actualización logística completada');
+      setMassUpdatePreview({ open: false, plan: null });
       setLogisticsDialog({ open: false, comandas: [] });
       refreshData();
     } catch (error) {
@@ -776,7 +802,7 @@ export default function LogisticsPage() {
     } finally {
       setSavingLogistics(false);
     }
-  };
+  }, [massUpdatePreview.plan, refreshData, showSnackbar]);
 
   const handleDeleteConfirm = async () => {
     const comandasToDelete = deleteDialog.comandas ?? [];
@@ -1286,11 +1312,19 @@ export default function LogisticsPage() {
       <LogisticsActionDialog
         open={logisticsDialog.open}
         comandas={logisticsDialog.comandas}
-        onClose={() => setLogisticsDialog({ open: false, comandas: [] })}
+        onClose={handleCloseLogisticsDialog}
         onSubmit={handleLogisticsSubmit}
         estados={estados}
         camioneros={camioneros}
         camiones={camiones}
+        loading={savingLogistics}
+      />
+
+      <LogisticsMassUpdateConfirmationDialog
+        open={massUpdatePreview.open}
+        plan={massUpdatePreview.plan}
+        onClose={handleCloseMassUpdatePreview}
+        onConfirm={handleConfirmMassUpdate}
         loading={savingLogistics}
       />
 
