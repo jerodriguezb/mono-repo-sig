@@ -6,13 +6,13 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogContentText,
   DialogTitle,
   Grid,
   List,
   ListItem,
   ListItemText,
   TextField,
+  Typography,
 } from '@mui/material';
 
 const buildOption = (item, getLabel) => ({
@@ -36,6 +36,7 @@ export default function LogisticsActionDialog({
   camioneros = [],
   camiones = [],
   loading = false,
+  mode = 'estado',
 }) {
   const initialValues = useMemo(() => {
     const first = comandas[0] ?? {};
@@ -66,13 +67,13 @@ export default function LogisticsActionDialog({
       setCamionSel(initialValues.camion);
       setPuntoDistribucion(initialValues.puntoDistribucion ?? '');
     }
-  }, [open, initialValues]);
+  }, [open, initialValues, mode]);
 
   useEffect(() => {
-    if (camionSel?.label && !puntoDistribucion) {
+    if (mode === 'puntoDistribucion' && camionSel?.label && !puntoDistribucion) {
       setPuntoDistribucion(camionSel.label);
     }
-  }, [camionSel, puntoDistribucion]);
+  }, [camionSel, puntoDistribucion, mode]);
 
   const estadoOptions = useMemo(() => mapOptions(estados, (e) => e.estado ?? '—'), [estados]);
   const camioneroOptions = useMemo(
@@ -84,73 +85,133 @@ export default function LogisticsActionDialog({
   const handleSubmit = (evt) => {
     evt?.preventDefault?.();
     onSubmit?.({
+      mode,
       estado: estadoSel?.id ?? null,
       camionero: camioneroSel?.id ?? null,
       camion: camionSel?.id ?? null,
-      puntoDistribucion: puntoDistribucion?.trim() || null,
+      puntoDistribucion: puntoDistribucion?.trim() ?? '',
     });
+  };
+
+  const modeLabels = {
+    estado: 'Estado logístico',
+    camionero: 'Camionero / Chofer',
+    puntoDistribucion: 'Punto de distribución',
+  };
+
+  const modeDescriptions = {
+    estado: 'Seleccioná el nuevo estado logístico que se aplicará a todas las comandas seleccionadas.',
+    camionero: 'Elegí el camionero o chofer que quedará asignado en forma masiva.',
+    puntoDistribucion:
+      'Indicá el punto de distribución o seleccioná un camión para completar la asignación.',
+  };
+
+  const currentLabel = modeLabels[mode] ?? 'Campo logístico';
+  const currentDescription = modeDescriptions[mode] ?? 'Seleccioná el valor que querés asignar.';
+
+  const trimmedPoint = (puntoDistribucion ?? '').trim();
+  const disableSubmit =
+    !mode ||
+    (mode === 'estado' && !estadoSel) ||
+    (mode === 'camionero' && !camioneroSel) ||
+    (mode === 'puntoDistribucion' && !trimmedPoint && !camionSel);
+
+  const resolveComandaSecondary = (comanda) => {
+    if (mode === 'camionero') {
+      const chofer = comanda?.camionero;
+      const nombre = chofer ? `${chofer?.nombres ?? ''} ${chofer?.apellidos ?? ''}`.trim() : '';
+      return `Camionero actual: ${nombre || 'Sin asignar'}`;
+    }
+
+    if (mode === 'puntoDistribucion') {
+      const puntoActual = comanda?.puntoDistribucion ?? comanda?.camion?.camion ?? '';
+      return `Punto actual: ${puntoActual || 'Sin asignar'}`;
+    }
+
+    return `Estado actual: ${comanda?.codestado?.estado ?? 'Sin estado asignado'}`;
   };
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      <DialogTitle>Asignar logística</DialogTitle>
+      <DialogTitle>Asignación masiva</DialogTitle>
       <DialogContent dividers>
-        <DialogContentText sx={{ mb: 2 }}>
-          Confirmá el estado logístico y las asignaciones para las siguientes comandas.
-        </DialogContentText>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="overline" color="text.secondary">
+            Campo seleccionado
+          </Typography>
+          <Typography variant="h6" sx={{ mb: 0.5 }}>
+            {currentLabel}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {currentDescription}
+          </Typography>
+        </Box>
         <List dense sx={{ mb: 3, bgcolor: 'background.paper', borderRadius: 1 }}>
           {comandas.map((comanda) => (
             <ListItem key={comanda?._id ?? comanda?.nrodecomanda}>
               <ListItemText
                 primary={`#${comanda?.nrodecomanda ?? 'N/D'} — ${comanda?.codcli?.razonsocial ?? 'Cliente sin nombre'}`}
-                secondary={`Estado actual: ${comanda?.codestado?.estado ?? 'Sin estado asignado'}`}
+                secondary={resolveComandaSecondary(comanda)}
               />
             </ListItem>
           ))}
         </List>
         <Box component="form" onSubmit={handleSubmit}>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={4}>
-              <Autocomplete
-                value={estadoSel}
-                options={estadoOptions}
-                onChange={(_, value) => setEstadoSel(value)}
-                renderInput={(params) => <TextField {...params} label="Estado logístico" required />}
-                isOptionEqualToValue={(opt, val) => opt.id === val.id}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Autocomplete
-                value={camioneroSel}
-                options={camioneroOptions}
-                onChange={(_, value) => setCamioneroSel(value)}
-                renderInput={(params) => (
-                  <TextField {...params} label="Camionero / Chofer" placeholder="Buscar" />
-                )}
-                isOptionEqualToValue={(opt, val) => opt.id === val.id}
-              />
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Autocomplete
-                value={camionSel}
-                options={camionOptions}
-                onChange={(_, value) => {
-                  setCamionSel(value);
-                  if (value?.label) setPuntoDistribucion(value.label);
-                }}
-                renderInput={(params) => <TextField {...params} label="Punto de distribución" />}
-                isOptionEqualToValue={(opt, val) => opt.id === val.id}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Detalle del punto de distribución"
-                value={puntoDistribucion}
-                onChange={(event) => setPuntoDistribucion(event.target.value)}
-                placeholder="Depósito, centro logístico, etc."
-              />
-            </Grid>
+            {mode === 'estado' && (
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  value={estadoSel}
+                  options={estadoOptions}
+                  onChange={(_, value) => setEstadoSel(value)}
+                  renderInput={(params) => <TextField {...params} label="Estado logístico" required />}
+                  isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                />
+              </Grid>
+            )}
+
+            {mode === 'camionero' && (
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  value={camioneroSel}
+                  options={camioneroOptions}
+                  onChange={(_, value) => setCamioneroSel(value)}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Camionero / Chofer" placeholder="Buscar" required />
+                  )}
+                  isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                />
+              </Grid>
+            )}
+
+            {mode === 'puntoDistribucion' && (
+              <>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    value={camionSel}
+                    options={camionOptions}
+                    onChange={(_, value) => {
+                      setCamionSel(value);
+                      if (value?.label) setPuntoDistribucion(value.label);
+                    }}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Camión (opcional)" placeholder="Seleccionar camión" />
+                    )}
+                    isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Punto de distribución"
+                    value={puntoDistribucion}
+                    onChange={(event) => setPuntoDistribucion(event.target.value)}
+                    placeholder="Depósito, centro logístico, etc."
+                    required={!camionSel}
+                  />
+                </Grid>
+              </>
+            )}
           </Grid>
         </Box>
       </DialogContent>
@@ -158,7 +219,7 @@ export default function LogisticsActionDialog({
         <Button onClick={onClose} color="inherit" disabled={loading}>
           Cancelar
         </Button>
-        <Button onClick={handleSubmit} variant="contained" disabled={loading}>
+        <Button onClick={handleSubmit} variant="contained" disabled={loading || disableSubmit}>
           {loading ? 'Guardando…' : 'Confirmar'}
         </Button>
       </DialogActions>

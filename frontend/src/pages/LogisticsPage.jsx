@@ -9,6 +9,8 @@ import {
   IconButton,
   LinearProgress,
   Link,
+  Menu,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -171,7 +173,8 @@ export default function LogisticsPage() {
   const [sorting, setSorting] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
   const [itemsModal, setItemsModal] = useState({ open: false, comanda: null });
-  const [logisticsDialog, setLogisticsDialog] = useState({ open: false, comandas: [] });
+  const [logisticsDialog, setLogisticsDialog] = useState({ open: false, comandas: [], mode: null });
+  const [logisticsMenu, setLogisticsMenu] = useState({ anchorEl: null, comandas: [] });
   const [deleteDialog, setDeleteDialog] = useState({ open: false, comandas: [] });
   const [savingLogistics, setSavingLogistics] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -398,7 +401,9 @@ export default function LogisticsPage() {
             <Tooltip title="Gestionar logística">
               <IconButton
                 color="primary"
-                onClick={() => setLogisticsDialog({ open: true, comandas: [row.original] })}
+                onClick={(event) =>
+                  setLogisticsMenu({ anchorEl: event.currentTarget, comandas: [row.original] })
+                }
               >
                 <LocalShippingIcon />
               </IconButton>
@@ -717,65 +722,117 @@ export default function LogisticsPage() {
     }, 300);
   }, []);
 
-  const handleLogisticsSubmit = async ({ estado, camionero, camion, puntoDistribucion }) => {
-    if (!estado) {
-      showSnackbar('Seleccioná un estado logístico', 'warning');
+  const handleLogisticsSubmit = async ({ mode, estado, camionero, camion, puntoDistribucion }) => {
+    const selectedComandas = logisticsDialog.comandas ?? [];
+    if (!mode || selectedComandas.length === 0) {
+      showSnackbar('Seleccioná una opción válida para asignar', 'warning');
       return;
     }
 
-    const nextEstado = estadoById.get(estado);
-    if (!nextEstado) {
-      showSnackbar('Seleccioná un estado logístico válido', 'warning');
-      return;
-    }
-
-    const nextOrder = resolveEstadoOrden(nextEstado);
-    const invalidTransition = (logisticsDialog.comandas ?? []).some((comanda) => {
-      const currentEstado = comanda?.codestado;
-      const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
-      if (!RESTRICTED_STATUS_SET.has(currentName)) {
-        return false;
+    if (mode === 'estado') {
+      if (!estado) {
+        showSnackbar('Seleccioná un estado logístico', 'warning');
+        return;
       }
 
-      const currentOrder = resolveEstadoOrden(currentEstado);
-      if (currentOrder === null || nextOrder === null) {
-        return false;
+      const nextEstado = estadoById.get(estado);
+      if (!nextEstado) {
+        showSnackbar('Seleccioná un estado logístico válido', 'warning');
+        return;
       }
 
-      return nextOrder < currentOrder;
-    });
+      const nextOrder = resolveEstadoOrden(nextEstado);
+      const invalidTransition = selectedComandas.some((comanda) => {
+        const currentEstado = comanda?.codestado;
+        const currentName = normalizeEstadoNombre(currentEstado?.estado ?? '');
+        if (!RESTRICTED_STATUS_SET.has(currentName)) {
+          return false;
+        }
 
-    if (invalidTransition) {
-      showSnackbar(
-        'No se puede realizar la operación porque intenta volver a estados anteriores.',
-        'warning',
-      );
+        const currentOrder = resolveEstadoOrden(currentEstado);
+        if (currentOrder === null || nextOrder === null) {
+          return false;
+        }
+
+        return nextOrder < currentOrder;
+      });
+
+      if (invalidTransition) {
+        showSnackbar(
+          'No se puede realizar la operación porque intenta volver a estados anteriores.',
+          'warning',
+        );
+        return;
+      }
+
+      setSavingLogistics(true);
+      try {
+        await Promise.all(
+          selectedComandas.map((comanda) => api.put(`/comandas/${comanda._id}`, { codestado: estado })),
+        );
+        showSnackbar('Estado logístico actualizado correctamente');
+        setLogisticsDialog({ open: false, comandas: [], mode: null });
+        refreshData();
+      } catch (error) {
+        console.error('Error actualizando logística', error);
+        showSnackbar('No se pudo actualizar la logística', 'error');
+      } finally {
+        setSavingLogistics(false);
+      }
       return;
     }
 
-    setSavingLogistics(true);
-    try {
-      const payload = {
-        codestado: estado,
-        puntoDistribucion: puntoDistribucion ?? '',
-      };
-      if (camionero) payload.camionero = camionero;
+    if (mode === 'camionero') {
+      if (!camionero) {
+        showSnackbar('Seleccioná un camionero o chofer', 'warning');
+        return;
+      }
+
+      setSavingLogistics(true);
+      try {
+        await Promise.all(
+          selectedComandas.map((comanda) => api.put(`/comandas/${comanda._id}`, { camionero })),
+        );
+        showSnackbar('Camionero asignado correctamente');
+        setLogisticsDialog({ open: false, comandas: [], mode: null });
+        refreshData();
+      } catch (error) {
+        console.error('Error asignando camionero', error);
+        showSnackbar('No se pudo asignar el camionero', 'error');
+      } finally {
+        setSavingLogistics(false);
+      }
+      return;
+    }
+
+    if (mode === 'puntoDistribucion') {
+      const trimmedPoint = (puntoDistribucion ?? '').trim();
+      if (!trimmedPoint && !camion) {
+        showSnackbar('Ingresá un punto de distribución', 'warning');
+        return;
+      }
+
+      const payload = { puntoDistribucion: trimmedPoint };
       if (camion) payload.camion = camion;
 
-      await Promise.all(
-        (logisticsDialog.comandas ?? []).map((comanda) =>
-          api.put(`/comandas/${comanda._id}`, payload),
-        ),
-      );
-      showSnackbar('Actualización logística completada');
-      setLogisticsDialog({ open: false, comandas: [] });
-      refreshData();
-    } catch (error) {
-      console.error('Error actualizando logística', error);
-      showSnackbar('No se pudo actualizar la logística', 'error');
-    } finally {
-      setSavingLogistics(false);
+      setSavingLogistics(true);
+      try {
+        await Promise.all(
+          selectedComandas.map((comanda) => api.put(`/comandas/${comanda._id}`, payload)),
+        );
+        showSnackbar('Punto de distribución actualizado correctamente');
+        setLogisticsDialog({ open: false, comandas: [], mode: null });
+        refreshData();
+      } catch (error) {
+        console.error('Error actualizando el punto de distribución', error);
+        showSnackbar('No se pudo actualizar el punto de distribución', 'error');
+      } finally {
+        setSavingLogistics(false);
+      }
+      return;
     }
+
+    showSnackbar('Seleccioná una opción válida para asignar', 'warning');
   };
 
   const handleDeleteConfirm = async () => {
@@ -1163,19 +1220,67 @@ export default function LogisticsPage() {
 
       {selectedComandas.length > 0 && (
         <Paper sx={{ p: 2, mb: 2, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider' }}>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center" justifyContent="space-between">
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            justifyContent="space-between"
+          >
             <Typography variant="subtitle1">
               {selectedComandas.length} comandas seleccionadas
             </Typography>
-            <Stack direction="row" spacing={1}>
-              <Button
-                startIcon={<LocalShippingIcon />}
-                variant="contained"
-                color="primary"
-                onClick={() => setLogisticsDialog({ open: true, comandas: selectedComandas })}
-              >
-                Asignar logística
-              </Button>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                Asignar campo:
+              </Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', sm: 'auto' } }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() =>
+                    setLogisticsDialog({
+                      open: true,
+                      comandas: selectedComandas,
+                      mode: 'estado',
+                    })
+                  }
+                  fullWidth
+                >
+                  Estado
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() =>
+                    setLogisticsDialog({
+                      open: true,
+                      comandas: selectedComandas,
+                      mode: 'camionero',
+                    })
+                  }
+                  fullWidth
+                >
+                  Camionero
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() =>
+                    setLogisticsDialog({
+                      open: true,
+                      comandas: selectedComandas,
+                      mode: 'puntoDistribucion',
+                    })
+                  }
+                  fullWidth
+                >
+                  Punto de distribución
+                </Button>
+              </Stack>
             </Stack>
           </Stack>
         </Paper>
@@ -1286,13 +1391,47 @@ export default function LogisticsPage() {
       <LogisticsActionDialog
         open={logisticsDialog.open}
         comandas={logisticsDialog.comandas}
-        onClose={() => setLogisticsDialog({ open: false, comandas: [] })}
+        mode={logisticsDialog.mode}
+        onClose={() => setLogisticsDialog({ open: false, comandas: [], mode: null })}
         onSubmit={handleLogisticsSubmit}
         estados={estados}
         camioneros={camioneros}
         camiones={camiones}
         loading={savingLogistics}
       />
+
+      <Menu
+        anchorEl={logisticsMenu.anchorEl}
+        open={Boolean(logisticsMenu.anchorEl)}
+        onClose={() => setLogisticsMenu({ anchorEl: null, comandas: [] })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <MenuItem
+          onClick={() => {
+            setLogisticsMenu({ anchorEl: null, comandas: [] });
+            setLogisticsDialog({ open: true, comandas: logisticsMenu.comandas, mode: 'estado' });
+          }}
+        >
+          Asignar estado
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setLogisticsMenu({ anchorEl: null, comandas: [] });
+            setLogisticsDialog({ open: true, comandas: logisticsMenu.comandas, mode: 'camionero' });
+          }}
+        >
+          Asignar camionero
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setLogisticsMenu({ anchorEl: null, comandas: [] });
+            setLogisticsDialog({ open: true, comandas: logisticsMenu.comandas, mode: 'puntoDistribucion' });
+          }}
+        >
+          Asignar punto de distribución
+        </MenuItem>
+      </Menu>
 
       <DeleteConfirmationDialog
         open={deleteDialog.open}
