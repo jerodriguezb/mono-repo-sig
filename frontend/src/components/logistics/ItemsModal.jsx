@@ -67,7 +67,7 @@ export default function ItemsModal({ open, onClose, comanda }) {
                 const cantidadSolicitada = Number(item?.cantidad ?? 0);
                 const cantidadEntregada = Number(item?.cantidadentregada ?? 0);
                 const precio = Number(item?.monto ?? 0);
-                const subtotal = cantidadEntregada * precio;
+                const subtotal = cantidadSolicitada * precio;
                 return (
                   <TableRow key={item?._id ?? `${descripcion}-${lista}`}>
                     <TableCell>{descripcion}</TableCell>
