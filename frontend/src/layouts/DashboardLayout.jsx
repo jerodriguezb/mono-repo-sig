@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -32,29 +32,36 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
+import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { getCurrentUserFromStorage } from '../utils/auth.js';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
-  { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
-  { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
-  { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
+  { label: 'Clientes', path: '/clients', icon: <GroupIcon /> },
+  { label: 'Usuarios', path: '/users', icon: <PeopleAltIcon /> },
+  { label: 'Productos', path: '/products', icon: <Inventory2Icon /> },
   { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
-
   { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
-
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
-  { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Logística', path: '/logistics', icon: <LocalShippingIcon /> },
+  {
+    label: 'Distribución',
+    path: '/distribucion',
+    icon: <DeliveryDiningIcon />,
+    roles: ['USER_CAM'],
+  },
 ];
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [nombreUsuario, setNombreUsuario] = useState('');
+  const [userRole, setUserRole] = useState(null);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -65,7 +72,17 @@ export default function DashboardLayout({ themeName, setThemeName }) {
 
     const storedUser = localStorage.getItem('usuario');
     if (storedUser) setNombreUsuario(JSON.parse(storedUser));
+    const decodedUser = getCurrentUserFromStorage();
+    if (decodedUser?.role) setUserRole(decodedUser.role);
   }, [navigate]);
+
+  const visibleNavItems = useMemo(() =>
+    navItems.filter((item) => {
+      if (!item.roles || item.roles.length === 0) return true;
+      if (!userRole) return false;
+      return item.roles.includes(userRole);
+    }),
+  [userRole]);
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
@@ -114,7 +131,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {visibleNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')

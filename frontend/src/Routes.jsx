@@ -6,6 +6,7 @@ import ComandasPage from './pages/ComandasPage.jsx';
 import DocumentsPage from './pages/DocumentsPage.jsx';
 import LogisticsPage from './pages/LogisticsPage.jsx';
 import OrdersPage from './pages/OrdersPage.jsx';
+import DistribucionPage from './pages/DistribucionPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
@@ -29,6 +30,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/ordenes" element={<OrdersPage />} />
         <Route path="/historial-comandas" element={<HistorialComandas />} />
         <Route path="/logistics" element={<LogisticsPage />} />
+        <Route path="/distribucion" element={<DistribucionPage />} />
         {/* Otras rutas aquí */}
       </Route>
     </Routes>
