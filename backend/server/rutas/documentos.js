@@ -658,6 +658,27 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   res.status(201).json(responsePayload);
 }));
 
+router.get('/documentos/siguiente', [verificaToken], asyncHandler(async (req, res) => {
+  const tipo = normalizeTipo(req.query.tipo);
+  if (!tipo) return badRequest(res, 'Tipo de documento inválido. Use R, NR o AJ.');
+
+  const prefijo = normalizePrefijoInput(req.query.prefijo);
+  if (prefijo === null) return badRequest(res, 'El prefijo debe ser numérico de hasta 4 dígitos.');
+
+  const resolvedPrefijo = prefijo || '0001';
+
+  const lastDocumento = await Documento.findOne({ tipo, prefijo: resolvedPrefijo })
+    .sort({ secuencia: -1 })
+    .select('secuencia')
+    .lean()
+    .exec();
+
+  const nextSequence = Math.max(1, Number(lastDocumento?.secuencia ?? 0) + 1);
+  const numero = `${resolvedPrefijo}${tipo}${padSecuencia(nextSequence)}`;
+
+  res.json({ ok: true, nextSequence, numero, prefijo: resolvedPrefijo, tipo });
+}));
+
 // -----------------------------------------------------------------------------
 // 2. LISTAR DOCUMENTOS ----------------------------------------------------------
 // -----------------------------------------------------------------------------
