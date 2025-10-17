@@ -3,16 +3,9 @@ import {
   Alert,
   Box,
   Button,
-  Checkbox,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
+  Grid,
   IconButton,
   LinearProgress,
-  Menu,
-  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -22,32 +15,15 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  TableSortLabel,
   TextField,
   Typography,
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
-import dayjs from 'dayjs';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
-
-const columnHelper = createColumnHelper();
 
 const quantityFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 0,
@@ -110,15 +86,10 @@ export default function DistribucionPage() {
   const [estadoDistribucionId, setEstadoDistribucionId] = useState(null);
   const [rows, setRows] = useState([]);
   const [comandasById, setComandasById] = useState({});
-  const [columnFilters, setColumnFilters] = useState([]);
-  const [sorting, setSorting] = useState([]);
-  const [rowSelection, setRowSelection] = useState({});
   const [editedRows, setEditedRows] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
-  const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -169,43 +140,47 @@ export default function DistribucionPage() {
   const fetchEstadoDistribucion = useCallback(async () => {
     const { data } = await api.get('/estados');
     const estados = Array.isArray(data) ? data : data?.estados ?? [];
-    const target = estados.find((estado) => normalizeText(estado?.estado ?? estado?.descripcion ?? '') === 'en distribucion');
+    const target = estados.find(
+      (estado) => normalizeText(estado?.estado ?? estado?.descripcion ?? '') === 'en distribucion',
+    );
     if (!target?._id) {
       throw new Error('No se encontró el estado "En distribución".');
     }
     return target._id;
   }, []);
 
-  const fetchComandas = useCallback(async (estadoId, camioneroId) => {
-    if (!estadoId || !camioneroId) return;
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await api.get('/comandas', {
-        params: { estado: estadoId, camionero: camioneroId },
-      });
-      const comandas = data?.comandas ?? [];
-      const mapped = {};
-      comandas.forEach((comanda) => {
-        if (comanda?._id) mapped[comanda._id] = comanda;
-      });
-      setComandasById(mapped);
-      setRows(transformComandas(comandas));
-      setEditedRows({});
-      setRowSelection({});
-    } catch (requestError) {
-      console.error('Error obteniendo comandas en distribución', requestError);
-      const message =
-        requestError?.response?.data?.err?.message ||
-        requestError?.response?.data?.message ||
-        'No se pudieron obtener las comandas en distribución.';
-      setError(message);
-      setRows([]);
-      setEditedRows({});
-    } finally {
-      setLoading(false);
-    }
-  }, [transformComandas]);
+  const fetchComandas = useCallback(
+    async (estadoId, camioneroId) => {
+      if (!estadoId || !camioneroId) return;
+      setLoading(true);
+      setError('');
+      try {
+        const { data } = await api.get('/comandas', {
+          params: { estado: estadoId, camionero: camioneroId },
+        });
+        const comandas = data?.comandas ?? [];
+        const mapped = {};
+        comandas.forEach((comanda) => {
+          if (comanda?._id) mapped[comanda._id] = comanda;
+        });
+        setComandasById(mapped);
+        setRows(transformComandas(comandas));
+        setEditedRows({});
+      } catch (requestError) {
+        console.error('Error obteniendo comandas en distribución', requestError);
+        const message =
+          requestError?.response?.data?.err?.message ||
+          requestError?.response?.data?.message ||
+          'No se pudieron obtener las comandas en distribución.';
+        setError(message);
+        setRows([]);
+        setEditedRows({});
+      } finally {
+        setLoading(false);
+      }
+    },
+    [transformComandas],
+  );
 
   useEffect(() => {
     if (authState.checking) return;
@@ -247,84 +222,33 @@ export default function DistribucionPage() {
     setSnackbar((prev) => ({ ...prev, open: false }));
   };
 
-  const applyDeliveredValue = useCallback((rowUpdates) => {
-    if (!rowUpdates || rowUpdates.size === 0) return;
-
-    setRows((prev) =>
-      prev.map((row) => {
-        const update = rowUpdates.get(row.rowId);
-        if (!update) return row;
-        const cantidad = Number(update.cantidad ?? 0);
+  const handleCantidadEntregadaChange = useCallback((row, rawValue) => {
+    const cantidad = clampDelivered(rawValue, row.cantidad);
+    setRows((prevRows) =>
+      prevRows.map((current) => {
+        if (current.rowId !== row.rowId) return current;
+        const totalEntregado = cantidad * current.monto;
         return {
-          ...row,
+          ...current,
           cantidadEntregada: cantidad,
-          totalEntregado: cantidad * row.monto,
+          totalEntregado,
         };
       }),
     );
-
     setEditedRows((prev) => {
       const next = { ...prev };
-      rowUpdates.forEach((update, rowId) => {
-        const baseRow = rows.find((row) => row.rowId === rowId);
-        if (!baseRow) return;
-        const cantidad = Number(update.cantidad ?? 0);
-        if (cantidad === baseRow.cantidadEntregadaOriginal) {
-          delete next[rowId];
-        } else {
-          next[rowId] = {
-            comandaId: baseRow.comandaId,
-            itemId: baseRow.itemId,
-            cantidadentregada: cantidad,
-          };
-        }
-      });
+      if (cantidad === row.cantidadEntregadaOriginal) {
+        delete next[row.rowId];
+      } else {
+        next[row.rowId] = {
+          comandaId: row.comandaId,
+          itemId: row.itemId,
+          cantidadentregada: cantidad,
+        };
+      }
       return next;
     });
-  }, [rows]);
-
-  const handleCantidadEntregadaChange = useCallback((row, rawValue) => {
-    const cantidad = clampDelivered(rawValue, row.cantidad);
-    const updates = new Map([[row.rowId, { cantidad }]]);
-    applyDeliveredValue(updates);
-  }, [applyDeliveredValue]);
-
-  const handleMassiveDialogOpen = () => {
-    if (table.getSelectedRowModel().rows.length === 0) {
-      showSnackbar('Selecciona al menos una fila para aplicar la entrega masiva.', 'info');
-      return;
-    }
-    setMassDialog({ open: true, value: '', error: '' });
-  };
-
-  const handleMassDialogClose = () => {
-    setMassDialog({ open: false, value: '', error: '' });
-  };
-
-  const handleMassDialogConfirm = () => {
-    const selectedRows = table.getSelectedRowModel().rows;
-    if (selectedRows.length === 0) {
-      setMassDialog({ open: false, value: '', error: '' });
-      return;
-    }
-
-    const numeric = Number(massDialog.value);
-    if (Number.isNaN(numeric) || numeric < 0) {
-      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un valor válido (≥ 0).' }));
-      return;
-    }
-
-    const updates = new Map();
-    selectedRows.forEach((tableRow) => {
-      const row = tableRow.original;
-      const cantidad = clampDelivered(numeric, row.cantidad);
-      updates.set(row.rowId, { cantidad });
-    });
-
-    applyDeliveredValue(updates);
-    setMassDialog({ open: false, value: '', error: '' });
-    showSnackbar('Entrega masiva aplicada correctamente. Recuerda guardar los cambios.', 'success');
-  };
+  }, []);
 
   const handleSaveChanges = async () => {
     const entries = Object.entries(editedRows);
@@ -343,9 +267,7 @@ export default function DistribucionPage() {
       updatesByComanda.get(comandaKey).set(String(value.itemId), Number(value.cantidadentregada ?? 0));
     });
 
-    const rowLookup = new Map(
-      rows.map((row) => [`${row.comandaId ?? ''}__${row.itemId ?? ''}`, row]),
-    );
+    const rowLookup = new Map(rows.map((row) => [`${row.comandaId ?? ''}__${row.itemId ?? ''}`, row]));
 
     setSaving(true);
 
@@ -402,564 +324,273 @@ export default function DistribucionPage() {
     }
   };
 
-  const filterFns = useMemo(
-    () => ({
-      includesString: (row, columnId, value) => {
-        if (!value && value !== 0) return true;
-        const rowValue = row.getValue(columnId);
-        return String(rowValue ?? '')
-          .toLowerCase()
-          .includes(String(value ?? '').toLowerCase());
-      },
-    }),
-    [],
-  );
+  const totals = useMemo(() => {
+    let totalCantidadEntregada = 0;
+    let totalMontoEntregado = 0;
+    rows.forEach((row) => {
+      totalCantidadEntregada += Number(row.cantidadEntregada ?? 0);
+      totalMontoEntregado += Number(row.totalEntregado ?? 0);
+    });
+    return {
+      registros: rows.length,
+      cantidad: totalCantidadEntregada,
+      monto: totalMontoEntregado,
+    };
+  }, [rows]);
 
-  const columns = useMemo(
-    () => [
-      columnHelper.display({
-        id: 'select',
-        header: ({ table: tbl }) => (
-          <Checkbox
-            checked={tbl.getIsAllPageRowsSelected()}
-            indeterminate={tbl.getIsSomePageRowsSelected()}
-            onChange={tbl.getToggleAllPageRowsSelectedHandler()}
-            inputProps={{ 'aria-label': 'Seleccionar todas las filas' }}
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            indeterminate={row.getIsSomeSelected()}
-            disabled={!row.getCanSelect()}
-            onChange={row.getToggleSelectedHandler()}
-            inputProps={{ 'aria-label': `Seleccionar comanda ${row.original.nrodecomanda}` }}
-          />
-        ),
-        enableSorting: false,
-        enableColumnFilter: false,
-        meta: { align: 'center' },
-      }),
-      columnHelper.accessor('nrodecomanda', {
-        header: 'Com',
-        cell: (info) => info.getValue() ?? '—',
-        filterFn: 'includesString',
-        meta: { filterLabel: 'comanda', align: 'right' },
-      }),
-      columnHelper.accessor('clienteNombre', {
-        header: 'Cliente',
-        cell: (info) => info.getValue() ?? '—',
-        filterFn: 'includesString',
-        meta: { filterLabel: 'cliente' },
-      }),
-      columnHelper.accessor('productoDescripcion', {
-        header: 'Producto',
-        cell: (info) => info.getValue() ?? '—',
-        filterFn: 'includesString',
-        meta: { filterLabel: 'producto' },
-      }),
-      columnHelper.accessor('cantidad', {
-        header: 'Cant',
-        cell: (info) => quantityFormatter.format(Number(info.getValue() ?? 0)),
-        filterFn: 'includesString',
-        meta: { filterLabel: 'cantidad', align: 'right' },
-      }),
-      columnHelper.accessor('monto', {
-        header: 'Precio unitario',
-        cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
-        filterFn: 'includesString',
-        meta: { filterLabel: 'precio', align: 'right' },
-      }),
-      columnHelper.accessor('total', {
-        header: 'Total',
-        cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
-        filterFn: 'includesString',
-        meta: { filterLabel: 'total', align: 'right' },
-      }),
-      columnHelper.accessor('cantidadEntregada', {
-        header: 'Cant entreg',
-        cell: (info) => {
-          const row = info.row.original;
-          return (
-            <TextField
-              value={row.cantidadEntregada}
-              type="number"
-              size="small"
-              onChange={(event) => handleCantidadEntregadaChange(row, event.target.value)}
-              inputProps={{ min: 0, max: row.cantidad, step: '0.01' }}
-              sx={{ maxWidth: 120 }}
-            />
-          );
-        },
-        filterFn: 'includesString',
-        meta: { filterLabel: 'cantidad entregada', align: 'right' },
-      }),
-      columnHelper.accessor('totalEntregado', {
-        header: 'Total entreg',
-        cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
-        filterFn: 'includesString',
-        meta: { filterLabel: 'total entregado', align: 'right' },
-      }),
-    ],
-    [handleCantidadEntregadaChange],
-  );
-
-  const table = useReactTable({
-    data: rows,
-    columns,
-    state: {
-      columnFilters,
-      sorting,
-      rowSelection,
-    },
-    onColumnFiltersChange: setColumnFilters,
-    onSortingChange: setSorting,
-    onRowSelectionChange: setRowSelection,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    enableRowSelection: true,
-    filterFns,
-    getRowId: (row) => row.rowId,
-  });
-
-  const renderColumnFilter = (column) => {
-    if (!column.getCanFilter()) return null;
-    const value = column.getFilterValue() ?? '';
-    return (
-      <TextField
-        size="small"
-        fullWidth
-        value={value}
-        onChange={(event) => {
-          const newValue = event.target.value;
-          column.setFilterValue(newValue || undefined);
-        }}
-        placeholder={`Buscar ${column.columnDef.meta?.filterLabel ?? ''}`.trim()}
-        InputProps={{ sx: { fontSize: 13 } }}
-      />
-    );
-  };
-
-  const selectedRows = table.getSelectedRowModel().rows;
   const hasEditedRows = Object.keys(editedRows).length > 0;
-  const totalRows = table.getRowModel().rows;
-  const totalRegistros = totalRows.length;
-  let totalCantidadEntregada = 0;
-  let totalMontoEntregado = 0;
-  totalRows.forEach((row) => {
-    totalCantidadEntregada += Number(row.original?.cantidadEntregada ?? 0);
-    totalMontoEntregado += Number(row.original?.totalEntregado ?? 0);
-  });
+  const isUnauthorized = !authState.checking && authState.role !== 'USER_CAM';
 
-  const handleExportMenuOpen = (event) => {
-    setExportMenuAnchor(event.currentTarget);
-  };
-
-  const handleExportMenuClose = () => {
-    setExportMenuAnchor(null);
-  };
-
-  const buildExportMatrix = () => {
-    const headers = [
-      'Com',
-      'Cliente',
-      'Producto',
-      'Cant',
-      'Precio unitario',
-      'Total',
-      'Cant entreg',
-      'Total entreg',
-    ];
-
-    const body = totalRows.map((row) => {
-      const original = row.original;
-      return [
-        original.nrodecomanda ?? '',
-        original.clienteNombre ?? '',
-        original.productoDescripcion ?? '',
-        quantityFormatter.format(Number(original.cantidad ?? 0)),
-        decimalFormatter.format(Number(original.monto ?? 0)),
-        decimalFormatter.format(Number(original.total ?? 0)),
-        quantityFormatter.format(Number(original.cantidadEntregada ?? 0)),
-        decimalFormatter.format(Number(original.totalEntregado ?? 0)),
-      ];
-    });
-
-    return { headers, body };
-  };
-
-  const handleExportCsv = () => {
-    const { headers, body } = buildExportMatrix();
-    const content = [headers, ...body]
-      .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(';'))
-      .join('\n');
-
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `distribucion_${dayjs().format('YYYYMMDD_HHmmss')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    handleExportMenuClose();
-  };
-
-  const handleExportExcel = () => {
-    const { headers, body } = buildExportMatrix();
-    const tableHtml = `\uFEFF<table><thead><tr>${headers
-      .map((header) => `<th>${header}</th>`)
-      .join('')}</tr></thead><tbody>${body
-      .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`)
-      .join('')}</tbody></table>`;
-
-    const blob = new Blob([tableHtml], {
-      type: 'application/vnd.ms-excel;charset=utf-8;',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `distribucion_${dayjs().format('YYYYMMDD_HHmmss')}.xls`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    handleExportMenuClose();
-  };
-
-  const handleExportPdf = () => {
-    const { headers, body } = buildExportMatrix();
-    const doc = new jsPDF({ orientation: 'landscape' });
-
-    doc.setFontSize(18);
-    doc.text('En distribución', 14, 18);
-    doc.setFontSize(11);
-    doc.text(`Registros: ${totalRegistros}`, 14, 26);
-    doc.text(
-      `Total bultos entregados: ${quantityFormatter.format(totalCantidadEntregada)}`,
-      14,
-      33,
-    );
-
-    autoTable(doc, {
-      startY: 40,
-      head: [headers],
-      body,
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [21, 101, 192] },
-    });
-
-    doc.save(`distribucion_${dayjs().format('YYYYMMDD_HHmmss')}.pdf`);
-  };
-
-  if (authState.checking) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>
-        <LinearProgress sx={{ width: { xs: '100%', sm: '60%' } }} />
-      </Box>
-    );
-  }
-
-  if (authState.role !== 'USER_CAM') {
-    return (
-      <Alert severity="warning">
-        Acceso restringido. Esta sección está disponible únicamente para usuarios con rol
-        USER_CAM.
-      </Alert>
-    );
-  }
-
-  const selectedCount = selectedRows.length;
-  const massPreviewValue = Number(massDialog.value);
-  const hasMassValue = !Number.isNaN(massPreviewValue);
-
-  return (
-    <Box sx={{ px: { xs: 1, sm: 2 }, pb: 4 }}>
-      <Box
-        sx={{
-          mb: 3,
-          p: { xs: 2, sm: 3 },
-          borderRadius: 3,
-          bgcolor: 'primary.dark',
-          color: 'common.white',
-        }}
-      >
-        <Stack
-          direction={{ xs: 'column', lg: 'row' }}
-          alignItems={{ xs: 'flex-start', lg: 'center' }}
-          justifyContent="space-between"
-          spacing={3}
-        >
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>
-            En distribución
-          </Typography>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={{ xs: 1.5, sm: 1 }}
-            flexWrap="wrap"
-            sx={{ width: { xs: '100%', sm: 'auto' } }}
-          >
-            <Button
-              variant="contained"
-              color="secondary"
-              startIcon={<FileDownloadIcon />}
-              onClick={handleExportMenuOpen}
-              fullWidth={isMobile}
-            >
-              Exportar CSV/Excel
-            </Button>
-            <Button
-              variant="contained"
-              color="secondary"
-              startIcon={<PictureAsPdfIcon />}
-              onClick={handleExportPdf}
-              fullWidth={isMobile}
-            >
-              Exportar PDF
-            </Button>
-          </Stack>
-        </Stack>
-      </Box>
-
-      <Menu anchorEl={exportMenuAnchor} open={Boolean(exportMenuAnchor)} onClose={handleExportMenuClose}>
-        <MenuItem onClick={handleExportCsv}>CSV</MenuItem>
-        <MenuItem onClick={handleExportExcel}>Excel</MenuItem>
-      </Menu>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Stack
-        direction={{ xs: 'column', lg: 'row' }}
-        spacing={{ xs: 1.5, lg: 2 }}
-        justifyContent="space-between"
-        alignItems={{ xs: 'stretch', lg: 'center' }}
-        sx={{ mb: 2 }}
-      >
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={{ xs: 1.5, sm: 1 }}
-          flexWrap="wrap"
-          sx={{ width: { xs: '100%', sm: 'auto' } }}
-        >
-          <Button
-            variant="contained"
-            startIcon={<DoneAllIcon />}
-            onClick={handleMassiveDialogOpen}
-            disabled={selectedCount === 0}
-            fullWidth={isTabletDown}
-          >
-            Entrega Masiva
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={handleReload}
-            fullWidth={isTabletDown}
-          >
-            Recargar
-          </Button>
-        </Stack>
-        <Button
-          variant="contained"
-          color="success"
-          startIcon={<SaveIcon />}
-          onClick={handleSaveChanges}
-          disabled={!hasEditedRows || saving}
-          fullWidth={isTabletDown}
-        >
-          {saving ? 'Guardando…' : 'Guardar cambios'}
-        </Button>
-      </Stack>
-
-      <Paper sx={{ position: 'relative' }}>
-        {loading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0 }} />}
-        <TableContainer
+  const renderMobileCards = () => (
+    <Stack spacing={2} sx={{ width: '100%' }}>
+      {rows.map((row) => (
+        <Paper
+          key={row.rowId}
+          variant="outlined"
           sx={{
-            maxHeight: isTabletDown ? '60vh' : 600,
-            overflowX: 'auto',
+            p: 2,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1.5,
           }}
         >
-          <Table
-            stickyHeader
-            size="small"
-            sx={{
-              minWidth: isTabletDown ? 720 : 960,
-              '& .MuiTableCell-root': {
-                px: { xs: 1, sm: 1.5 },
-                py: { xs: 1, sm: 1.5 },
-              },
-            }}
-          >
-            <TableHead>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableCell
-                      key={header.id}
-                      align={header.column.columnDef.meta?.align ?? 'left'}
-                      sx={{ bgcolor: 'background.paper' }}
-                    >
-                      {header.isPlaceholder ? null : (
-                        <Stack spacing={1}>
-                          <Stack direction="row" alignItems="center" spacing={0.5}>
-                            {header.column.getCanSort() ? (
-                              <TableSortLabel
-                                active={!!header.column.getIsSorted()}
-                                direction={header.column.getIsSorted() === 'desc' ? 'desc' : 'asc'}
-                                onClick={header.column.getToggleSortingHandler()}
-                              >
-                                {flexRender(header.column.columnDef.header, header.getContext())}
-                              </TableSortLabel>
-                            ) : (
-                              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                                {flexRender(header.column.columnDef.header, header.getContext())}
-                              </Typography>
-                            )}
-                          </Stack>
-                          {renderColumnFilter(header.column)}
-                        </Stack>
-                      )}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHead>
-            <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  hover
-                  sx={{
-                    bgcolor: editedRows[row.original.rowId] ? 'action.hover' : undefined,
-                  }}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell
-                      key={cell.id}
-                      align={cell.column.columnDef.meta?.align ?? 'left'}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-              {!loading && table.getRowModel().rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={columns.length}>
-                    <Typography align="center" sx={{ py: 3 }}>
-                      No se encontraron comandas en distribución para el usuario actual.
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
-
-      <Paper sx={{ mt: 2, p: { xs: 2, sm: 2.5 } }} variant="outlined">
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={{ xs: 1, md: 2 }}
-          justifyContent="space-between"
-          alignItems={{ xs: 'flex-start', md: 'center' }}
-        >
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Total de registros: {totalRegistros}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Suma Cant entreg: {quantityFormatter.format(totalCantidadEntregada)}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Suma Total entreg: {decimalFormatter.format(totalMontoEntregado)}
-          </Typography>
-        </Stack>
-      </Paper>
-
-      <Dialog open={massDialog.open} onClose={handleMassDialogClose} fullWidth maxWidth="sm">
-        <DialogTitle>Entrega Masiva</DialogTitle>
-        <DialogContent dividers>
-          <DialogContentText sx={{ mb: 2 }}>
-            Ingresa la cantidad entregada que deseas asignar a las {selectedCount}{' '}
-            {selectedCount === 1 ? 'fila seleccionada' : 'filas seleccionadas'}. El valor se
-            ajustará automáticamente para no superar la cantidad solicitada de cada producto.
-          </DialogContentText>
-          <TextField
-            label="Cantidad entregada"
-            type="number"
-            fullWidth
-            value={massDialog.value}
-            onChange={(event) => setMassDialog((prev) => ({ ...prev, value: event.target.value }))}
-            inputProps={{ min: 0, step: '0.01' }}
-            error={Boolean(massDialog.error)}
-            helperText={massDialog.error || 'Ingresa un número mayor o igual a 0.'}
-            sx={{ mb: 3 }}
-          />
-          {selectedCount > 0 && (
-            <Stack spacing={1}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                Resumen (primeras {Math.min(selectedCount, 5)} filas):
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={2}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Comanda
               </Typography>
-              {selectedRows.slice(0, 5).map((row) => {
-                const original = row.original;
-                const preview = hasMassValue
-                  ? clampDelivered(massPreviewValue, original.cantidad)
-                  : '—';
-                return (
-                  <Paper key={row.id} variant="outlined" sx={{ p: 1.5 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      Comanda {original.nrodecomanda ?? '—'} — {original.productoDescripcion ?? '—'}
-                    </Typography>
-                    <Typography variant="body2">
-                      Actual: {quantityFormatter.format(Number(original.cantidadEntregada ?? 0))} |{' '}
-                      Nuevo: {typeof preview === 'number' ? quantityFormatter.format(preview) : '—'}
-                    </Typography>
-                  </Paper>
-                );
-              })}
+              <Typography variant="h6">{row.nrodecomanda || '—'}</Typography>
+            </Box>
+            <Box sx={{ minWidth: 120, flexShrink: 0 }}>
+              <Typography variant="caption" color="text.secondary">
+                Cant entregada
+              </Typography>
+              <TextField
+                value={row.cantidadEntregada}
+                onChange={(event) => handleCantidadEntregadaChange(row, event.target.value)}
+                type="number"
+                size="medium"
+                fullWidth
+                inputProps={{ min: 0, max: row.cantidad, step: '0.01' }}
+              />
+            </Box>
+          </Stack>
+
+          <Grid container spacing={1.5} columns={{ xs: 6, sm: 12 }}>
+            <Grid item xs={6} sm={6}>
+              <Typography variant="caption" color="text.secondary">
+                Cliente
+              </Typography>
+              <Typography variant="body2" fontWeight={500}>
+                {row.clienteNombre || '—'}
+              </Typography>
+            </Grid>
+            <Grid item xs={6} sm={6}>
+              <Typography variant="caption" color="text.secondary">
+                Producto
+              </Typography>
+              <Typography variant="body2">{row.productoDescripcion || '—'}</Typography>
+            </Grid>
+            <Grid item xs={3} sm={3}>
+              <Typography variant="caption" color="text.secondary">
+                Cant
+              </Typography>
+              <Typography variant="body2">{quantityFormatter.format(Number(row.cantidad ?? 0))}</Typography>
+            </Grid>
+            <Grid item xs={3} sm={3}>
+              <Typography variant="caption" color="text.secondary">
+                Cant entregada
+              </Typography>
+              <Typography variant="body2">{quantityFormatter.format(Number(row.cantidadEntregada ?? 0))}</Typography>
+            </Grid>
+            <Grid item xs={3} sm={3}>
+              <Typography variant="caption" color="text.secondary">
+                Precio unitario
+              </Typography>
+              <Typography variant="body2">
+                ${decimalFormatter.format(Number(row.monto ?? 0))}
+              </Typography>
+            </Grid>
+            <Grid item xs={3} sm={3}>
+              <Typography variant="caption" color="text.secondary">
+                Total entregado
+              </Typography>
+              <Typography variant="body2">
+                ${decimalFormatter.format(Number(row.totalEntregado ?? 0))}
+              </Typography>
+            </Grid>
+          </Grid>
+        </Paper>
+      ))}
+    </Stack>
+  );
+
+  const renderDesktopTable = () => (
+    <TableContainer component={Paper} variant="outlined" sx={{ width: '100%' }}>
+      <Table size={isTabletDown ? 'small' : 'medium'}>
+        <TableHead>
+          <TableRow>
+            <TableCell align="right">Com</TableCell>
+            <TableCell>Cliente</TableCell>
+            <TableCell>Producto</TableCell>
+            <TableCell align="right">Cant</TableCell>
+            <TableCell align="right">Precio unitario</TableCell>
+            <TableCell align="right">Total</TableCell>
+            <TableCell align="right">Cant entreg</TableCell>
+            <TableCell align="right">Total entreg</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.rowId} hover>
+              <TableCell align="right">{row.nrodecomanda || '—'}</TableCell>
+              <TableCell>{row.clienteNombre || '—'}</TableCell>
+              <TableCell>{row.productoDescripcion || '—'}</TableCell>
+              <TableCell align="right">
+                {quantityFormatter.format(Number(row.cantidad ?? 0))}
+              </TableCell>
+              <TableCell align="right">
+                ${decimalFormatter.format(Number(row.monto ?? 0))}
+              </TableCell>
+              <TableCell align="right">
+                ${decimalFormatter.format(Number(row.total ?? 0))}
+              </TableCell>
+              <TableCell align="right" sx={{ minWidth: 140 }}>
+                <TextField
+                  value={row.cantidadEntregada}
+                  onChange={(event) => handleCantidadEntregadaChange(row, event.target.value)}
+                  type="number"
+                  size={isTabletDown ? 'small' : 'medium'}
+                  fullWidth
+                  inputProps={{ min: 0, max: row.cantidad, step: '0.01' }}
+                />
+              </TableCell>
+              <TableCell align="right">
+                ${decimalFormatter.format(Number(row.totalEntregado ?? 0))}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+
+  return (
+    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, pb: 4 }}>
+      <Box
+        sx={{
+          width: '100%',
+          backgroundColor: 'primary.dark',
+          color: 'primary.contrastText',
+          py: { xs: 2, md: 3 },
+          px: { xs: 2, md: 4 },
+        }}
+      >
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}>
+          <Typography variant={isMobile ? 'h5' : 'h4'} fontWeight={600}>
+            En distribución
+          </Typography>
+          {!isUnauthorized && (
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 2 }} sx={{ width: { xs: '100%', sm: 'auto' } }}>
+              <Button
+                variant="outlined"
+                color="inherit"
+                startIcon={<RefreshIcon />}
+                onClick={handleReload}
+                size="large"
+                sx={{
+                  width: { xs: '100%', sm: 'auto' },
+                  py: 1.5,
+                }}
+                disabled={loading || saving}
+              >
+                Recargar
+              </Button>
+              <Button
+                variant="contained"
+                color="secondary"
+                startIcon={<SaveIcon />}
+                onClick={handleSaveChanges}
+                size="large"
+                sx={{
+                  width: { xs: '100%', sm: 'auto' },
+                  py: 1.5,
+                }}
+                disabled={!hasEditedRows || saving}
+              >
+                Guardar cambios
+              </Button>
             </Stack>
           )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleMassDialogClose}>Cancelar</Button>
-          <Button onClick={handleMassDialogConfirm} variant="contained">
-            Aplicar
-          </Button>
-        </DialogActions>
-      </Dialog>
+        </Stack>
+      </Box>
+
+      {authState.checking && (
+        <Box sx={{ px: { xs: 2, md: 4 } }}>
+          <LinearProgress />
+        </Box>
+      )}
+
+      {!authState.checking && isUnauthorized && (
+        <Box sx={{ px: { xs: 2, md: 4 } }}>
+          <Alert severity="warning">Acceso restringido. Solo disponible para usuarios camioneros.</Alert>
+        </Box>
+      )}
+
+      {!authState.checking && !isUnauthorized && (
+        <Stack spacing={2} sx={{ px: { xs: 2, md: 4 } }}>
+          {loading && <LinearProgress />}
+
+          {error && !loading && (
+            <Alert severity="error" variant="outlined">
+              {error}
+            </Alert>
+          )}
+
+          {!loading && !error && rows.length === 0 && (
+            <Paper variant="outlined" sx={{ p: 3 }}>
+              <Typography variant="body1">No hay comandas en distribución para mostrar.</Typography>
+            </Paper>
+          )}
+
+          {rows.length > 0 && (isMobile ? renderMobileCards() : renderDesktopTable())}
+
+          {rows.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="space-between">
+                <Typography variant="body2" color="text.secondary">
+                  Registros: <Typography component="span" color="text.primary" fontWeight={600}>{totals.registros}</Typography>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Cantidad entregada total:{' '}
+                  <Typography component="span" color="text.primary" fontWeight={600}>
+                    {quantityFormatter.format(totals.cantidad)}
+                  </Typography>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Monto entregado total:{' '}
+                  <Typography component="span" color="text.primary" fontWeight={600}>
+                    ${decimalFormatter.format(totals.monto)}
+                  </Typography>
+                </Typography>
+              </Stack>
+            </Paper>
+          )}
+        </Stack>
+      )}
 
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
+        autoHideDuration={6000}
         onClose={handleSnackbarClose}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert
-          onClose={handleSnackbarClose}
-          severity={snackbar.severity}
-          sx={{ width: '100%' }}
-          action={
-            <IconButton
-              size="small"
-              color="inherit"
-              onClick={handleSnackbarClose}
-              aria-label="Cerrar"
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          }
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+        message={snackbar.message}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        action={
+          <IconButton size="small" aria-label="Cerrar" color="inherit" onClick={handleSnackbarClose}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        }
+      />
     </Box>
   );
 }
