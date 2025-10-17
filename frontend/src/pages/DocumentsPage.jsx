@@ -62,7 +62,10 @@ const normalizePrefijo = (value) => {
   return digits;
 };
 
-const padPrefijo = (value) => (value ? value.toString().padStart(4, '0') : '0001');
+const padPrefijo = (value, fallback = '0001') => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return value.toString().padStart(4, '0');
+};
 
 const padSequence = (value) => String(value ?? 0).padStart(8, '0');
 
@@ -147,7 +150,9 @@ export default function DocumentsPage() {
   }, [baseType, numeroSugerido, numeroSugeridoError]);
 
   const canProceedStep0 = Boolean(selectedType && selectedProvider);
-  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4 && isNumeroSugeridoValid);
+  const prefijoValido = Boolean(prefijo && prefijo.length === 4);
+  const numeroAutogeneradoListo = baseType === 'NR' || baseType === 'AJ' ? Boolean(numeroSugerido) : true;
+  const canProceedStep1 = Boolean(fechaRemito && prefijoValido && numeroAutogeneradoListo && isNumeroSugeridoValid);
   const canSubmit = items.length > 0 && canProceedStep1;
 
   const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
@@ -203,19 +208,26 @@ export default function DocumentsPage() {
   }, [updateDataError]);
 
   const fetchNextSequenceForType = useCallback(async (tipo, overridePrefijo) => {
-    const effectivePrefijo = padPrefijo(overridePrefijo ?? prefijo);
+    if (!tipo) return null;
+    const effectivePrefijo = padPrefijo(overridePrefijo ?? prefijo ?? '0001');
     try {
-      const { data } = await api.get('/documentos', { params: { tipo, limite: 1 } });
-      const last = data?.documentos?.[0];
-      const next = (last?.secuencia ?? 0) + 1;
+      const { data } = await api.get('/documentos/siguiente', {
+        params: { tipo, prefijo: effectivePrefijo },
+      });
+      const next = Number(data?.siguiente ?? 0);
+      if (!Number.isFinite(next) || next <= 0) {
+        throw new Error('Respuesta inválida del backend al solicitar la secuencia.');
+      }
       setNextSequence(next);
-      const suggestedNumber = `${effectivePrefijo}${tipo}${padSequence(next)}`;
+      const suggestedNumber = (data?.numero ?? '').toString().trim() || `${effectivePrefijo}${tipo}${padSequence(next)}`;
       setNumeroSugerido(suggestedNumber);
       updateDataError('sequence', '');
-      return { next, numero: suggestedNumber };
+      return { prefijo: effectivePrefijo, secuencia: next, numero: suggestedNumber };
     } catch (error) {
       const message = parseApiError(error, 'No se pudo obtener el número secuencial');
       updateDataError('sequence', message);
+      setNextSequence(null);
+      setNumeroSugerido('');
       setAlert({ open: true, severity: 'error', message });
       throw error;
     }
@@ -291,8 +303,10 @@ export default function DocumentsPage() {
 
     if (!baseType) {
       setNumeroSugerido('');
+      setNumeroSugeridoError('');
       setNextSequence(null);
       setAjusteOperacion('decrement');
+      updateDataError('sequence', '');
       previousBaseTypeRef.current = baseType;
       return;
     }
@@ -305,32 +319,38 @@ export default function DocumentsPage() {
       setAjusteOperacion('decrement');
     }
 
-    if (baseType === 'NR' || baseType === 'AJ') {
-      const nextPrefijo = '0001';
-      if (prefijo !== nextPrefijo) setPrefijo(nextPrefijo);
-      fetchNextSequenceForType(baseType, nextPrefijo)
-        .then(() => {
-          setNumeroSugeridoError('');
-        })
-        .catch(() => {});
-    } else {
+    if (baseType !== 'NR' && baseType !== 'AJ') {
       setNextSequence(null);
       updateDataError('sequence', '');
-      if (baseType !== 'R' || previousBaseType !== 'R') {
+      if (baseType !== 'R' || previousBaseType === 'R') {
         setNumeroSugerido('');
-        setNumeroSugeridoError('');
       }
     }
 
+    if ((baseType === 'R' && previousBaseType !== 'R') || (previousBaseType === 'R' && baseType !== 'R')) {
+      setNumeroSugerido('');
+      setNumeroSugeridoError('');
+    }
+
     previousBaseTypeRef.current = baseType;
-  }, [baseType, selectedType, prefijo, fetchNextSequenceForType, updateDataError]);
+  }, [baseType, selectedType, updateDataError]);
 
   useEffect(() => {
-    if (nextSequence && (baseType === 'NR' || baseType === 'AJ')) {
-      const effectivePrefijo = padPrefijo(prefijo);
-      setNumeroSugerido(`${effectivePrefijo}${baseType}${padSequence(nextSequence)}`);
+    if (baseType !== 'NR' && baseType !== 'AJ') {
+      return;
     }
-  }, [prefijo, baseType, nextSequence]);
+
+    if (!prefijo) {
+      setPrefijo(padPrefijo('', '0001'));
+      return;
+    }
+
+    fetchNextSequenceForType(baseType, prefijo)
+      .then(() => {
+        setNumeroSugeridoError('');
+      })
+      .catch(() => {});
+  }, [baseType, prefijo, fetchNextSequenceForType]);
 
   const ensureNumeroSugeridoValido = useCallback(() => {
     if (baseType !== 'R') return true;
@@ -393,7 +413,11 @@ export default function DocumentsPage() {
 
   const handlePrefijoChange = (event) => {
     const value = normalizePrefijo(event.target.value);
-    setPrefijo(value);
+    if (!value) {
+      setPrefijo('');
+      return;
+    }
+    setPrefijo(padPrefijo(value));
   };
 
   const handleProductSearchChange = (event) => {
@@ -545,14 +569,7 @@ export default function DocumentsPage() {
       return;
     }
     const effectivePrefijo = padPrefijo(prefijo);
-    let sequenceInfo = null;
-    if (baseType === 'NR' || baseType === 'AJ') {
-      try {
-        sequenceInfo = await fetchNextSequenceForType(baseType, effectivePrefijo);
-      } catch {
-        return;
-      }
-    } else {
+    if (baseType !== 'NR' && baseType !== 'AJ') {
       updateDataError('sequence', '');
     }
 
@@ -573,24 +590,10 @@ export default function DocumentsPage() {
         payload.ajusteTipo = 'AJ-';
       }
     }
-    const rawNumeroDocumento =
-      baseType === 'NR' && sequenceInfo?.numero ? sequenceInfo.numero : numeroSugerido;
+    const rawNumeroDocumento = baseType === 'R' ? numeroSugerido : null;
     const trimmedNumeroDocumento = rawNumeroDocumento?.toString().trim();
-    if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
+    if (baseType === 'R' && trimmedNumeroDocumento) {
       payload.nroDocumento = trimmedNumeroDocumento;
-    }
-    if (selectedType === 'AJ+' || selectedType === 'AJ-') {
-      const trimmedNumeroSugerido =
-        numeroSugerido?.toString().trim() || sequenceInfo?.numero?.toString().trim() || '';
-      if (!trimmedNumeroSugerido) {
-        setAlert({
-          open: true,
-          severity: 'warning',
-          message: 'No se pudo determinar el número sugerido para el ajuste.',
-        });
-        return;
-      }
-      payload.nroSugerido = trimmedNumeroSugerido;
     }
     const responsableId = usuarioResponsable || selectedUserFromStorage || '';
     if (responsableId) {
@@ -705,7 +708,7 @@ export default function DocumentsPage() {
                     ))}
                   </Select>
                   <FormHelperText>
-                    Para NR y Ajustes el prefijo se fija en 0001 automáticamente.
+                    Para NR y Ajustes podés definir el prefijo (por defecto 0001).
                   </FormHelperText>
                 </FormControl>
               </Grid>
@@ -768,8 +771,12 @@ export default function DocumentsPage() {
                   onChange={handlePrefijoChange}
                   fullWidth
                   inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
-                  helperText={baseType === 'R' ? 'Editable para remitos.' : 'Asignado automáticamente.'}
-                  disabled={baseType !== 'R'}
+                  helperText={
+                    baseType
+                      ? 'Prefijo numérico de hasta 4 dígitos (por defecto 0001).'
+                      : 'Seleccioná un tipo de documento para editar el prefijo.'
+                  }
+                  disabled={!baseType}
                 />
               </Grid>
               <Grid item xs={12} md={4}>
@@ -784,7 +791,7 @@ export default function DocumentsPage() {
                   helperText={
                     baseType === 'R'
                       ? numeroSugeridoError || 'Ingresá manualmente un número entero positivo (8 dígitos).'
-                      : dataError.sequence || 'Se consulta el backend antes de grabar.'
+                      : dataError.sequence || 'Número sugerido generado por el servidor.'
                   }
                 />
               </Grid>

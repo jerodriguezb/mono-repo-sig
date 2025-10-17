@@ -5,6 +5,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const Documento = require('../modelos/documento');
+const DocumentoCounter = require('../modelos/documento-counter');
 const Proveedor = require('../modelos/proveedor');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
@@ -78,6 +79,65 @@ const normalizeAjusteIncrementNumber = (numero, prefijo) => {
   const pattern = new RegExp(`^${expectedPrefijo}AJ\\d{8}$`);
   if (!pattern.test(trimmed)) return null;
   return trimmed;
+};
+const buildNumeroDocumento = (prefijo, tipo, secuencia) =>
+  `${prefijo}${tipo}${padSequence(Number(secuencia ?? 0))}`;
+const ensureDocumentoCounter = async ({ tipo, prefijo, session }) => {
+  const filter = { tipo, prefijo };
+  const existingQuery = DocumentoCounter.findOne(filter);
+  if (session) existingQuery.session(session);
+  let counter = await existingQuery.exec();
+  if (counter) return counter;
+
+  const lastDocQuery = Documento.findOne(filter)
+    .sort({ secuencia: -1 })
+    .select('secuencia')
+    .lean();
+  if (session) lastDocQuery.session(session);
+  const lastDocumento = await lastDocQuery.exec();
+  const lastSecuencia = Number(lastDocumento?.secuencia ?? 0);
+
+  counter = await DocumentoCounter.findOneAndUpdate(
+    filter,
+    {
+      $setOnInsert: {
+        tipo,
+        prefijo,
+        secuencia: lastSecuencia,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      session,
+      setDefaultsOnInsert: true,
+    },
+  ).exec();
+
+  return counter;
+};
+const peekNextDocumentoSequence = async ({ tipo, prefijo, session }) => {
+  const counter = await ensureDocumentoCounter({ tipo, prefijo, session });
+  const current = Number(counter?.secuencia ?? 0);
+  const next = current + 1;
+  return {
+    actual: current,
+    siguiente: next,
+    numero: buildNumeroDocumento(prefijo, tipo, next),
+  };
+};
+const reserveDocumentoSequence = async ({ tipo, prefijo, session }) => {
+  await ensureDocumentoCounter({ tipo, prefijo, session });
+  const updated = await DocumentoCounter.findOneAndUpdate(
+    { tipo, prefijo },
+    { $inc: { secuencia: 1 } },
+    { new: true, session },
+  ).exec();
+  const nextSecuencia = Number(updated?.secuencia ?? 0);
+  return {
+    secuencia: nextSecuencia,
+    numero: buildNumeroDocumento(prefijo, tipo, nextSecuencia),
+  };
 };
 const isAjusteIncrementalOperacion = (operacion) => {
   if (operacion === undefined || operacion === null) return false;
@@ -266,6 +326,31 @@ const getMovimientoAjusteNegativoId = async () =>
 // -----------------------------------------------------------------------------
 // 1. CREAR DOCUMENTO ------------------------------------------------------------
 // -----------------------------------------------------------------------------
+router.get('/documentos/siguiente', [verificaToken], asyncHandler(async (req, res) => {
+  const tipo = normalizeTipo(req.query?.tipo);
+  if (!tipo) return badRequest(res, 'Tipo de documento inválido. Use R, NR o AJ.');
+  if (tipo === 'R') {
+    return badRequest(res, 'Los remitos se numeran manualmente.');
+  }
+
+  const prefijoInput = normalizePrefijoInput(req.query?.prefijo);
+  if (prefijoInput === null) {
+    return badRequest(res, 'El prefijo debe ser numérico de hasta 4 dígitos.');
+  }
+  const resolvedPrefijo = prefijoInput || '0001';
+
+  const sequenceInfo = await peekNextDocumentoSequence({ tipo, prefijo: resolvedPrefijo });
+
+  res.json({
+    ok: true,
+    tipo,
+    prefijo: resolvedPrefijo,
+    actual: sequenceInfo.actual,
+    siguiente: sequenceInfo.siguiente,
+    numero: sequenceInfo.numero,
+  });
+}));
+
 router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const body = req.body || {};
   const tipo = normalizeTipo(body.tipo);
@@ -300,48 +385,38 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   let remitoNumero = null;
-  let notaRecepcionNumero = null;
-  let ajusteIncrementNumero = null;
-  let ajusteManualNumero = null;
+  let numeroNRProporcionado = null;
+  let numeroAJProporcionado = null;
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
       return badRequest(res, 'El número de remito es obligatorio y debe ser un entero positivo.');
     }
   }
-  if (tipo === 'NR') {
-    notaRecepcionNumero = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
-    if (!notaRecepcionNumero) {
+  if (tipo === 'NR' && numeroCrudo) {
+    numeroNRProporcionado = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
+    if (!numeroNRProporcionado) {
       return badRequest(
         res,
-        `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
+        `El número de nota de recepción debe respetar el formato ${resolvedPrefijo}NR########.`,
       );
     }
   }
   const ajusteOperacionRaw = body?.ajusteOperacion ?? body?.operacionAjuste ?? body?.operacion;
   const isAjusteIncremental = tipo === 'AJ' && isAjusteIncrementalOperacion(ajusteOperacionRaw);
-  const nroSugeridoRaw = body?.nroSugerido;
-  const nroSugeridoProvided = nroSugeridoRaw !== undefined && nroSugeridoRaw !== null;
-  if (tipo === 'AJ' && (isAjusteIncremental || nroSugeridoProvided)) {
+  const nroSugeridoRaw = tipo === 'AJ' ? body?.nroSugerido ?? numeroCrudo : null;
+  if (tipo === 'AJ' && nroSugeridoRaw !== undefined && nroSugeridoRaw !== null) {
     if (typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
-      const message = isAjusteIncremental
-        ? 'El número sugerido es obligatorio para los ajustes positivos.'
-        : 'El número sugerido debe ser un string no vacío.';
-      return badRequest(res, message);
+      return badRequest(res, 'El número sugerido debe ser un string no vacío.');
     }
-    const nroSugeridoTrimmed = nroSugeridoRaw.trim();
-    const nroSugeridoValidado = normalizeAjusteIncrementNumber(nroSugeridoTrimmed, resolvedPrefijo);
+    const nroSugeridoValidado = normalizeAjusteIncrementNumber(nroSugeridoRaw.trim(), resolvedPrefijo);
     if (!nroSugeridoValidado) {
       return badRequest(
         res,
-        `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
+        `El número de ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
     }
-    if (isAjusteIncremental) {
-      ajusteIncrementNumero = nroSugeridoValidado;
-    } else {
-      ajusteManualNumero = nroSugeridoRaw;
-    }
+    numeroAJProporcionado = nroSugeridoValidado;
   }
 
   let movimientoIngresoPositivoId = null;
@@ -453,19 +528,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     items: itemsParaDocumento,
     observaciones: body.observaciones,
   };
-  if (prefijo) data.prefijo = prefijo;
+  data.prefijo = resolvedPrefijo;
   if (tipo === 'R') {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
-  }
-  if (tipo === 'NR') {
-    data.NrodeDocumento = notaRecepcionNumero;
-  }
-  if (tipo === 'AJ') {
-    if (ajusteIncrementNumero) {
-      data.NrodeDocumento = ajusteIncrementNumero;
-    } else if (ajusteManualNumero) {
-      data.NrodeDocumento = ajusteManualNumero;
-    }
   }
 
   if (data.NrodeDocumento) {
@@ -487,6 +552,25 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   try {
     await session.startTransaction();
+
+    if (tipo === 'NR' || tipo === 'AJ') {
+      const sequenceReservation = await reserveDocumentoSequence({
+        tipo,
+        prefijo: resolvedPrefijo,
+        session,
+      });
+      const numeroGenerado = sequenceReservation.numero;
+      const numeroInformado = tipo === 'NR' ? numeroNRProporcionado : numeroAJProporcionado;
+      if (numeroInformado && numeroInformado !== numeroGenerado) {
+        const conflictError = new Error(
+          'El número enviado no coincide con la secuencia actual. Actualizá la página e intentá nuevamente.',
+        );
+        conflictError.status = 409;
+        throw conflictError;
+      }
+      data.secuencia = sequenceReservation.secuencia;
+      data.NrodeDocumento = numeroGenerado;
+    }
 
     const documento = new Documento(data);
     documentoDB = await documento.save({ session });
