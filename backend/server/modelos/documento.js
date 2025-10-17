@@ -96,12 +96,6 @@ const documentoSchema = new Schema({
   versionKey: false,
 });
 
-documentoSchema.plugin(require('mongoose-sequence')(mongoose), {
-  id: 'documento_tipo_prefijo_counter',
-  inc_field: 'secuencia',
-  reference_fields: ['tipo', 'prefijo'],
-});
-
 documentoSchema.pre('validate', function(next) {
   if (!this.prefijo) {
     this.prefijo = '0001';
@@ -121,6 +115,9 @@ documentoSchema.pre('save', function(next) {
   const tipo = this.tipo;
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
+  }
+  if (!Number.isFinite(this.secuencia) || this.secuencia <= 0) {
+    return next(new Error('La secuencia del documento es obligatoria.'));
   }
   if (this.isNew && this.NrodeDocumento) {
     if (tipo === 'R' || tipo === 'NR') {
