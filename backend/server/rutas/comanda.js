@@ -59,31 +59,49 @@ const commonPopulate = [
 // -----------------------------------------------------------------------------
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
-router.get('/comandas', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, estado } = req.query;
+router.get('/comandas', [verificaToken, verificaCam_role], asyncHandler(async (req, res) => {
+  const { desde = 0, limite = 500, estado, camionero } = req.query;
 
   if (estado && !isValidObjectId(estado)) {
     return res.json({ ok: true, comandas: [], cantidad: 0 });
   }
 
-  const query = {};
+  const query = { activo: { $ne: false } };
 
   if (estado) {
     const estadoId = new mongoose.Types.ObjectId(estado);
     query.codestado = estadoId;
   }
 
-  const comandas = await Comanda.find(query)
-    // .skip(toNumber(desde, 0))
-    // .limit(toNumber(limite, 500))
-    .sort('nrodecomanda')
-    .populate(commonPopulate)
-    .lean()
-    .exec();
-  const cantidadQuery = estado
-    ? { codestado: query.codestado, activo: true }
-    : { activo: true };
-  const cantidad = await Comanda.countDocuments(cantidadQuery);
+  const resolveCamioneroId = () => {
+    if (camionero && isValidObjectId(camionero)) {
+      return new mongoose.Types.ObjectId(camionero);
+    }
+    const tokenCamioneroId = req.usuario?._id;
+    if (tokenCamioneroId && isValidObjectId(tokenCamioneroId)) {
+      return new mongoose.Types.ObjectId(tokenCamioneroId);
+    }
+    return null;
+  };
+
+  const camioneroId = resolveCamioneroId();
+  if (!camioneroId) {
+    return res.json({ ok: true, comandas: [], cantidad: 0 });
+  }
+
+  query.camionero = camioneroId;
+
+  const [comandas, cantidad] = await Promise.all([
+    Comanda.find(query)
+      // .skip(toNumber(desde, 0))
+      // .limit(toNumber(limite, 500))
+      .sort('nrodecomanda')
+      .populate(commonPopulate)
+      .lean()
+      .exec(),
+    Comanda.countDocuments(query),
+  ]);
+
   res.json({ ok: true, comandas, cantidad });
 }));
 
