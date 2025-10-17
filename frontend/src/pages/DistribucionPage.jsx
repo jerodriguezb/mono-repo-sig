@@ -25,6 +25,8 @@ import {
   TableSortLabel,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
@@ -101,6 +103,9 @@ const buildRowId = (comandaId, itemId, index) => {
 };
 
 export default function DistribucionPage() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTabletDown = useMediaQuery(theme.breakpoints.down('md'));
   const [authState, setAuthState] = useState({ checking: true, role: null, userId: null });
   const [estadoDistribucionId, setEstadoDistribucionId] = useState(null);
   const [rows, setRows] = useState([]);
@@ -524,6 +529,7 @@ export default function DistribucionPage() {
     return (
       <TextField
         size="small"
+        fullWidth
         value={value}
         onChange={(event) => {
           const newValue = event.target.value;
@@ -672,31 +678,37 @@ export default function DistribucionPage() {
   const hasMassValue = !Number.isNaN(massPreviewValue);
 
   return (
-    <Box>
+    <Box sx={{ px: { xs: 1, sm: 2 }, pb: 4 }}>
       <Box
         sx={{
           mb: 3,
-          p: 3,
+          p: { xs: 2, sm: 3 },
           borderRadius: 3,
           bgcolor: 'primary.dark',
           color: 'common.white',
         }}
       >
         <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          alignItems={{ xs: 'flex-start', md: 'center' }}
+          direction={{ xs: 'column', lg: 'row' }}
+          alignItems={{ xs: 'flex-start', lg: 'center' }}
           justifyContent="space-between"
-          spacing={2}
+          spacing={3}
         >
           <Typography variant="h4" sx={{ fontWeight: 600 }}>
             En distribución
           </Typography>
-          <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={{ xs: 1.5, sm: 1 }}
+            flexWrap="wrap"
+            sx={{ width: { xs: '100%', sm: 'auto' } }}
+          >
             <Button
               variant="contained"
               color="secondary"
               startIcon={<FileDownloadIcon />}
               onClick={handleExportMenuOpen}
+              fullWidth={isMobile}
             >
               Exportar CSV/Excel
             </Button>
@@ -705,6 +717,7 @@ export default function DistribucionPage() {
               color="secondary"
               startIcon={<PictureAsPdfIcon />}
               onClick={handleExportPdf}
+              fullWidth={isMobile}
             >
               Exportar PDF
             </Button>
@@ -724,22 +737,33 @@ export default function DistribucionPage() {
       )}
 
       <Stack
-        direction={{ xs: 'column', md: 'row' }}
-        spacing={2}
+        direction={{ xs: 'column', lg: 'row' }}
+        spacing={{ xs: 1.5, lg: 2 }}
         justifyContent="space-between"
-        alignItems={{ xs: 'stretch', md: 'center' }}
+        alignItems={{ xs: 'stretch', lg: 'center' }}
         sx={{ mb: 2 }}
       >
-        <Stack direction="row" spacing={1} flexWrap="wrap">
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={{ xs: 1.5, sm: 1 }}
+          flexWrap="wrap"
+          sx={{ width: { xs: '100%', sm: 'auto' } }}
+        >
           <Button
             variant="contained"
             startIcon={<DoneAllIcon />}
             onClick={handleMassiveDialogOpen}
             disabled={selectedCount === 0}
+            fullWidth={isTabletDown}
           >
             Entrega Masiva
           </Button>
-          <Button variant="outlined" startIcon={<RefreshIcon />} onClick={handleReload}>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleReload}
+            fullWidth={isTabletDown}
+          >
             Recargar
           </Button>
         </Stack>
@@ -749,6 +773,7 @@ export default function DistribucionPage() {
           startIcon={<SaveIcon />}
           onClick={handleSaveChanges}
           disabled={!hasEditedRows || saving}
+          fullWidth={isTabletDown}
         >
           {saving ? 'Guardando…' : 'Guardar cambios'}
         </Button>
@@ -756,8 +781,23 @@ export default function DistribucionPage() {
 
       <Paper sx={{ position: 'relative' }}>
         {loading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0 }} />}
-        <TableContainer sx={{ maxHeight: 600 }}>
-          <Table stickyHeader size="small">
+        <TableContainer
+          sx={{
+            maxHeight: isTabletDown ? '60vh' : 600,
+            overflowX: 'auto',
+          }}
+        >
+          <Table
+            stickyHeader
+            size="small"
+            sx={{
+              minWidth: isTabletDown ? 720 : 960,
+              '& .MuiTableCell-root': {
+                px: { xs: 1, sm: 1.5 },
+                py: { xs: 1, sm: 1.5 },
+              },
+            }}
+          >
             <TableHead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
@@ -825,8 +865,13 @@ export default function DistribucionPage() {
         </TableContainer>
       </Paper>
 
-      <Paper sx={{ mt: 2, p: 2 }} variant="outlined">
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
+      <Paper sx={{ mt: 2, p: { xs: 2, sm: 2.5 } }} variant="outlined">
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          spacing={{ xs: 1, md: 2 }}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', md: 'center' }}
+        >
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
             Total de registros: {totalRegistros}
           </Typography>
