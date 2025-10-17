@@ -5,6 +5,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const Documento = require('../modelos/documento');
+const DocumentoNumeroReserva = require('../modelos/documento-numero-reserva');
+const DocumentoSecuencia = require('../modelos/documento-secuencia');
 const Proveedor = require('../modelos/proveedor');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
@@ -121,6 +123,149 @@ const isAjusteNegativoHint = (value) => {
   if (!normalized) return false;
   const sanitized = normalized.replace(/–/g, '-').replace(/\s+/g, '');
   return AJUSTE_NEGATIVO_TOKENS.has(sanitized);
+};
+
+const RESERVA_AJUSTE_MINUTOS = 15;
+
+const ensureAjusteSequenceTracker = async (session, tipo, prefijo) => {
+  const now = new Date();
+  const trackerResult = await DocumentoSecuencia.findOneAndUpdate(
+    { tipo, prefijo },
+    {
+      $setOnInsert: {
+        tipo,
+        prefijo,
+        ultimoConfirmado: 0,
+        actualizadoEn: now,
+      },
+    },
+    {
+      new: true,
+      rawResult: true,
+      session,
+      setDefaultsOnInsert: true,
+      upsert: true,
+    },
+  );
+
+  const trackerDoc = trackerResult.value;
+
+  if (trackerResult.lastErrorObject && trackerResult.lastErrorObject.upserted) {
+    const existingDocumento = await Documento.findOne({
+      tipo,
+      prefijo,
+      secuencia: { $type: 'number' },
+    })
+      .sort({ secuencia: -1 })
+      .select('secuencia')
+      .session(session)
+      .lean();
+
+    const existingMax = Number(existingDocumento?.secuencia ?? 0);
+
+    if (existingMax > 0 && existingMax !== trackerDoc.ultimoConfirmado) {
+      trackerDoc.ultimoConfirmado = existingMax;
+      await DocumentoSecuencia.updateOne(
+        { _id: trackerDoc._id },
+        { $set: { ultimoConfirmado: existingMax, actualizadoEn: now } },
+        { session },
+      );
+    }
+  }
+
+  return trackerDoc;
+};
+
+const reservarNumeroDocumento = async ({ tipo, prefijo, usuarioId }) => {
+  const session = await mongoose.startSession();
+  const now = new Date();
+  let reservaDocumento;
+
+  try {
+    await session.startTransaction();
+
+    await DocumentoNumeroReserva.deleteMany({
+      tipo,
+      prefijo,
+      estado: 'reservado',
+      expiracion: { $lte: now },
+    }).session(session);
+
+    const trackerDoc = await ensureAjusteSequenceTracker(session, tipo, prefijo);
+
+    const lastConfirmed = Number(trackerDoc?.ultimoConfirmado ?? 0);
+
+    const lastReservation = await DocumentoNumeroReserva.findOne({
+      tipo,
+      prefijo,
+      estado: 'reservado',
+      expiracion: { $gt: now },
+    })
+      .sort({ secuencia: -1 })
+      .session(session)
+      .lean();
+
+    const lastSequence = Math.max(
+      lastConfirmed,
+      Number(lastReservation?.secuencia ?? 0),
+    );
+
+    const nextSequence = lastSequence + 1;
+    const numero = `${prefijo}${tipo}${padSecuencia(nextSequence)}`;
+    const expiracion = new Date(now.getTime() + RESERVA_AJUSTE_MINUTOS * 60 * 1000);
+
+    const [created] = await DocumentoNumeroReserva.create(
+      [
+        {
+          tipo,
+          prefijo,
+          secuencia: nextSequence,
+          numero,
+          reservadoPor: usuarioId || null,
+          reservadoEn: now,
+          expiracion,
+        },
+      ],
+      { session },
+    );
+
+    await session.commitTransaction();
+    reservaDocumento = created;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+
+  return reservaDocumento;
+};
+
+const marcarReservaComoUsada = async ({
+  reservaId,
+  tipo,
+  prefijo,
+  usuarioId,
+  session,
+}) => {
+  const update = {
+    $set: {
+      estado: 'usado',
+      usadoEn: new Date(),
+    },
+  };
+
+  if (usuarioId) {
+    update.$set.usadoPor = usuarioId;
+  }
+
+  const reserva = await DocumentoNumeroReserva.findOneAndUpdate(
+    { _id: reservaId, tipo, prefijo, estado: 'reservado' },
+    update,
+    { new: true, session },
+  );
+
+  return reserva;
 };
 const extractNumeroDocumento = (body = {}) =>
   body.nroDocumento ?? body.numeroSugerido ?? body.numero ?? body.numeroRemito ?? null;
@@ -301,8 +446,6 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   let remitoNumero = null;
   let notaRecepcionNumero = null;
-  let ajusteIncrementNumero = null;
-  let ajusteManualNumero = null;
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
@@ -322,26 +465,38 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const isAjusteIncremental = tipo === 'AJ' && isAjusteIncrementalOperacion(ajusteOperacionRaw);
   const nroSugeridoRaw = body?.nroSugerido;
   const nroSugeridoProvided = nroSugeridoRaw !== undefined && nroSugeridoRaw !== null;
-  if (tipo === 'AJ' && (isAjusteIncremental || nroSugeridoProvided)) {
-    if (typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
-      const message = isAjusteIncremental
-        ? 'El número sugerido es obligatorio para los ajustes positivos.'
-        : 'El número sugerido debe ser un string no vacío.';
-      return badRequest(res, message);
+  const reservaSecuenciaIdRaw =
+    body?.reservaSecuenciaId ?? body?.reservaId ?? body?.reservaDocumentoId ?? null;
+  let reservaSecuenciaId = null;
+  let numeroAjusteAsignado = null;
+
+  if (tipo === 'AJ') {
+    if (!nroSugeridoProvided || typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
+      return badRequest(res, 'El número sugerido es obligatorio para los ajustes.');
     }
+
     const nroSugeridoTrimmed = nroSugeridoRaw.trim();
-    const nroSugeridoValidado = normalizeAjusteIncrementNumber(nroSugeridoTrimmed, resolvedPrefijo);
+    const nroSugeridoValidado = normalizeAjusteIncrementNumber(
+      nroSugeridoTrimmed,
+      resolvedPrefijo,
+    );
+
     if (!nroSugeridoValidado) {
       return badRequest(
         res,
         `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
     }
-    if (isAjusteIncremental) {
-      ajusteIncrementNumero = nroSugeridoValidado;
-    } else {
-      ajusteManualNumero = nroSugeridoRaw;
+
+    if (!reservaSecuenciaIdRaw || !isValidObjectId(reservaSecuenciaIdRaw)) {
+      return badRequest(
+        res,
+        'La reserva del número de ajuste es obligatoria y debe ser un identificador válido.',
+      );
     }
+
+    reservaSecuenciaId = reservaSecuenciaIdRaw;
+    numeroAjusteAsignado = nroSugeridoValidado;
   }
 
   let movimientoIngresoPositivoId = null;
@@ -460,12 +615,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (tipo === 'NR') {
     data.NrodeDocumento = notaRecepcionNumero;
   }
-  if (tipo === 'AJ') {
-    if (ajusteIncrementNumero) {
-      data.NrodeDocumento = ajusteIncrementNumero;
-    } else if (ajusteManualNumero) {
-      data.NrodeDocumento = ajusteManualNumero;
-    }
+  if (tipo === 'AJ' && numeroAjusteAsignado) {
+    data.NrodeDocumento = numeroAjusteAsignado;
   }
 
   if (data.NrodeDocumento) {
@@ -484,9 +635,55 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let documentoDB;
   const stockResult = { updates: [], errors: [] };
+  let reservaDocumentoAjuste = null;
 
   try {
     await session.startTransaction();
+
+    if (tipo === 'AJ' && reservaSecuenciaId) {
+      reservaDocumentoAjuste = await marcarReservaComoUsada({
+        reservaId: reservaSecuenciaId,
+        tipo,
+        prefijo: resolvedPrefijo,
+        usuarioId: userId,
+        session,
+      });
+
+      if (!reservaDocumentoAjuste) {
+        await session.abortTransaction();
+        return res.status(409).json({
+          ok: false,
+          err: {
+            message:
+              'La reserva del número de ajuste ya no está disponible. Obtené un nuevo número e intentá nuevamente.',
+          },
+        });
+      }
+
+      if (
+        numeroAjusteAsignado &&
+        numeroAjusteAsignado !== reservaDocumentoAjuste.numero
+      ) {
+        await session.abortTransaction();
+        return res.status(409).json({
+          ok: false,
+          err: {
+            message:
+              'El número del ajuste no coincide con la reserva confirmada. Actualizá el número sugerido.',
+          },
+        });
+      }
+
+      numeroAjusteAsignado = reservaDocumentoAjuste.numero;
+      data.NrodeDocumento = reservaDocumentoAjuste.numero;
+
+      const secuenciaReservada = Number(reservaDocumentoAjuste.secuencia ?? 0);
+      if (Number.isFinite(secuenciaReservada) && secuenciaReservada > 0) {
+        data.secuencia = secuenciaReservada;
+      } else {
+        delete data.secuencia;
+      }
+    }
 
     const documento = new Documento(data);
     documentoDB = await documento.save({ session });
@@ -636,6 +833,29 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       }
     }
 
+    if (reservaDocumentoAjuste) {
+      const trackerValue = Number(reservaDocumentoAjuste.secuencia ?? 0);
+      const trackerNow = new Date();
+      const trackerUpdate = {
+        $set: { actualizadoEn: trackerNow },
+        $setOnInsert: {
+          tipo,
+          prefijo: resolvedPrefijo,
+          ultimoConfirmado: trackerValue,
+          actualizadoEn: trackerNow,
+        },
+      };
+      if (trackerValue > 0) {
+        trackerUpdate.$max = { ultimoConfirmado: trackerValue };
+      }
+
+      await DocumentoSecuencia.updateOne(
+        { tipo, prefijo: resolvedPrefijo },
+        trackerUpdate,
+        { session, upsert: true },
+      );
+    }
+
     await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
@@ -656,6 +876,53 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   const responsePayload = { ok: true, documento: documentoRespuesta, stock: stockResult };
   res.status(201).json(responsePayload);
+}));
+
+router.get('/documentos/siguiente', [verificaToken], asyncHandler(async (req, res) => {
+  const tipo = normalizeTipo(req.query.tipo);
+  if (!tipo) return badRequest(res, 'Tipo de documento inválido. Use R, NR o AJ.');
+
+  const prefijo = normalizePrefijoInput(req.query.prefijo);
+  if (prefijo === null) return badRequest(res, 'El prefijo debe ser numérico de hasta 4 dígitos.');
+
+  const resolvedPrefijo = prefijo || '0001';
+
+  if (tipo === 'AJ') {
+    try {
+      const reserva = await reservarNumeroDocumento({
+        tipo,
+        prefijo: resolvedPrefijo,
+        usuarioId: req.usuario?._id,
+      });
+
+      return res.json({
+        ok: true,
+        nextSequence: reserva.secuencia,
+        numero: reserva.numero,
+        prefijo: resolvedPrefijo,
+        tipo,
+        reservaId: reserva._id,
+        reservadoHasta: reserva.expiracion,
+      });
+    } catch (error) {
+      console.error('[documentos] No se pudo reservar el número del ajuste:', error);
+      return res.status(500).json({
+        ok: false,
+        err: { message: 'No se pudo reservar el número del ajuste.' },
+      });
+    }
+  }
+
+  const lastDocumento = await Documento.findOne({ tipo, prefijo: resolvedPrefijo })
+    .sort({ secuencia: -1 })
+    .select('secuencia')
+    .lean()
+    .exec();
+
+  const nextSequence = Math.max(1, Number(lastDocumento?.secuencia ?? 0) + 1);
+  const numero = `${resolvedPrefijo}${tipo}${padSecuencia(nextSequence)}`;
+
+  res.json({ ok: true, nextSequence, numero, prefijo: resolvedPrefijo, tipo });
 }));
 
 // -----------------------------------------------------------------------------
