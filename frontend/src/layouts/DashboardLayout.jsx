@@ -32,6 +32,7 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
+import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -48,6 +49,7 @@ const navItems = [
 
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
+  { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
 ];
 
