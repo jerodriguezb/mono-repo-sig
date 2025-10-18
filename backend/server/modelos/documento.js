@@ -1,8 +1,5 @@
 const mongoose = require('mongoose');
 const moment = require('moment-timezone');
-const AutoIncrementFactory = require('mongoose-sequence');
-
-const AutoIncrement = AutoIncrementFactory(mongoose);
 const { Schema } = mongoose;
 
 const ZONA_ARGENTINA = 'America/Argentina/Buenos_Aires';
@@ -99,11 +96,6 @@ const documentoSchema = new Schema({
   versionKey: false,
 });
 
-documentoSchema.plugin(AutoIncrement, {
-  inc_field: 'secuencia',
-  // reference_fields: ['tipo'],
-});
-
 documentoSchema.pre('validate', function(next) {
   if (!this.prefijo) {
     this.prefijo = '0001';
@@ -124,6 +116,9 @@ documentoSchema.pre('save', function(next) {
   if (!TIPOS_DOCUMENTO.includes(tipo)) {
     return next(new Error('Tipo de documento inválido'));
   }
+  if (!Number.isFinite(this.secuencia) || this.secuencia <= 0) {
+    return next(new Error('La secuencia del documento es obligatoria.'));
+  }
   if (this.isNew && this.NrodeDocumento) {
     if (tipo === 'R' || tipo === 'NR') {
       return next();
@@ -136,7 +131,7 @@ documentoSchema.pre('save', function(next) {
   next();
 });
 
-documentoSchema.index({ tipo: 1, secuencia: 1 }, { unique: true });
+documentoSchema.index({ tipo: 1, prefijo: 1, secuencia: 1 }, { unique: true });
 documentoSchema.index({ NrodeDocumento: 1 }, {
   unique: true,
   partialFilterExpression: { activo: true, NrodeDocumento: { $exists: true } },

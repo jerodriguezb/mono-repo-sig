@@ -5,6 +5,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const Documento = require('../modelos/documento');
+const DocumentoConsecutivo = require('../modelos/documento-consecutivo');
+const DocumentoSecuenciaReserva = require('../modelos/documento-secuencia-reserva');
 const Proveedor = require('../modelos/proveedor');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
@@ -52,6 +54,7 @@ const normalizePrefijoInput = (prefijo) => {
   return cleaned.padStart(4, '0');
 };
 const padSecuencia = (value) => String(value ?? 0).padStart(8, '0');
+const RESERVA_TTL_MINUTES = 15;
 const normalizeRemitoNumber = (numero) => {
   if (numero === undefined || numero === null) return null;
   const trimmed = numero.toString().trim();
@@ -78,6 +81,15 @@ const normalizeAjusteIncrementNumber = (numero, prefijo) => {
   const pattern = new RegExp(`^${expectedPrefijo}AJ\\d{8}$`);
   if (!pattern.test(trimmed)) return null;
   return trimmed;
+};
+const extractSecuenciaFromNumero = (numero) => {
+  if (typeof numero !== 'string') return null;
+  const trimmed = numero.trim().toUpperCase();
+  if (!/^\d{4}(?:R|NR|AJ)\d{8}$/.test(trimmed)) return null;
+  const secuenciaChunk = trimmed.slice(-8);
+  const parsed = Number(secuenciaChunk);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 };
 const isAjusteIncrementalOperacion = (operacion) => {
   if (operacion === undefined || operacion === null) return false;
@@ -180,6 +192,156 @@ const parseItems = async (rawItems = []) => {
     throw error;
   }
   return items;
+};
+
+const ensureCounterDocument = async ({ tipo, prefijo, session }) => {
+  const query = DocumentoConsecutivo.findOne({ tipo, prefijo });
+  if (session) query.session(session);
+  const existing = await query.lean().exec();
+  if (existing) return existing;
+
+  const [lastDocumento, lastReserva] = await Promise.all([
+    Documento.findOne({ tipo, prefijo }).sort({ secuencia: -1 }).select('secuencia').lean().exec(),
+    DocumentoSecuenciaReserva.findOne({ tipo, prefijo })
+      .sort({ secuencia: -1 })
+      .select('secuencia')
+      .lean()
+      .exec(),
+  ]);
+
+  const highest = Math.max(Number(lastDocumento?.secuencia ?? 0), Number(lastReserva?.secuencia ?? 0), 0);
+
+  try {
+    const created = await DocumentoConsecutivo.create([{ tipo, prefijo, valor: highest }], { session });
+    return created?.[0] ? created[0].toObject() : { tipo, prefijo, valor: highest };
+  } catch (error) {
+    if (error?.code === 11000) {
+      const retryQuery = DocumentoConsecutivo.findOne({ tipo, prefijo });
+      if (session) retryQuery.session(session);
+      return retryQuery.lean().exec();
+    }
+    throw error;
+  }
+};
+
+const getActiveReservations = async ({ tipo, prefijo, now = new Date(), session }) => {
+  const query = DocumentoSecuenciaReserva.find({
+    tipo,
+    prefijo,
+    estado: 'reservado',
+    expiresAt: { $gt: now },
+  })
+    .sort({ secuencia: 1 })
+    .select('secuencia');
+  if (session) query.session(session);
+  const reservas = await query.lean().exec();
+  return reservas.map((reserva) => Number(reserva?.secuencia ?? 0)).filter((value) => value > 0);
+};
+
+const pickNextAvailableSequence = async ({ tipo, prefijo, now = new Date(), session }) => {
+  const counter = await ensureCounterDocument({ tipo, prefijo, session });
+  const reservas = await getActiveReservations({ tipo, prefijo, now, session });
+  const reservedSet = new Set(reservas);
+  let candidate = Number(counter?.valor ?? 0) + 1;
+  while (reservedSet.has(candidate)) {
+    candidate += 1;
+  }
+  return candidate;
+};
+
+const raiseCounterTo = async ({ tipo, prefijo, value, session }) => {
+  if (!Number.isFinite(value)) return null;
+  return DocumentoConsecutivo.updateOne(
+    { tipo, prefijo },
+    { $max: { valor: Number(value) } },
+    { upsert: true, session },
+  ).exec();
+};
+
+const ensureReservaActiva = async ({ tipo, prefijo, usuarioId, now = new Date() }) => {
+  const expiresAt = new Date(now.getTime() + RESERVA_TTL_MINUTES * 60 * 1000);
+
+  const existing = await DocumentoSecuenciaReserva.findOne({
+    tipo,
+    prefijo,
+    usuario: usuarioId,
+    estado: 'reservado',
+    expiresAt: { $gt: now },
+  })
+    .lean()
+    .exec();
+
+  if (existing) {
+    const refreshed = await DocumentoSecuenciaReserva.findByIdAndUpdate(
+      existing._id,
+      { $set: { expiresAt, updatedAt: now } },
+      { new: true, lean: true },
+    ).exec();
+    return {
+      reserva: refreshed || existing,
+      nextSequence: Number((refreshed || existing)?.secuencia ?? 0),
+      expiresAt,
+    };
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const desiredSequence = await pickNextAvailableSequence({ tipo, prefijo, now });
+
+    try {
+      const reserva = await DocumentoSecuenciaReserva.findOneAndUpdate(
+        { tipo, prefijo, usuario: usuarioId, estado: 'reservado' },
+        {
+          $setOnInsert: {
+            tipo,
+            prefijo,
+            usuario: usuarioId,
+            estado: 'reservado',
+            createdAt: now,
+          },
+          $set: {
+            secuencia: desiredSequence,
+            expiresAt,
+            updatedAt: now,
+          },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true, lean: true },
+      ).exec();
+
+      return {
+        reserva,
+        nextSequence: Number(reserva?.secuencia ?? desiredSequence),
+        expiresAt,
+      };
+    } catch (error) {
+      if (error?.code === 11000) {
+        // Otro usuario tomó el número deseado; reintentar.
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const failure = new Error('No se pudo reservar el próximo número de ajuste. Intente nuevamente.');
+  failure.status = 503;
+  throw failure;
+};
+
+const consumirReserva = async ({ tipo, prefijo, usuarioId, secuencia, session }) => {
+  if (!usuarioId || !Number.isFinite(secuencia)) return null;
+
+  const filtroBase = { tipo, prefijo, usuario: usuarioId, secuencia, estado: 'reservado' };
+  const update = {
+    $set: {
+      estado: 'consumido',
+      consumidoEn: new Date(),
+    },
+  };
+
+  return DocumentoSecuenciaReserva.findOneAndUpdate(filtroBase, update, {
+    new: true,
+    lean: true,
+    session,
+  }).exec();
 };
 
 const aggregateItemsByProducto = (items = []) => {
@@ -322,6 +484,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   const isAjusteIncremental = tipo === 'AJ' && isAjusteIncrementalOperacion(ajusteOperacionRaw);
   const nroSugeridoRaw = body?.nroSugerido;
   const nroSugeridoProvided = nroSugeridoRaw !== undefined && nroSugeridoRaw !== null;
+  let ajusteNumeroNormalizado = null;
   if (tipo === 'AJ' && (isAjusteIncremental || nroSugeridoProvided)) {
     if (typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
       const message = isAjusteIncremental
@@ -337,10 +500,11 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
     }
+    ajusteNumeroNormalizado = nroSugeridoValidado;
     if (isAjusteIncremental) {
       ajusteIncrementNumero = nroSugeridoValidado;
     } else {
-      ajusteManualNumero = nroSugeridoRaw;
+      ajusteManualNumero = nroSugeridoValidado;
     }
   }
 
@@ -457,9 +621,6 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (tipo === 'R') {
     data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
   }
-  if (tipo === 'NR') {
-    data.NrodeDocumento = notaRecepcionNumero;
-  }
   if (tipo === 'AJ') {
     if (ajusteIncrementNumero) {
       data.NrodeDocumento = ajusteIncrementNumero;
@@ -487,6 +648,79 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   try {
     await session.startTransaction();
+
+    let secuenciaAsignada = null;
+
+    if (tipo === 'AJ') {
+      const numeroReferencia = ajusteNumeroNormalizado || data.NrodeDocumento || '';
+      const secuenciaReferencia = extractSecuenciaFromNumero(numeroReferencia);
+
+      if (secuenciaReferencia) {
+        const reservaConsumida = await consumirReserva({
+          tipo,
+          prefijo: resolvedPrefijo,
+          usuarioId: userId,
+          secuencia: secuenciaReferencia,
+          session,
+        });
+        if (!reservaConsumida) {
+          const error = new Error('El número de ajuste reservado expiró o fue utilizado. Solicitá uno nuevo.');
+          error.status = 409;
+          throw error;
+        }
+        secuenciaAsignada = secuenciaReferencia;
+        data.NrodeDocumento = `${resolvedPrefijo}${tipo}${padSecuencia(secuenciaAsignada)}`;
+        await raiseCounterTo({ tipo, prefijo: resolvedPrefijo, value: secuenciaAsignada, session });
+      } else {
+        secuenciaAsignada = await pickNextAvailableSequence({
+          tipo,
+          prefijo: resolvedPrefijo,
+          now: new Date(),
+          session,
+        });
+        await raiseCounterTo({ tipo, prefijo: resolvedPrefijo, value: secuenciaAsignada, session });
+        data.NrodeDocumento = `${resolvedPrefijo}${tipo}${padSecuencia(secuenciaAsignada)}`;
+      }
+    } else {
+      if (tipo === 'NR') {
+        const candidato = await pickNextAvailableSequence({
+          tipo,
+          prefijo: resolvedPrefijo,
+          now: new Date(),
+          session,
+        });
+        const numeroEsperado = `${resolvedPrefijo}${tipo}${padSecuencia(candidato)}`;
+        if (notaRecepcionNumero && notaRecepcionNumero !== numeroEsperado) {
+          const error = new Error(
+            'El número de nota de recepción cambió. Obtené el próximo número antes de grabar nuevamente.',
+          );
+          error.status = 409;
+          throw error;
+        }
+        secuenciaAsignada = candidato;
+        await raiseCounterTo({ tipo, prefijo: resolvedPrefijo, value: secuenciaAsignada, session });
+        data.NrodeDocumento = `${resolvedPrefijo}${tipo}${padSecuencia(secuenciaAsignada)}`;
+      } else {
+        secuenciaAsignada = await pickNextAvailableSequence({
+          tipo,
+          prefijo: resolvedPrefijo,
+          now: new Date(),
+          session,
+        });
+        await raiseCounterTo({ tipo, prefijo: resolvedPrefijo, value: secuenciaAsignada, session });
+        if (tipo === 'R' && !data.NrodeDocumento) {
+          data.NrodeDocumento = `${resolvedPrefijo}${tipo}${padSecuencia(secuenciaAsignada)}`;
+        }
+      }
+    }
+
+    if (!Number.isFinite(secuenciaAsignada) || secuenciaAsignada <= 0) {
+      const error = new Error('No se pudo determinar la secuencia del documento.');
+      error.status = 500;
+      throw error;
+    }
+
+    data.secuencia = secuenciaAsignada;
 
     const documento = new Documento(data);
     documentoDB = await documento.save({ session });
@@ -656,6 +890,53 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
 
   const responsePayload = { ok: true, documento: documentoRespuesta, stock: stockResult };
   res.status(201).json(responsePayload);
+}));
+
+router.get('/documentos/siguiente', [verificaToken], asyncHandler(async (req, res) => {
+  const tipo = normalizeTipo(req.query.tipo);
+  if (!tipo) return badRequest(res, 'Tipo de documento inválido. Use R, NR o AJ.');
+
+  const prefijo = normalizePrefijoInput(req.query.prefijo);
+  if (prefijo === null) return badRequest(res, 'El prefijo debe ser numérico de hasta 4 dígitos.');
+
+  const resolvedPrefijo = prefijo || '0001';
+  const userId = req.usuario?._id;
+  if (!userId) return res.status(401).json({ ok: false, err: { message: 'Usuario no autenticado' } });
+
+  const now = new Date();
+  let nextSequence = 1;
+  let reserva = null;
+
+  if (tipo === 'AJ') {
+    try {
+      const reservaInfo = await ensureReservaActiva({
+        tipo,
+        prefijo: resolvedPrefijo,
+        usuarioId: userId,
+        now,
+      });
+      reserva = reservaInfo?.reserva || null;
+      nextSequence = Math.max(1, Number(reservaInfo?.nextSequence ?? 1));
+    } catch (error) {
+      const status = error?.status || 500;
+      const message = error?.message || 'No se pudo reservar el número de ajuste.';
+      return res.status(status).json({ ok: false, err: { message } });
+    }
+  } else {
+    const peeked = await pickNextAvailableSequence({ tipo, prefijo: resolvedPrefijo, now });
+    nextSequence = Math.max(1, Number(peeked ?? 1));
+  }
+
+  const numero = `${resolvedPrefijo}${tipo}${padSecuencia(nextSequence)}`;
+
+  res.json({
+    ok: true,
+    nextSequence,
+    numero,
+    prefijo: resolvedPrefijo,
+    tipo,
+    reservadoHasta: reserva?.expiresAt ?? null,
+  });
 }));
 
 // -----------------------------------------------------------------------------
