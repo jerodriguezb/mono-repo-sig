@@ -70,6 +70,33 @@ const normalizeNotaRecepcionNumber = (numero, prefijo) => {
   if (!pattern.test(trimmed)) return null;
   return trimmed;
 };
+const buildNotaRecepcionRegex = (prefijo) => new RegExp(`^${prefijo}NR\\d{8}$`, 'i');
+const extractNotaRecepcionSecuencia = (numero) => {
+  if (typeof numero !== 'string') return null;
+  const trimmed = numero.trim().toUpperCase();
+  const match = trimmed.match(/NR(\d{8})$/);
+  if (!match) return null;
+  const secuencia = Number(match[1]);
+  return Number.isSafeInteger(secuencia) ? secuencia : null;
+};
+const obtenerSiguienteNumeroNotaRecepcion = async ({ prefijo, session }) => {
+  const prefijoNormalizado = prefijo || '0001';
+  const regex = buildNotaRecepcionRegex(prefijoNormalizado);
+  const ultimoDocumento = await Documento.findOne({
+    tipo: 'NR',
+    prefijo: prefijoNormalizado,
+    NrodeDocumento: { $regex: regex },
+  })
+    .sort({ NrodeDocumento: -1 })
+    .select({ NrodeDocumento: 1 })
+    .session(session)
+    .lean()
+    .exec();
+
+  const secuenciaActual = extractNotaRecepcionSecuencia(ultimoDocumento?.NrodeDocumento) || 0;
+  const siguienteSecuencia = secuenciaActual + 1;
+  return `${prefijoNormalizado}NR${padSecuencia(siguienteSecuencia)}`;
+};
 const normalizeAjusteIncrementNumber = (numero, prefijo) => {
   if (numero === undefined || numero === null) return null;
   const trimmed = numero.toString().trim().toUpperCase();
@@ -327,8 +354,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   let remitoNumero = null;
-  let notaRecepcionNumero = null;
+  let notaRecepcionNumeroManual = null;
   let ajusteManualNumero = null;
+  const shouldAutoAsignarNotaRecepcionNumero = tipo === 'NR';
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
@@ -336,12 +364,17 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     }
   }
   if (tipo === 'NR') {
-    notaRecepcionNumero = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
-    if (!notaRecepcionNumero) {
-      return badRequest(
-        res,
-        `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
-      );
+    if (numeroCrudo !== undefined && numeroCrudo !== null && `${numeroCrudo}`.trim() !== '') {
+      const notaRecepcionNumeroValidado = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
+      if (!notaRecepcionNumeroValidado) {
+        return badRequest(
+          res,
+          `El número de nota de recepción debe respetar el formato ${resolvedPrefijo}NR########.`,
+        );
+      }
+      if (!shouldAutoAsignarNotaRecepcionNumero) {
+        notaRecepcionNumeroManual = notaRecepcionNumeroValidado;
+      }
     }
   }
   const ajusteOperacionRaw = body?.ajusteOperacion ?? body?.operacionAjuste ?? body?.operacion;
@@ -479,8 +512,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   if (tipo === 'R') {
     baseDocumentoData.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
   }
-  if (tipo === 'NR') {
-    baseDocumentoData.NrodeDocumento = notaRecepcionNumero;
+  if (tipo === 'NR' && !shouldAutoAsignarNotaRecepcionNumero && notaRecepcionNumeroManual) {
+    baseDocumentoData.NrodeDocumento = notaRecepcionNumeroManual;
   }
   if (tipo === 'AJ') {
     if (ajusteManualNumero) {
@@ -503,7 +536,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     }
   }
 
-  const maxAutoAssignAttempts = shouldAutoAsignarAjusteNumero ? 5 : 1;
+  const shouldAutoAsignarNumero = shouldAutoAsignarAjusteNumero || shouldAutoAsignarNotaRecepcionNumero;
+  const maxAutoAssignAttempts = shouldAutoAsignarNumero ? 5 : 1;
   let documentoDB;
   let stockResult = { updates: [], errors: [] };
   let creationError = null;
@@ -517,6 +551,12 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
       const documentoData = { ...baseDocumentoData };
       if (shouldAutoAsignarAjusteNumero) {
         documentoData.NrodeDocumento = await obtenerSiguienteNumeroAjusteIncremental({
+          prefijo: resolvedPrefijo,
+          session,
+        });
+      }
+      if (shouldAutoAsignarNotaRecepcionNumero) {
+        documentoData.NrodeDocumento = await obtenerSiguienteNumeroNotaRecepcion({
           prefijo: resolvedPrefijo,
           session,
         });
@@ -687,7 +727,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         error?.code === 11000 ||
         error?.code === 11001 ||
         (typeof error?.message === 'string' && error.message.includes('E11000 duplicate key'));
-      if (shouldAutoAsignarAjusteNumero && isDuplicateKeyError && attempt < maxAutoAssignAttempts - 1) {
+      if (shouldAutoAsignarNumero && isDuplicateKeyError && attempt < maxAutoAssignAttempts - 1) {
         creationError = error;
         continue;
       }

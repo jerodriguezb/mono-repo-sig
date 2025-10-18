@@ -446,11 +446,11 @@ describe('POST /documentos', () => {
             codprod: producto.codprod,
           },
         ],
-        numeroSugerido: '0012NR00000001',
+        numeroSugerido: '0012NR00009999',
       };
     };
 
-    test('crea una NR con número válido y lo conserva', async () => {
+    test('crea una NR asignando el primer número consecutivo', async () => {
       const payload = buildPayload();
 
       const response = await postDocumento(payload, token);
@@ -475,19 +475,25 @@ describe('POST /documentos', () => {
       expect(Documento.__store).toHaveLength(0);
     });
 
-    test('rechaza la creación duplicada de una NR activa', async () => {
-      const payload = buildPayload();
+    test('asigna números consecutivos en NR con el mismo prefijo', async () => {
+      const primerPayload = buildPayload();
 
-      const primeraRespuesta = await postDocumento(payload, token);
+      const primeraRespuesta = await postDocumento(primerPayload, token);
       expect(primeraRespuesta.status).toBe(201);
       expect(primeraRespuesta.body.ok).toBe(true);
-      expect(Documento.__store).toHaveLength(1);
+      expect(primeraRespuesta.body.documento.NrodeDocumento).toBe('0012NR00000001');
 
-      const segundaRespuesta = await postDocumento(payload, token);
-      expect(segundaRespuesta.status).toBe(409);
-      expect(segundaRespuesta.body.ok).toBe(false);
-      expect(segundaRespuesta.body.err.message).toMatch(/Ya existe un documento activo/);
-      expect(Documento.__store).toHaveLength(1);
+      const segundoPayload = buildPayload();
+      const segundaRespuesta = await postDocumento(segundoPayload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.ok).toBe(true);
+      expect(segundaRespuesta.body.documento.NrodeDocumento).toBe('0012NR00000002');
+
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0012NR00000001',
+        '0012NR00000002',
+      ]);
     });
 
     test('suma las cantidades de productos repetidos y actualiza el stock una sola vez', async () => {
@@ -518,6 +524,69 @@ describe('POST /documentos', () => {
       });
       expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
       expect(Producserv.__store.get(producto._id).stkactual).toBe(5);
+    });
+
+    test('mantiene la secuencia de NR independiente de los ajustes', async () => {
+      const proveedor = crearProveedor();
+      const productoNR = crearProducto({ codprod: 'SKU-NR' });
+      const productoAJ = crearProducto({ codprod: 'SKU-AJ', stkactual: 5 });
+
+      const primeraNR = await postDocumento(
+        {
+          tipo: 'NR',
+          prefijo: '12',
+          fechaRemito: '2024-05-20',
+          proveedor: proveedor._id,
+          items: [
+            { cantidad: 2, producto: productoNR._id, codprod: productoNR.codprod },
+          ],
+          numeroSugerido: '0012NR00001234',
+        },
+        token,
+      );
+
+      expect(primeraNR.status).toBe(201);
+      expect(primeraNR.body.documento.NrodeDocumento).toBe('0012NR00000001');
+
+      const ajustePositivo = await postDocumento(
+        {
+          tipo: 'AJ',
+          prefijo: '0012',
+          fechaRemito: '2024-05-21',
+          proveedor: proveedor._id,
+          ajusteOperacion: 'increment',
+          nroSugerido: '0012AJ00005555',
+          items: [
+            { cantidad: 3, producto: productoAJ._id, codprod: productoAJ.codprod },
+          ],
+        },
+        token,
+      );
+
+      expect(ajustePositivo.status).toBe(201);
+      expect(ajustePositivo.body.documento.NrodeDocumento).toBe('0012AJ00000001');
+
+      const segundaNR = await postDocumento(
+        {
+          tipo: 'NR',
+          prefijo: '12',
+          fechaRemito: '2024-05-22',
+          proveedor: proveedor._id,
+          items: [
+            { cantidad: 1, producto: productoNR._id, codprod: productoNR.codprod },
+          ],
+        },
+        token,
+      );
+
+      expect(segundaNR.status).toBe(201);
+      expect(segundaNR.body.documento.NrodeDocumento).toBe('0012NR00000002');
+
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0012NR00000001',
+        '0012AJ00000001',
+        '0012NR00000002',
+      ]);
     });
 
     test('no incrementa stock cuando el producto está inactivo', async () => {
