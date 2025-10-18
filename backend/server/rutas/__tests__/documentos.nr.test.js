@@ -10,15 +10,90 @@ jest.mock('../../modelos/documento', () => {
   const store = [];
   const pendingBySession = new Map();
   const instanceStore = new Map();
-  const existsMock = jest.fn(async (query = {}) => {
-    const found = store.find((doc) => {
-      if (query.NrodeDocumento && doc.NrodeDocumento !== query.NrodeDocumento) return false;
-      if (Object.prototype.hasOwnProperty.call(query, 'activo') && doc.activo !== query.activo) return false;
+  const matchesQuery = (doc, query = {}) => {
+    if (!doc) return false;
+    const entries = Object.entries(query || {});
+    return entries.every(([key, value]) => {
+      if (key === 'NrodeDocumento') {
+        if (value && typeof value === 'object' && value.$regex) {
+          const regex = value.$regex instanceof RegExp
+            ? value.$regex
+            : new RegExp(value.$regex, value.$options);
+          return regex.test(doc.NrodeDocumento ?? '');
+        }
+        return doc.NrodeDocumento === value;
+      }
+      if (key === 'prefijo') {
+        return doc.prefijo === value;
+      }
+      if (key === 'tipo') {
+        return doc.tipo === value;
+      }
+      if (key === 'activo') {
+        return doc.activo === value;
+      }
       return true;
     });
+  };
+  const existsMock = jest.fn(async (query = {}) => {
+    const found = store.find((doc) => matchesQuery(doc, query));
     return found ? { _id: found._id } : null;
   });
   const findByIdMock = jest.fn();
+  const findOneMock = jest.fn((query = {}) => {
+    const state = {
+      query,
+      sort: null,
+      select: null,
+      lean: false,
+    };
+
+    const execute = async () => {
+      let results = store.filter((doc) => matchesQuery(doc, state.query));
+      if (state.sort && state.sort.NrodeDocumento) {
+        const direction = state.sort.NrodeDocumento;
+        results = [...results].sort((a, b) => {
+          const aValue = a.NrodeDocumento || '';
+          const bValue = b.NrodeDocumento || '';
+          return direction < 0 ? bValue.localeCompare(aValue) : aValue.localeCompare(bValue);
+        });
+      }
+      const found = results[0];
+      if (!found) return null;
+      let selected = found;
+      if (state.select) {
+        selected = {};
+        Object.entries(state.select).forEach(([key, enabled]) => {
+          if (enabled) selected[key] = found[key];
+        });
+      }
+      if (state.lean) {
+        return { ...selected };
+      }
+      return ensureInstance(selected._id);
+    };
+
+    const chain = {
+      sort(sortObj = {}) {
+        state.sort = sortObj;
+        return chain;
+      },
+      select(selectObj = {}) {
+        state.select = selectObj;
+        return chain;
+      },
+      session() {
+        return chain;
+      },
+      lean() {
+        state.lean = true;
+        return chain;
+      },
+      exec: () => execute(),
+    };
+
+    return chain;
+  });
 
   const cloneItems = (items = []) =>
     (Array.isArray(items) ? items.map((item) => ({ ...item })) : items);
@@ -133,6 +208,7 @@ jest.mock('../../modelos/documento', () => {
 
   DocumentoMock.exists = existsMock;
   DocumentoMock.findById = findByIdMock;
+  DocumentoMock.findOne = findOneMock;
   DocumentoMock.__store = store;
   DocumentoMock.__commitSession = (session) => {
     const pending = pendingBySession.get(session) || [];
@@ -154,6 +230,7 @@ jest.mock('../../modelos/documento', () => {
     store.length = 0;
     existsMock.mockClear();
     findByIdMock.mockClear();
+    findOneMock.mockClear();
     pendingBySession.clear();
     instanceStore.clear();
   };
@@ -233,11 +310,51 @@ jest.mock('../../modelos/producserv', () => {
   };
 });
 
+jest.mock('../../modelos/stock', () => ({
+  insertMany: jest.fn().mockResolvedValue(),
+}));
+
+jest.mock('../../modelos/tipomovimiento', () => {
+  const defaultStore = new Map([
+    ['COMPRA', { _id: 'mov-compra' }],
+    ['INGRESO POSITIVO', { _id: 'mov-ingreso-positivo' }],
+    ['AJUSTE+', { _id: 'mov-ajuste-positivo' }],
+    ['AJUSTE-', { _id: 'mov-ajuste-negativo' }],
+  ]);
+  const store = new Map(defaultStore);
+
+  const findOneMock = jest.fn((query = {}) => ({
+    select: () => ({
+      lean: () => ({
+        exec: async () => {
+          const movimiento = query?.movimiento;
+          if (movimiento && store.has(movimiento)) {
+            return store.get(movimiento);
+          }
+          return null;
+        },
+      }),
+    }),
+  }));
+
+  return {
+    findOne: findOneMock,
+    __reset: () => {
+      store.clear();
+      defaultStore.forEach((value, key) => {
+        store.set(key, { ...value });
+      });
+      findOneMock.mockClear();
+    },
+  };
+});
+
 process.env.JWT_SECRET = 'test-secret';
 
 const Documento = require('../../modelos/documento');
 const Proveedor = require('../../modelos/proveedor');
 const Producserv = require('../../modelos/producserv');
+const Tipomovimiento = require('../../modelos/tipomovimiento');
 const router = require('../documentos');
 
 const sessionStub = {
@@ -305,6 +422,7 @@ describe('POST /documentos', () => {
     Documento.__reset();
     Proveedor.__reset();
     Producserv.__reset();
+    Tipomovimiento.__reset();
     sessionStub.startTransaction.mockClear();
     sessionStub.commitTransaction.mockClear();
     sessionStub.abortTransaction.mockClear();
@@ -462,7 +580,7 @@ describe('POST /documentos', () => {
       expect(Documento.__store[0].NrodeDocumento).toBe(payload.nroSugerido);
     });
 
-    test('realiza un ajuste positivo sumando stock y conserva el número sugerido', async () => {
+    test('realiza un ajuste positivo sumando stock y asigna número consecutivo', async () => {
       const proveedor = crearProveedor();
       const producto = crearProducto({ stkactual: 4 });
 
@@ -491,7 +609,50 @@ describe('POST /documentos', () => {
       });
       expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
       expect(Producserv.__store.get(producto._id).stkactual).toBe(9);
-      expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000042');
+      expect(response.body.documento.NrodeDocumento).toBe('0007AJ00000001');
+      expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000001');
+    });
+
+    test('asigna números consecutivos a ajustes positivos ignorando sugerencias previas', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 8 });
+
+      const primerPayload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-06-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'increment',
+        nroSugerido: '0001AJ99999999',
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const primeraRespuesta = await postDocumento(primerPayload, token);
+
+      expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.documento.NrodeDocumento).toBe('0001AJ00000001');
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(10);
+
+      const segundoPayload = {
+        ...primerPayload,
+        fechaRemito: '2024-06-02',
+        nroSugerido: '0001AJ12345678',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const segundaRespuesta = await postDocumento(segundoPayload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.documento.NrodeDocumento).toBe('0001AJ00000002');
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(13);
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0001AJ00000001',
+        '0001AJ00000002',
+      ]);
     });
 
     test('persiste cantidades negativas cuando ajusteTipo indica ajuste (–)', async () => {
