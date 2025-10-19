@@ -613,8 +613,36 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         for (const item of items) {
           const delta = isAjusteIncremental ? item.cantidad : -item.cantidad;
           try {
-            const updatedProduct = await Producserv.findByIdAndUpdate(
-              item.producto,
+            const updateFilter = { _id: item.producto };
+            if (!isAjusteIncremental && delta < 0) {
+              const productoActual = await Producserv.findById(item.producto)
+                .session(session)
+                .select({ stkactual: 1 })
+                .lean();
+
+              if (!productoActual) {
+                attemptStockResult.errors.push(
+                  `No se encontró el producto ${item.codprod} para actualizar el stock.`,
+                );
+                continue;
+              }
+
+              const stockActual = Number(productoActual.stkactual ?? 0);
+              const stockResultante = stockActual + delta;
+              if (stockResultante < 0) {
+                const stockError = new Error(
+                  `No se puede ajustar el stock de ${item.codprod}: el resultado quedaría negativo.`,
+                );
+                stockError.status = 400;
+                stockError.code = 'STOCK_NEGATIVE';
+                throw stockError;
+              }
+
+              updateFilter.stkactual = { $gte: Math.abs(delta) };
+            }
+
+            const updatedProduct = await Producserv.findOneAndUpdate(
+              updateFilter,
               { $inc: { stkactual: delta } },
               { new: true, session },
             );
@@ -639,6 +667,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
           } catch (error) {
             const message = error?.message || 'operación fallida';
             attemptStockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+            if (error?.code === 'STOCK_NEGATIVE') {
+              throw error;
+            }
           }
         }
 
