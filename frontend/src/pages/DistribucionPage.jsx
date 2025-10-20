@@ -22,6 +22,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  TablePagination,
   TextField,
   Typography,
   useMediaQuery,
@@ -36,6 +37,7 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
@@ -113,6 +115,7 @@ export default function DistribucionPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
   const [saving, setSaving] = useState(false);
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -449,24 +452,28 @@ export default function DistribucionPage() {
         header: 'Producto',
         cell: (info) => info.getValue() ?? '—',
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'producto' },
       }),
       columnHelper.accessor('cantidad', {
         header: 'Cant',
         cell: (info) => quantityFormatter.format(Number(info.getValue() ?? 0)),
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'cantidad', align: 'right' },
       }),
       columnHelper.accessor('monto', {
         header: 'Precio unitario',
         cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'precio', align: 'right' },
       }),
       columnHelper.accessor('total', {
         header: 'Total',
         cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'total', align: 'right' },
       }),
       columnHelper.accessor('cantidadEntregada', {
@@ -486,12 +493,14 @@ export default function DistribucionPage() {
           );
         },
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'cantidad entregada', align: 'right' },
       }),
       columnHelper.accessor('totalEntregado', {
         header: 'Total entreg',
         cell: (info) => decimalFormatter.format(Number(info.getValue() ?? 0)),
         filterFn: 'includesString',
+        enableColumnFilter: false,
         meta: { filterLabel: 'total entregado', align: 'right' },
       }),
     ],
@@ -505,16 +514,22 @@ export default function DistribucionPage() {
       columnFilters,
       sorting,
       rowSelection,
+      pagination,
     },
     onColumnFiltersChange: setColumnFilters,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     enableRowSelection: true,
     filterFns,
     getRowId: (row) => row.rowId,
+    initialState: {
+      pagination: { pageIndex: 0, pageSize: 10 },
+    },
   });
 
   const renderColumnFilter = (column) => {
@@ -535,15 +550,24 @@ export default function DistribucionPage() {
     );
   };
 
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [columnFilters]);
+
   const selectedRows = table.getSelectedRowModel().rows;
   const hasEditedRows = Object.keys(editedRows).length > 0;
-  const totalRows = table.getRowModel().rows;
-  const totalRegistros = totalRows.length;
+  const pageRows = table.getRowModel().rows;
+  const filteredRows = table.getFilteredRowModel().rows;
+  const totalRegistros = filteredRows.length;
   let totalCantidadEntregada = 0;
   let totalMontoEntregado = 0;
-  totalRows.forEach((row) => {
+  let totalBultos = 0;
+  let valorTotal = 0;
+  filteredRows.forEach((row) => {
     totalCantidadEntregada += Number(row.original?.cantidadEntregada ?? 0);
     totalMontoEntregado += Number(row.original?.totalEntregado ?? 0);
+    totalBultos += Number(row.original?.cantidad ?? 0);
+    valorTotal += Number(row.original?.total ?? 0);
   });
 
   if (authState.checking) {
@@ -684,8 +708,8 @@ export default function DistribucionPage() {
         {loading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0 }} />}
         {isSmallScreen ? (
           <Stack spacing={1.5} sx={{ py: 0.5 }}>
-            {totalRows.length > 0 &&
-              totalRows.map((row) => {
+            {pageRows.length > 0 &&
+              pageRows.map((row) => {
                 const original = row.original;
                 const isEdited = Boolean(editedRows[original.rowId]);
                 return (
@@ -782,7 +806,7 @@ export default function DistribucionPage() {
                   </Box>
                 );
               })}
-            {!loading && totalRows.length === 0 && (
+            {!loading && pageRows.length === 0 && (
               <Typography align="center" sx={{ py: 3 }}>
                 No se encontraron comandas en distribución para el usuario actual.
               </Typography>
@@ -841,7 +865,7 @@ export default function DistribucionPage() {
                 ))}
               </TableHead>
               <TableBody>
-                {table.getRowModel().rows.map((row) => (
+                {pageRows.map((row) => (
                   <TableRow
                     key={row.id}
                     hover
@@ -859,7 +883,7 @@ export default function DistribucionPage() {
                     ))}
                   </TableRow>
                 ))}
-                {!loading && table.getRowModel().rows.length === 0 && (
+                {!loading && pageRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={columns.length}>
                       <Typography align="center" sx={{ py: 3 }}>
@@ -875,21 +899,49 @@ export default function DistribucionPage() {
       </Paper>
 
       <Paper sx={{ mt: 2, p: { xs: 2, sm: 2.5 } }} variant="outlined">
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={{ xs: 1, md: 2 }}
-          justifyContent="space-between"
-          alignItems={{ xs: 'flex-start', md: 'center' }}
-        >
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Total de registros: {totalRegistros}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Suma Cant entreg: {quantityFormatter.format(totalCantidadEntregada)}
-          </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            Suma Total entreg: {decimalFormatter.format(totalMontoEntregado)}
-          </Typography>
+        <Stack spacing={{ xs: 2, md: 1.5 }}>
+          <Grid container spacing={{ xs: 1.5, md: 2 }}>
+            <Grid item xs={12} md={4} lg={3}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Total de registros: {totalRegistros}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={4} lg={3}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Total de bultos: {quantityFormatter.format(totalBultos)}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={4} lg={3}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Valor total $: {decimalFormatter.format(valorTotal)}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={6} lg={3}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Suma Cant entreg: {quantityFormatter.format(totalCantidadEntregada)}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={6} lg={3}>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Suma Total entreg: {decimalFormatter.format(totalMontoEntregado)}
+              </Typography>
+            </Grid>
+          </Grid>
+          <TablePagination
+            component="div"
+            count={totalRegistros}
+            page={table.getState().pagination.pageIndex}
+            onPageChange={(_, newPage) => table.setPageIndex(newPage)}
+            rowsPerPage={table.getState().pagination.pageSize}
+            onRowsPerPageChange={(event) => {
+              const newSize = Number(event.target.value) || 10;
+              table.setPageSize(newSize);
+              table.setPageIndex(0);
+            }}
+            rowsPerPageOptions={[10]}
+            showFirstButton
+            showLastButton
+          />
         </Stack>
       </Paper>
 
