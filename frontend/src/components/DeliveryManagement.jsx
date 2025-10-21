@@ -3,14 +3,20 @@ import PropTypes from 'prop-types';
 import {
   Autocomplete,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
   Divider,
   Grid,
-  IconButton,
-  InputAdornment,
+  Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
   useMediaQuery,
@@ -20,7 +26,6 @@ import { alpha } from '@mui/material/styles';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 const clampDelivery = (value, max) => {
   const numeric = Number(value);
@@ -76,23 +81,26 @@ const getClientStatus = (client) => {
   return 'parcial';
 };
 
-const statusConfig = {
+const statusConfig = (theme) => ({
   pendiente: {
-    color: 'error',
+    color: theme.palette.info.main,
+    background: alpha(theme.palette.info.main, 0.12),
     label: 'Pendiente',
-    icon: <ScheduleIcon fontSize="small" />, 
+    icon: <ScheduleIcon fontSize="small" />,
   },
   parcial: {
-    color: 'warning',
+    color: theme.palette.warning.main,
+    background: alpha(theme.palette.warning.main, 0.12),
     label: 'Entrega parcial',
-    icon: <WarningAmberIcon fontSize="small" />, 
+    icon: <WarningAmberIcon fontSize="small" />,
   },
   completo: {
-    color: 'success',
+    color: theme.palette.success.main,
+    background: alpha(theme.palette.success.main, 0.12),
     label: 'Completo',
-    icon: <CheckCircleIcon fontSize="small" />, 
+    icon: <CheckCircleIcon fontSize="small" />,
   },
-};
+});
 
 export default function DeliveryManagement({ clients }) {
   const theme = useTheme();
@@ -125,6 +133,8 @@ export default function DeliveryManagement({ clients }) {
 
   const filteredClients = selectedClient ? [selectedClient] : clientsWithStatus;
 
+  const statusPalette = useMemo(() => statusConfig(theme), [theme]);
+
   const handleDeliveredChange = useCallback((clientId, orderId, value) => {
     setClientOrders((prev) =>
       prev.map((client) => {
@@ -143,21 +153,6 @@ export default function DeliveryManagement({ clients }) {
     );
   }, []);
 
-  const handleResetClient = useCallback((clientId) => {
-    setClientOrders((prev) =>
-      prev.map((client) => {
-        if (client.id !== clientId) return client;
-        return {
-          ...client,
-          orders: client.orders.map((order) => ({
-            ...order,
-            delivered: 0,
-          })),
-        };
-      }),
-    );
-  }, []);
-
   return (
     <Box sx={{ width: '100%', px: { xs: 1, sm: 2 } }}>
       <Stack spacing={2} sx={{ mb: 3 }}>
@@ -171,11 +166,64 @@ export default function DeliveryManagement({ clients }) {
               fullWidth
               options={clientsWithStatus}
               value={selectedClient}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
+              isOptionEqualToValue={(option, value) => option.id === value?.id}
               onChange={(_, newValue) => setSelectedClientId(newValue ? newValue.id : null)}
               getOptionLabel={(option) => option?.name ?? ''}
+              renderOption={(props, option) => {
+                const optionConfig = statusPalette[option.status] ?? statusPalette.pendiente;
+                return (
+                  <Box
+                    component="li"
+                    {...props}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        backgroundColor: optionConfig.color,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {option.name}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {optionConfig.label}
+                      </Typography>
+                    </Box>
+                  </Box>
+                );
+              }}
               renderInput={(params) => (
-                <TextField {...params} label="Buscar cliente" placeholder="Selecciona un cliente" />
+                <TextField
+                  {...params}
+                  label="Buscar cliente"
+                  placeholder="Selecciona un cliente"
+                  InputProps={{
+                    ...params.InputProps,
+                    startAdornment: selectedClient ? (
+                      <Box
+                        sx={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          backgroundColor:
+                            (statusPalette[selectedClient.status] ?? statusPalette.pendiente).color,
+                          mr: 1,
+                        }}
+                      />
+                    ) : (
+                      params.InputProps.startAdornment
+                    ),
+                  }}
+                />
               )}
             />
           </Box>
@@ -196,23 +244,25 @@ export default function DeliveryManagement({ clients }) {
 
       <Grid container spacing={2}>
         {filteredClients.map((client) => {
-          const config = statusConfig[client.status] ?? statusConfig.pendiente;
+          const config = statusPalette[client.status] ?? statusPalette.pendiente;
           return (
-            <Grid item xs={12} md={6} key={client.id}>
+            <Grid item xs={12} key={client.id}>
               <Card
                 variant="outlined"
                 sx={{
-                  borderColor:
-                    client.status === 'parcial'
-                      ? theme.palette.warning.light
-                      : theme.palette.divider,
-                  height: '100%',
+                  borderLeft: `8px solid ${config.color}`,
+                  backgroundColor: alpha(config.color, 0.04),
                   display: 'flex',
                   flexDirection: 'column',
                 }}
               >
-                <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+                <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1.5}
+                    justifyContent="space-between"
+                    alignItems={{ xs: 'flex-start', sm: 'center' }}
+                  >
                     <Box>
                       <Typography variant="h6" component="div">
                         {client.name}
@@ -221,81 +271,128 @@ export default function DeliveryManagement({ clients }) {
                         {client.address ?? 'Sin dirección registrada'}
                       </Typography>
                     </Box>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Chip
-                        size="small"
-                        icon={config.icon}
-                        color={config.color}
-                        label={config.label}
-                      />
-                      <IconButton
-                        aria-label="Reiniciar entregas"
-                        onClick={() => handleResetClient(client.id)}
-                        size="small"
-                      >
-                        <RestartAltIcon fontSize="small" />
-                      </IconButton>
-                    </Stack>
+                    <Chip
+                      icon={config.icon}
+                      label={config.label}
+                      sx={{
+                        backgroundColor: config.background,
+                        color: config.color,
+                        fontWeight: 600,
+                      }}
+                    />
                   </Stack>
 
                   <Divider />
 
-                  <Stack spacing={1.5}>
-                    {client.orders.map((order) => {
-                      const remaining = Math.max(Number(order.quantity ?? 0) - Number(order.delivered ?? 0), 0);
-                      const partial = Number(order.delivered ?? 0) > 0 && remaining > 0;
-                      return (
-                        <Box
-                          key={order.id}
-                          sx={{
-                            p: 1.5,
-                            borderRadius: 1.5,
-                            border: `1px solid ${theme.palette.divider}`,
-                            backgroundColor: partial
-                              ? alpha(theme.palette.warning.light, 0.18)
-                              : theme.palette.background.default,
-                          }}
-                        >
-                          <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center">
-                              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                                {order.description}
-                              </Typography>
-                              {partial && (
-                                <WarningAmberIcon sx={{ color: theme.palette.warning.main }} fontSize="small" />
-                              )}
-                            </Stack>
-                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
-                              <TextField
-                                type="number"
-                                label="Cantidad a entregar"
-                                value={order.delivered ?? 0}
-                                onChange={(event) =>
-                                  handleDeliveredChange(client.id, order.id, event.target.value)
-                                }
-                                size="small"
-                                InputProps={{
-                                  inputProps: {
-                                    min: 0,
-                                    max: order.quantity,
-                                  },
-                                  endAdornment: (
-                                    <InputAdornment position="end">
-                                      / {order.quantity}
-                                    </InputAdornment>
-                                  ),
-                                }}
-                                sx={{ minWidth: 160, flex: 1 }}
-                              />
-                              <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-                                Restan {remaining} unidades por entregar.
-                              </Typography>
-                            </Stack>
-                          </Stack>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
+                  <TableContainer
+                    component={Paper}
+                    variant="outlined"
+                    sx={{
+                      borderRadius: 2,
+                      borderColor: alpha(config.color, 0.4),
+                      overflowX: 'auto',
+                    }}
+                  >
+                    <Table size="medium" aria-label={`Productos de ${client.name}`} sx={{ minWidth: 320 }}>
+                      <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 700 }}>Producto</TableCell>
+                          <TableCell align="center" sx={{ fontWeight: 700 }}>
+                            Cantidad solicitada
+                          </TableCell>
+                          <TableCell align="center" sx={{ fontWeight: 700 }}>
+                            Cantidad entregada
+                          </TableCell>
+                          <TableCell align="center" sx={{ fontWeight: 700 }}>
+                            Ajustar entrega
+                          </TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {client.orders.map((order) => {
+                          const quantity = Number(order.quantity ?? 0);
+                          const delivered = Number(order.delivered ?? 0);
+                          const remaining = Math.max(quantity - delivered, 0);
+                          return (
+                            <TableRow
+                              key={order.id}
+                              sx={{
+                                backgroundColor: alpha(config.color, 0.08),
+                                '&:nth-of-type(odd)': {
+                                  backgroundColor: alpha(config.color, 0.14),
+                                },
+                                display: { xs: 'grid', sm: 'table-row' },
+                                gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))' },
+                                gap: { xs: 1, sm: 0 },
+                                borderColor: alpha(config.color, 0.2),
+                                borderWidth: { xs: '0 0 1px', sm: undefined },
+                                borderStyle: { xs: 'solid', sm: undefined },
+                                '& td': {
+                                  borderBottom: { xs: 'none', sm: `1px solid ${alpha(config.color, 0.2)}` },
+                                  px: { xs: 1, sm: 2 },
+                                  py: { xs: 1, sm: 1.5 },
+                                },
+                              }}
+                            >
+                              <TableCell component="th" scope="row" sx={{ fontWeight: 600 }}>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  {order.description}
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: { xs: 'block', sm: 'none' }, mt: 0.5 }}
+                                >
+                                  Solicitado: {quantity}
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: { xs: 'block', sm: 'none' } }}
+                                >
+                                  Entregado: {delivered}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  {quantity}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                                <Typography variant="body2">{delivered}</Typography>
+                              </TableCell>
+                              <TableCell sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: { xs: 'column', sm: 'row' },
+                                gap: 1,
+                              }}>
+                                <TextField
+                                  type="number"
+                                  label="Entrega"
+                                  value={delivered}
+                                  onChange={(event) =>
+                                    handleDeliveredChange(client.id, order.id, event.target.value)
+                                  }
+                                  inputProps={{ min: 0, max: quantity, inputMode: 'numeric', pattern: '[0-9]*' }}
+                                  fullWidth
+                                  size="medium"
+                                />
+                                <Typography variant="caption" color="text.secondary">
+                                  Restan {remaining}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+
+                  <Button variant="contained" color="primary" fullWidth size="large">
+                    Guardar cambios
+                  </Button>
                 </CardContent>
               </Card>
             </Grid>
