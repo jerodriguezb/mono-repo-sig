@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -41,6 +43,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { alpha } from '@mui/material/styles';
 import api from '../api/axios';
 
 const columnHelper = createColumnHelper();
@@ -116,6 +119,98 @@ export default function DistribucionPage() {
   const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
   const [saving, setSaving] = useState(false);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [selectedClientId, setSelectedClientId] = useState(null);
+  const statusVisuals = useMemo(
+    () => ({
+      complete: {
+        label: 'Entrega completa',
+        color: theme.palette.success.main,
+        soft: alpha(theme.palette.success.main, 0.16),
+        border: alpha(theme.palette.success.main, 0.32),
+      },
+      partial: {
+        label: 'Entrega parcial',
+        color: theme.palette.warning.main,
+        soft: alpha(theme.palette.warning.main, 0.16),
+        border: alpha(theme.palette.warning.main, 0.32),
+      },
+      pending: {
+        label: 'Pendiente de entrega',
+        color: theme.palette.info.main,
+        soft: alpha(theme.palette.info.main, 0.16),
+        border: alpha(theme.palette.info.main, 0.32),
+      },
+    }),
+    [theme],
+  );
+
+  const clientSummaries = useMemo(() => {
+    const summaryMap = new Map();
+    rows.forEach((row) => {
+      const key = row.clienteId ?? row.clienteNombre ?? 'cliente-desconocido';
+      if (!summaryMap.has(key)) {
+        summaryMap.set(key, {
+          id: key,
+          name: row.clienteNombre ?? 'Cliente sin nombre',
+          totalItems: 0,
+          completeCount: 0,
+          partialCount: 0,
+          pendingCount: 0,
+        });
+      }
+
+      const summary = summaryMap.get(key);
+      summary.totalItems += 1;
+
+      const requestedRaw = Number(row?.cantidad ?? 0);
+      const deliveredRaw = Number(row?.cantidadEntregada ?? 0);
+      const requested = Number.isFinite(requestedRaw) ? requestedRaw : 0;
+      const delivered = Number.isFinite(deliveredRaw) ? deliveredRaw : 0;
+
+      const isCompleteItem = requested <= 0 ? delivered >= requested : delivered >= requested;
+      const isPartialItem = delivered > 0 && delivered < requested;
+      const isPendingItem = !isCompleteItem && !isPartialItem;
+
+      if (isCompleteItem) summary.completeCount += 1;
+      if (isPartialItem) summary.partialCount += 1;
+      if (isPendingItem) summary.pendingCount += 1;
+    });
+
+    return Array.from(summaryMap.values())
+      .map((summary) => {
+        let status = 'complete';
+        if (summary.pendingCount === summary.totalItems) {
+          status = 'pending';
+        } else if (summary.completeCount === summary.totalItems) {
+          status = 'complete';
+        } else {
+          status = 'partial';
+        }
+
+        return {
+          ...summary,
+          status,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+  }, [rows]);
+
+  const pendingClients = useMemo(
+    () => clientSummaries.filter((summary) => summary.status !== 'complete'),
+    [clientSummaries],
+  );
+
+  const selectedClientSummary = useMemo(
+    () => clientSummaries.find((summary) => summary.id === selectedClientId) ?? null,
+    [clientSummaries, selectedClientId],
+  );
+
+  const autocompleteOptions = useMemo(() => {
+    if (!selectedClientSummary) return pendingClients;
+    const alreadyIncluded = pendingClients.some((summary) => summary.id === selectedClientSummary.id);
+    if (alreadyIncluded) return pendingClients;
+    return [...pendingClients, selectedClientSummary];
+  }, [pendingClients, selectedClientSummary]);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -146,6 +241,7 @@ export default function DistribucionPage() {
         result.push({
           rowId,
           comandaId: comanda?._id ?? null,
+          clienteId: comanda?.codcli?._id ? String(comanda.codcli._id) : clienteNombre,
           itemId: itemId ?? `item-${index}`,
           nrodecomanda: comanda?.nrodecomanda ?? '',
           clienteNombre,
@@ -233,6 +329,27 @@ export default function DistribucionPage() {
     if (!estadoDistribucionId || !authState.userId) return;
     fetchComandas(estadoDistribucionId, authState.userId);
   }, [authState.role, authState.userId, estadoDistribucionId, fetchComandas]);
+
+  useEffect(() => {
+    if (!clientSummaries.length) {
+      setSelectedClientId(null);
+      return;
+    }
+
+    const currentExists = selectedClientId
+      ? clientSummaries.some((client) => client.id === selectedClientId)
+      : false;
+
+    if (currentExists) return;
+
+    const target = pendingClients[0] ?? clientSummaries[0];
+    setSelectedClientId(target?.id ?? null);
+  }, [clientSummaries, pendingClients, selectedClientId]);
+
+  useEffect(() => {
+    setRowSelection({});
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [selectedClientId]);
 
   const showSnackbar = useCallback((message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
@@ -507,8 +624,13 @@ export default function DistribucionPage() {
     [handleCantidadEntregadaChange, isTabletDown],
   );
 
+  const tableData = useMemo(
+    () => (selectedClientId ? rows.filter((row) => row.clienteId === selectedClientId) : rows),
+    [rows, selectedClientId],
+  );
+
   const table = useReactTable({
-    data: rows,
+    data: tableData,
     columns,
     state: {
       columnFilters,
@@ -594,6 +716,21 @@ export default function DistribucionPage() {
     .getAllLeafColumns()
     .filter((column) => column.getCanFilter());
   const isSmallScreen = isMobile;
+  const tableStatusVisual =
+    statusVisuals[selectedClientSummary?.status ?? 'pending'] ?? statusVisuals.pending;
+  const tableRowBaseBg = useMemo(
+    () => alpha(tableStatusVisual.color, 0.06),
+    [tableStatusVisual.color],
+  );
+  const tableRowHoverBg = useMemo(
+    () => alpha(tableStatusVisual.color, 0.12),
+    [tableStatusVisual.color],
+  );
+  const tableHeaderBg = useMemo(
+    () => alpha(tableStatusVisual.color, 0.18),
+    [tableStatusVisual.color],
+  );
+  const editedRowBg = useMemo(() => alpha(theme.palette.primary.main, 0.18), [theme]);
 
   return (
     <Box sx={{ px: { xs: 1, sm: 2 }, pb: 4 }}>
@@ -616,6 +753,127 @@ export default function DistribucionPage() {
           </Typography>
         </Stack>
       </Box>
+
+      <Paper
+        sx={{
+          mb: 3,
+          p: { xs: 2, sm: 3 },
+          borderRadius: 3,
+          bgcolor: selectedClientSummary
+            ? alpha(statusVisuals[selectedClientSummary.status]?.color ?? theme.palette.primary.main, 0.04)
+            : 'background.paper',
+        }}
+        variant="outlined"
+      >
+        <Stack spacing={2}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+            Clientes en distribución
+          </Typography>
+          <Autocomplete
+            options={autocompleteOptions}
+            value={selectedClientSummary}
+            onChange={(_, newValue) => setSelectedClientId(newValue?.id ?? null)}
+            getOptionLabel={(option) => option?.name ?? ''}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            fullWidth
+            clearOnBlur={false}
+            handleHomeEndKeys
+            noOptionsText={
+              pendingClients.length
+                ? 'Sin coincidencias'
+                : 'No hay clientes con entregas pendientes'
+            }
+            renderOption={(props, option) => {
+              const visual = statusVisuals[option.status] ?? statusVisuals.pending;
+              return (
+                <Box
+                  component="li"
+                  {...props}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}
+                >
+                  <Box
+                    sx={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: '50%',
+                      bgcolor: visual.color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body1" sx={{ fontWeight: 600 }} noWrap>
+                      {option.name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {visual.label} · {option.totalItems} ítem
+                      {option.totalItems === 1 ? '' : 's'}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            }}
+            renderInput={(params) => {
+              const visual = selectedClientSummary
+                ? statusVisuals[selectedClientSummary.status] ?? statusVisuals.pending
+                : null;
+              return (
+                <TextField
+                  {...params}
+                  label="Cliente asignado"
+                  placeholder="Selecciona un cliente"
+                  InputProps={{
+                    ...params.InputProps,
+                    sx: {
+                      borderRadius: 2,
+                      minHeight: 58,
+                      alignItems: 'center',
+                      fontSize: '1rem',
+                    },
+                    startAdornment: visual ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            bgcolor: visual.color,
+                          }}
+                        />
+                      </Box>
+                    ) : (
+                      params.InputProps.startAdornment
+                    ),
+                  }}
+                />
+              );
+            }}
+          />
+          {selectedClientSummary ? (
+            <Chip
+              label={`${
+                statusVisuals[selectedClientSummary.status]?.label ?? 'Estado sin definir'
+              } · ${selectedClientSummary.totalItems} ítem${
+                selectedClientSummary.totalItems === 1 ? '' : 's'
+              }`}
+              sx={{
+                alignSelf: { xs: 'stretch', sm: 'flex-start' },
+                bgcolor:
+                  statusVisuals[selectedClientSummary.status]?.soft ?? theme.palette.action.hover,
+                color:
+                  statusVisuals[selectedClientSummary.status]?.color ?? theme.palette.text.primary,
+                fontWeight: 600,
+                px: 1.5,
+                py: 1,
+                borderRadius: 2,
+              }}
+            />
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Selecciona un cliente con entregas pendientes para ver sus productos y cantidades.
+            </Typography>
+          )}
+        </Stack>
+      </Paper>
 
       {isSmallScreen && filterableColumns.length > 0 && (
         <Paper sx={{ mb: 2, p: 2, borderRadius: 2 }} variant="outlined">
@@ -654,55 +912,69 @@ export default function DistribucionPage() {
         </Alert>
       )}
 
-      <Stack
-        direction={{ xs: 'column', md: 'row' }}
-        spacing={{ xs: 1.5, md: 2 }}
-        justifyContent="space-between"
-        alignItems={{ xs: 'stretch', md: 'center' }}
-        sx={{ mb: 2 }}
-      >
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={{ xs: 1.5, sm: 1 }}
-          flexWrap="wrap"
-          sx={{ width: { xs: '100%', sm: 'auto' } }}
-        >
+      <Grid container spacing={{ xs: 1.5, md: 2 }} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={4}>
           <Button
             variant="contained"
             startIcon={<DoneAllIcon />}
             onClick={handleMassiveDialogOpen}
             disabled={selectedCount === 0}
-            fullWidth={isTabletDown}
-            sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
+            fullWidth
+            sx={{
+              minHeight: 62,
+              borderRadius: 2.5,
+              fontSize: '1rem',
+              fontWeight: 700,
+            }}
           >
             Entrega Masiva
           </Button>
+        </Grid>
+        <Grid item xs={12} md={4}>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
             onClick={handleReload}
-            fullWidth={isTabletDown}
-            sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
+            fullWidth
+            sx={{
+              minHeight: 62,
+              borderRadius: 2.5,
+              fontSize: '1rem',
+              fontWeight: 700,
+            }}
           >
             Recargar
           </Button>
-        </Stack>
-        <Button
-          variant="contained"
-          color="success"
-          startIcon={<SaveIcon />}
-          onClick={handleSaveChanges}
-          disabled={!hasEditedRows || saving}
-          fullWidth={isTabletDown}
-          size="large"
-          sx={{ minHeight: 56, borderRadius: 2.5, px: 3, fontWeight: 600 }}
-        >
-          {saving ? 'Guardando…' : 'Guardar cambios'}
-        </Button>
-      </Stack>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={<SaveIcon />}
+            onClick={handleSaveChanges}
+            disabled={!hasEditedRows || saving}
+            fullWidth
+            size="large"
+            sx={{
+              minHeight: 62,
+              borderRadius: 2.5,
+              fontSize: '1rem',
+              fontWeight: 700,
+            }}
+          >
+            {saving ? 'Guardando…' : 'Guardar cambios'}
+          </Button>
+        </Grid>
+      </Grid>
 
       <Paper
-        sx={{ position: 'relative', p: isSmallScreen ? 1.5 : 0 }}
+        sx={{
+          position: 'relative',
+          p: isSmallScreen ? 1.5 : 0,
+          borderRadius: 3,
+          borderColor: tableStatusVisual.border ?? 'divider',
+          boxShadow: `0 6px 18px ${alpha(tableStatusVisual.color, 0.12)}`,
+        }}
         variant="outlined"
       >
         {loading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0 }} />}
@@ -719,8 +991,10 @@ export default function DistribucionPage() {
                       p: 2,
                       borderRadius: 2,
                       border: '1px solid',
-                      borderColor: isEdited ? 'primary.main' : 'divider',
-                      bgcolor: isEdited ? 'action.hover' : 'background.paper',
+                      borderColor: isEdited
+                        ? theme.palette.primary.main
+                        : tableStatusVisual.border ?? theme.palette.divider,
+                      bgcolor: isEdited ? editedRowBg : tableRowBaseBg,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 1.5,
@@ -807,9 +1081,11 @@ export default function DistribucionPage() {
                 );
               })}
             {!loading && pageRows.length === 0 && (
-              <Typography align="center" sx={{ py: 3 }}>
-                No se encontraron comandas en distribución para el usuario actual.
-              </Typography>
+              <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">
+                  No se encontraron productos para el cliente seleccionado en este momento.
+                </Typography>
+              </Paper>
             )}
           </Stack>
         ) : (
@@ -832,12 +1108,15 @@ export default function DistribucionPage() {
             >
               <TableHead>
                 {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
+                  <TableRow key={headerGroup.id} sx={{ bgcolor: tableHeaderBg }}>
                     {headerGroup.headers.map((header) => (
                       <TableCell
                         key={header.id}
                         align={header.column.columnDef.meta?.align ?? 'left'}
-                        sx={{ bgcolor: 'background.paper' }}
+                        sx={{
+                          bgcolor: 'transparent',
+                          borderBottomColor: tableStatusVisual.border ?? 'divider',
+                        }}
                       >
                         {header.isPlaceholder ? null : (
                           <Stack spacing={1}>
@@ -870,7 +1149,10 @@ export default function DistribucionPage() {
                     key={row.id}
                     hover
                     sx={{
-                      bgcolor: editedRows[row.original.rowId] ? 'action.hover' : undefined,
+                      bgcolor: editedRows[row.original.rowId] ? editedRowBg : tableRowBaseBg,
+                      '&:hover': {
+                        bgcolor: editedRows[row.original.rowId] ? editedRowBg : tableRowHoverBg,
+                      },
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (
@@ -887,7 +1169,7 @@ export default function DistribucionPage() {
                   <TableRow>
                     <TableCell colSpan={columns.length}>
                       <Typography align="center" sx={{ py: 3 }}>
-                        No se encontraron comandas en distribución para el usuario actual.
+                        No se encontraron productos para el cliente seleccionado en este momento.
                       </Typography>
                     </TableCell>
                   </TableRow>
