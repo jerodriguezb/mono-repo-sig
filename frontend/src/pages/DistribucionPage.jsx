@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -28,6 +30,7 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -110,6 +113,7 @@ export default function DistribucionPage() {
   const [sorting, setSorting] = useState([]);
   const [rowSelection, setRowSelection] = useState({});
   const [editedRows, setEditedRows] = useState({});
+  const [selectedClienteId, setSelectedClienteId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
@@ -136,6 +140,16 @@ export default function DistribucionPage() {
     const result = [];
     comandas.forEach((comanda) => {
       const clienteNombre = comanda?.codcli?.razonsocial ?? '';
+      const rawClienteId =
+        comanda?.codcli?._id ??
+        comanda?.codcli?.codigo ??
+        comanda?.codcli?.codcli ??
+        null;
+      const clienteId = rawClienteId
+        ? String(rawClienteId)
+        : clienteNombre
+          ? `cliente-${normalizeText(clienteNombre)}`
+          : `cliente-${comanda?._id ?? Math.random()}`;
       const items = Array.isArray(comanda?.items) ? comanda.items : [];
       items.forEach((item, index) => {
         const itemId = item?._id ? String(item._id) : null;
@@ -148,6 +162,7 @@ export default function DistribucionPage() {
           comandaId: comanda?._id ?? null,
           itemId: itemId ?? `item-${index}`,
           nrodecomanda: comanda?.nrodecomanda ?? '',
+          clienteId,
           clienteNombre,
           productoDescripcion: item?.codprod?.descripcion ?? '',
           cantidad,
@@ -411,6 +426,129 @@ export default function DistribucionPage() {
     [],
   );
 
+  const statusVisuals = useMemo(() => {
+    const buildTokens = (color, label) => ({
+      main: color,
+      soft: alpha(color, 0.16),
+      label,
+      contrast: theme.palette.getContrastText(color),
+    });
+    return {
+      complete: buildTokens(theme.palette.success.main, 'Entrega completa'),
+      partial: buildTokens(theme.palette.warning.main, 'Entrega parcial'),
+      pending: buildTokens(theme.palette.info.main, 'Pendiente'),
+    };
+  }, [theme]);
+
+  const { clientOptions, clientStatusLookup } = useMemo(() => {
+    const summaryByClient = new Map();
+    rows.forEach((row) => {
+      const clientKey = row.clienteId ?? `cliente-${row.rowId}`;
+      if (!summaryByClient.has(clientKey)) {
+        summaryByClient.set(clientKey, {
+          id: clientKey,
+          label: row.clienteNombre ?? 'Cliente sin nombre',
+          comandas: new Set(),
+          totalItems: 0,
+          deliveredFull: 0,
+          deliveredPartial: 0,
+          deliveredNone: 0,
+        });
+      }
+      const summary = summaryByClient.get(clientKey);
+      summary.totalItems += 1;
+      if (row.nrodecomanda) {
+        summary.comandas.add(String(row.nrodecomanda));
+      }
+      const cantidad = Number(row.cantidad ?? 0);
+      const cantidadEntregada = Number(row.cantidadEntregada ?? 0);
+      if (cantidad <= 0) {
+        summary.deliveredFull += 1;
+      } else if (cantidadEntregada >= cantidad) {
+        summary.deliveredFull += 1;
+      } else if (cantidadEntregada <= 0) {
+        summary.deliveredNone += 1;
+      } else {
+        summary.deliveredPartial += 1;
+      }
+    });
+
+    const statusPriority = { pending: 0, partial: 1, complete: 2 };
+    const options = [];
+    const lookup = new Map();
+
+    summaryByClient.forEach((summary) => {
+      let status = 'pending';
+      if (summary.totalItems === summary.deliveredFull) {
+        status = 'complete';
+      } else if (
+        summary.deliveredPartial > 0 ||
+        (summary.deliveredFull > 0 && summary.deliveredNone > 0)
+      ) {
+        status = 'partial';
+      } else if (summary.deliveredNone === summary.totalItems) {
+        status = 'pending';
+      } else if (summary.deliveredFull > 0) {
+        status = 'partial';
+      }
+
+      lookup.set(summary.id, status);
+      options.push({
+        id: summary.id,
+        label: summary.label,
+        status,
+        comandas: Array.from(summary.comandas).sort((a, b) => a.localeCompare(b, 'es')),
+        totalItems: summary.totalItems,
+        deliveredFull: summary.deliveredFull,
+        deliveredPartial: summary.deliveredPartial,
+        deliveredNone: summary.deliveredNone,
+      });
+    });
+
+    options.sort((a, b) => {
+      const priorityDiff = (statusPriority[a.status] ?? 0) - (statusPriority[b.status] ?? 0);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.label.localeCompare(b.label, 'es');
+    });
+
+    const pendingOptions = options.filter((option) => option.status !== 'complete');
+    const effectiveOptions = pendingOptions.length > 0 ? pendingOptions : options;
+
+    return { clientOptions: effectiveOptions, clientStatusLookup: lookup };
+  }, [rows]);
+
+  const selectedClientOption = useMemo(
+    () => clientOptions.find((option) => option.id === selectedClienteId) ?? null,
+    [clientOptions, selectedClienteId],
+  );
+
+  const selectedClientVisuals = selectedClientOption
+    ? statusVisuals[selectedClientOption.status] ?? statusVisuals.pending
+    : null;
+
+  const visibleRows = useMemo(() => {
+    if (!selectedClienteId) return rows;
+    return rows.filter((row) => row.clienteId === selectedClienteId);
+  }, [rows, selectedClienteId]);
+
+  useEffect(() => {
+    if (!clientOptions.length) {
+      if (selectedClienteId !== null) {
+        setSelectedClienteId(null);
+      }
+      return;
+    }
+    const exists = clientOptions.some((option) => option.id === selectedClienteId);
+    if (!exists) {
+      setSelectedClienteId(clientOptions[0].id);
+    }
+  }, [clientOptions, selectedClienteId]);
+
+  useEffect(() => {
+    setRowSelection({});
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [selectedClienteId]);
+
   const columns = useMemo(
     () => [
       columnHelper.display({
@@ -444,7 +582,27 @@ export default function DistribucionPage() {
       }),
       columnHelper.accessor('clienteNombre', {
         header: 'Cliente',
-        cell: (info) => info.getValue() ?? '—',
+        cell: (info) => {
+          const row = info.row.original;
+          const status = clientStatusLookup.get(row.clienteId) ?? 'pending';
+          const visuals = statusVisuals[status] ?? statusVisuals.pending;
+          return (
+            <Stack direction="row" alignItems="center" spacing={1.25}>
+              <Box
+                sx={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: '50%',
+                  bgcolor: visuals.main,
+                  boxShadow: `0 0 0 2px ${alpha(visuals.main, 0.16)}`,
+                }}
+              />
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                {info.getValue() ?? '—'}
+              </Typography>
+            </Stack>
+          );
+        },
         filterFn: 'includesString',
         meta: { filterLabel: 'cliente' },
       }),
@@ -504,11 +662,11 @@ export default function DistribucionPage() {
         meta: { filterLabel: 'total entregado', align: 'right' },
       }),
     ],
-    [handleCantidadEntregadaChange, isTabletDown],
+    [clientStatusLookup, handleCantidadEntregadaChange, isTabletDown, statusVisuals],
   );
 
   const table = useReactTable({
-    data: rows,
+    data: visibleRows,
     columns,
     state: {
       columnFilters,
@@ -654,52 +812,189 @@ export default function DistribucionPage() {
         </Alert>
       )}
 
-      <Stack
-        direction={{ xs: 'column', md: 'row' }}
+      <Grid
+        container
         spacing={{ xs: 1.5, md: 2 }}
-        justifyContent="space-between"
-        alignItems={{ xs: 'stretch', md: 'center' }}
+        alignItems="stretch"
         sx={{ mb: 2 }}
       >
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={{ xs: 1.5, sm: 1 }}
-          flexWrap="wrap"
-          sx={{ width: { xs: '100%', sm: 'auto' } }}
-        >
-          <Button
-            variant="contained"
-            startIcon={<DoneAllIcon />}
-            onClick={handleMassiveDialogOpen}
-            disabled={selectedCount === 0}
-            fullWidth={isTabletDown}
-            sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
+        <Grid item xs={12} md={5} lg={4}>
+          <Autocomplete
+            options={clientOptions}
+            value={selectedClientOption}
+            onChange={(_, newValue) => {
+              setSelectedClienteId(newValue ? newValue.id : null);
+            }}
+            getOptionLabel={(option) => option.label}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            noOptionsText="Sin clientes con entregas registradas"
+            disableClearable={clientOptions.length > 0}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Seleccioná un cliente"
+                placeholder="Clientes con entregas pendientes"
+                InputProps={{
+                  ...params.InputProps,
+                  startAdornment: (
+                    <>
+                      {selectedClientVisuals && (
+                        <Box
+                          component="span"
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            bgcolor: selectedClientVisuals.main,
+                            boxShadow: `0 0 0 2px ${alpha(selectedClientVisuals.main, 0.18)}`,
+                            mr: 1.5,
+                            ml: 0.5,
+                          }}
+                        />
+                      )}
+                      {params.InputProps.startAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
+            renderOption={(props, option) => {
+              const visuals = statusVisuals[option.status] ?? statusVisuals.pending;
+              return (
+                <li
+                  {...props}
+                  key={option.id}
+                  style={{
+                    ...props.style,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.25,
+                      width: '100%',
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        bgcolor: visuals.main,
+                        boxShadow: `0 0 0 2px ${alpha(visuals.main, 0.2)}`,
+                      }}
+                    />
+                    <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontWeight: 600, lineHeight: 1.2 }}
+                        noWrap
+                      >
+                        {option.label}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap>
+                        {option.comandas.length > 0
+                          ? `Comandas: ${option.comandas.join(', ')}`
+                          : 'Sin número de comanda'}
+                      </Typography>
+                    </Box>
+                    <Chip
+                      label={visuals.label}
+                      size="small"
+                      sx={{
+                        bgcolor: alpha(visuals.main, 0.18),
+                        color: visuals.main,
+                        fontWeight: 600,
+                      }}
+                    />
+                  </Box>
+                </li>
+              );
+            }}
+            ListboxProps={{ style: { padding: 8 } }}
+            fullWidth
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                minHeight: 56,
+                bgcolor: selectedClientVisuals
+                  ? alpha(selectedClientVisuals.main, 0.08)
+                  : 'background.paper',
+                transition: 'background-color 0.2s ease',
+                '& fieldset': {
+                  borderColor: selectedClientVisuals
+                    ? alpha(selectedClientVisuals.main, 0.4)
+                    : undefined,
+                },
+                '&:hover fieldset': {
+                  borderColor: selectedClientVisuals
+                    ? selectedClientVisuals.main
+                    : undefined,
+                },
+                '&.Mui-focused fieldset': {
+                  borderColor: selectedClientVisuals
+                    ? selectedClientVisuals.main
+                    : undefined,
+                  boxShadow: selectedClientVisuals
+                    ? `0 0 0 2px ${alpha(selectedClientVisuals.main, 0.2)}`
+                    : undefined,
+                },
+              },
+            }}
+          />
+        </Grid>
+        <Grid item xs={12} md={7} lg={8}>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={{ xs: 1.5, md: 2 }}
+            justifyContent="space-between"
+            alignItems={{ xs: 'stretch', md: 'center' }}
+            sx={{ height: '100%' }}
           >
-            Entrega Masiva
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={handleReload}
-            fullWidth={isTabletDown}
-            sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
-          >
-            Recargar
-          </Button>
-        </Stack>
-        <Button
-          variant="contained"
-          color="success"
-          startIcon={<SaveIcon />}
-          onClick={handleSaveChanges}
-          disabled={!hasEditedRows || saving}
-          fullWidth={isTabletDown}
-          size="large"
-          sx={{ minHeight: 56, borderRadius: 2.5, px: 3, fontWeight: 600 }}
-        >
-          {saving ? 'Guardando…' : 'Guardar cambios'}
-        </Button>
-      </Stack>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={{ xs: 1.5, sm: 1 }}
+              flexWrap="wrap"
+              sx={{ width: { xs: '100%', sm: 'auto' } }}
+            >
+              <Button
+                variant="contained"
+                startIcon={<DoneAllIcon />}
+                onClick={handleMassiveDialogOpen}
+                disabled={selectedCount === 0}
+                fullWidth={isTabletDown}
+                sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
+              >
+                Entrega Masiva
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={handleReload}
+                fullWidth={isTabletDown}
+                sx={{ minHeight: 48, borderRadius: 2, px: 2 }}
+              >
+                Recargar
+              </Button>
+            </Stack>
+            <Button
+              variant="contained"
+              color="success"
+              startIcon={<SaveIcon />}
+              onClick={handleSaveChanges}
+              disabled={!hasEditedRows || saving}
+              fullWidth={isTabletDown}
+              size="large"
+              sx={{ minHeight: 56, borderRadius: 2.5, px: 3, fontWeight: 600 }}
+            >
+              {saving ? 'Guardando…' : 'Guardar cambios'}
+            </Button>
+          </Stack>
+        </Grid>
+      </Grid>
 
       <Paper
         sx={{ position: 'relative', p: isSmallScreen ? 1.5 : 0 }}
@@ -712,6 +1007,10 @@ export default function DistribucionPage() {
               pageRows.map((row) => {
                 const original = row.original;
                 const isEdited = Boolean(editedRows[original.rowId]);
+                const clientStatus = clientStatusLookup.get(original.clienteId) ?? 'pending';
+                const visuals = statusVisuals[clientStatus] ?? statusVisuals.pending;
+                const baseBg = visuals.soft;
+                const editedBg = alpha(visuals.main, 0.24);
                 return (
                   <Box
                     key={row.id}
@@ -719,18 +1018,33 @@ export default function DistribucionPage() {
                       p: 2,
                       borderRadius: 2,
                       border: '1px solid',
-                      borderColor: isEdited ? 'primary.main' : 'divider',
-                      bgcolor: isEdited ? 'action.hover' : 'background.paper',
+                      borderColor: alpha(visuals.main, isEdited ? 0.55 : 0.35),
+                      borderLeft: `6px solid ${visuals.main}`,
+                      bgcolor: isEdited ? editedBg : baseBg,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 1.5,
+                      boxShadow: isEdited ? `0 6px 18px ${alpha(visuals.main, 0.25)}` : undefined,
+                      transition: 'background-color 0.2s ease, box-shadow 0.2s ease',
                     }}
                   >
                     <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                      <Box>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                          Com {original.nrodecomanda ?? '—'}
-                        </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            Com {original.nrodecomanda ?? '—'}
+                          </Typography>
+                          <Chip
+                            label={visuals.label}
+                            size="small"
+                            sx={{
+                              bgcolor: alpha(visuals.main, 0.2),
+                              color: visuals.main,
+                              fontWeight: 600,
+                              height: 24,
+                            }}
+                          />
+                        </Stack>
                         <Typography variant="body2" color="text.secondary">
                           {original.clienteNombre ?? '—'}
                         </Typography>
@@ -865,24 +1179,37 @@ export default function DistribucionPage() {
                 ))}
               </TableHead>
               <TableBody>
-                {pageRows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    hover
-                    sx={{
-                      bgcolor: editedRows[row.original.rowId] ? 'action.hover' : undefined,
-                    }}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        align={cell.column.columnDef.meta?.align ?? 'left'}
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
+                {pageRows.map((row) => {
+                  const original = row.original;
+                  const isEdited = Boolean(editedRows[original.rowId]);
+                  const clientStatus = clientStatusLookup.get(original.clienteId) ?? 'pending';
+                  const visuals = statusVisuals[clientStatus] ?? statusVisuals.pending;
+                  const baseBg = visuals.soft;
+                  const editedBg = alpha(visuals.main, 0.24);
+                  return (
+                    <TableRow
+                      key={row.id}
+                      hover
+                      sx={{
+                        bgcolor: isEdited ? editedBg : baseBg,
+                        borderLeft: `6px solid ${visuals.main}`,
+                        transition: 'background-color 0.2s ease',
+                        '&:hover': {
+                          bgcolor: alpha(visuals.main, 0.3),
+                        },
+                      }}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell
+                          key={cell.id}
+                          align={cell.column.columnDef.meta?.align ?? 'left'}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
                 {!loading && pageRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={columns.length}>
