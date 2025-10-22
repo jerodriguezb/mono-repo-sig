@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -32,6 +34,8 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import {
   createColumnHelper,
   flexRender,
@@ -116,6 +120,7 @@ export default function DistribucionPage() {
   const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
   const [saving, setSaving] = useState(false);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [clienteSeleccionadoKey, setClienteSeleccionadoKey] = useState(null);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -136,6 +141,7 @@ export default function DistribucionPage() {
     const result = [];
     comandas.forEach((comanda) => {
       const clienteNombre = comanda?.codcli?.razonsocial ?? '';
+      const clienteId = comanda?.codcli?._id ? String(comanda.codcli._id) : null;
       const items = Array.isArray(comanda?.items) ? comanda.items : [];
       items.forEach((item, index) => {
         const itemId = item?._id ? String(item._id) : null;
@@ -143,12 +149,19 @@ export default function DistribucionPage() {
         const cantidad = Number(item?.cantidad ?? 0);
         const monto = Number(item?.monto ?? 0);
         const cantidadEntregada = Number(item?.cantidadentregada ?? 0);
+        const clienteKey =
+          clienteId ??
+          `${normalizeText(clienteNombre) || 'sin-cliente'}-${
+            String(comanda?.codcli?.codigo ?? comanda?._id ?? index)
+          }`;
         result.push({
           rowId,
           comandaId: comanda?._id ?? null,
           itemId: itemId ?? `item-${index}`,
           nrodecomanda: comanda?.nrodecomanda ?? '',
           clienteNombre,
+          clienteId,
+          clienteKey,
           productoDescripcion: item?.codprod?.descripcion ?? '',
           cantidad,
           monto,
@@ -398,6 +411,101 @@ export default function DistribucionPage() {
     }
   };
 
+  const clientesData = useMemo(() => {
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const key = row.clienteKey ?? row.clienteId ?? row.rowId;
+      const nombre = row.clienteNombre ?? '—';
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          clienteKey: key,
+          clienteId: row.clienteId ?? null,
+          clienteNombre: nombre,
+          searchValue: normalizeText(nombre),
+          items: [],
+          totalCantidad: 0,
+          totalCantidadEntregada: 0,
+          totalBultos: 0,
+          estado: 'pendiente',
+        });
+      }
+      const entry = grouped.get(key);
+      entry.items.push(row);
+      const cantidad = Number(row.cantidad ?? 0);
+      const entregada = Number(row.cantidadEntregada ?? 0);
+      entry.totalCantidad += cantidad;
+      entry.totalCantidadEntregada += entregada;
+      entry.totalBultos += cantidad;
+    });
+
+    grouped.forEach((entry) => {
+      const allComplete = entry.items.every(
+        (item) => Number(item.cantidadEntregada ?? 0) >= Number(item.cantidad ?? 0),
+      );
+      if (entry.totalCantidadEntregada <= 0) {
+        entry.estado = 'pendiente';
+      } else if (allComplete) {
+        entry.estado = 'completo';
+      } else {
+        entry.estado = 'parcial';
+      }
+    });
+
+    const list = Array.from(grouped.values()).sort((a, b) =>
+      (a.clienteNombre ?? '').localeCompare(b.clienteNombre ?? '', 'es', {
+        sensitivity: 'base',
+        ignorePunctuation: true,
+      }),
+    );
+
+    return { list, map: grouped };
+  }, [rows]);
+
+  useEffect(() => {
+    if (!clienteSeleccionadoKey) return;
+    if (!clientesData.map.has(clienteSeleccionadoKey)) {
+      setClienteSeleccionadoKey(null);
+    }
+  }, [clienteSeleccionadoKey, clientesData]);
+
+  const clienteSeleccionado = clienteSeleccionadoKey
+    ? clientesData.map.get(clienteSeleccionadoKey) ?? null
+    : null;
+
+  const clienteFilterOptions = useMemo(
+    () =>
+      (options, { inputValue }) => {
+        const normalized = normalizeText(inputValue);
+        if (!normalized) {
+          return options.slice(0, 15);
+        }
+        return options.filter((option) => option.searchValue.includes(normalized)).slice(0, 15);
+      },
+    [],
+  );
+
+  const clienteOptions = clientesData.list;
+
+  const pendientesCount = useMemo(
+    () => clientesData.list.reduce((acc, cliente) => acc + (cliente.estado === 'pendiente' ? 1 : 0), 0),
+    [clientesData],
+  );
+
+  const rowEstadoMap = useMemo(() => {
+    const map = new Map();
+    clientesData.list.forEach((cliente) => {
+      cliente.items.forEach((item) => {
+        map.set(item.rowId, cliente.estado);
+      });
+    });
+    return map;
+  }, [clientesData]);
+
+  const clienteFilteredRows = useMemo(() => {
+    if (!clienteSeleccionadoKey) return rows;
+    return rows.filter((row) => row.clienteKey === clienteSeleccionadoKey);
+  }, [rows, clienteSeleccionadoKey]);
+
   const filterFns = useMemo(
     () => ({
       includesString: (row, columnId, value) => {
@@ -447,6 +555,39 @@ export default function DistribucionPage() {
         cell: (info) => info.getValue() ?? '—',
         filterFn: 'includesString',
         meta: { filterLabel: 'cliente' },
+      }),
+      columnHelper.display({
+        id: 'estadoCliente',
+        header: 'Estado',
+        cell: ({ row }) => {
+          const estado = rowEstadoMap.get(row.original.rowId) ?? 'pendiente';
+          if (estado === 'parcial') {
+            return (
+              <Chip
+                size="small"
+                color="warning"
+                variant="filled"
+                icon={<WarningAmberIcon fontSize="small" />}
+                label="Parcial"
+              />
+            );
+          }
+          if (estado === 'completo') {
+            return (
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                icon={<CheckCircleIcon fontSize="small" />}
+                label="Completo"
+              />
+            );
+          }
+          return <Chip size="small" variant="outlined" label="Pendiente" />;
+        },
+        enableSorting: false,
+        enableColumnFilter: false,
+        meta: { align: 'center' },
       }),
       columnHelper.accessor('productoDescripcion', {
         header: 'Producto',
@@ -504,11 +645,11 @@ export default function DistribucionPage() {
         meta: { filterLabel: 'total entregado', align: 'right' },
       }),
     ],
-    [handleCantidadEntregadaChange, isTabletDown],
+    [handleCantidadEntregadaChange, isTabletDown, rowEstadoMap],
   );
 
   const table = useReactTable({
-    data: rows,
+    data: clienteFilteredRows,
     columns,
     state: {
       columnFilters,
@@ -553,6 +694,10 @@ export default function DistribucionPage() {
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [columnFilters]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [clienteSeleccionadoKey]);
 
   const selectedRows = table.getSelectedRowModel().rows;
   const hasEditedRows = Object.keys(editedRows).length > 0;
@@ -616,6 +761,38 @@ export default function DistribucionPage() {
           </Typography>
         </Stack>
       </Box>
+
+      <Stack
+        direction={isSmallScreen ? 'column' : 'row'}
+        spacing={isSmallScreen ? 1.5 : 2}
+        alignItems={isSmallScreen ? 'stretch' : 'center'}
+        sx={{ mb: 3 }}
+      >
+        <Autocomplete
+          value={clienteSeleccionado}
+          options={clienteOptions}
+          onChange={(_, value) => setClienteSeleccionadoKey(value?.clienteKey ?? null)}
+          getOptionLabel={(option) => option?.clienteNombre ?? ''}
+          filterOptions={clienteFilterOptions}
+          isOptionEqualToValue={(option, value) => option.clienteKey === value.clienteKey}
+          fullWidth
+          clearOnEscape
+          handleHomeEndKeys
+          includeInputInList
+          size={isSmallScreen ? 'medium' : 'small'}
+          renderInput={(params) => (
+            <TextField {...params} label="Cliente" placeholder="Buscar cliente" fullWidth />
+          )}
+        />
+        <Chip
+          label={`Pendientes: ${pendientesCount}`}
+          color={pendientesCount > 0 ? 'warning' : 'default'}
+          variant={pendientesCount > 0 ? 'filled' : 'outlined'}
+          size={isSmallScreen ? 'medium' : 'small'}
+          icon={pendientesCount > 0 ? <WarningAmberIcon fontSize="small" /> : undefined}
+          sx={{ fontWeight: 600, alignSelf: isSmallScreen ? 'flex-start' : 'center', px: 1.5 }}
+        />
+      </Stack>
 
       {isSmallScreen && filterableColumns.length > 0 && (
         <Paper sx={{ mb: 2, p: 2, borderRadius: 2 }} variant="outlined">
@@ -712,6 +889,7 @@ export default function DistribucionPage() {
               pageRows.map((row) => {
                 const original = row.original;
                 const isEdited = Boolean(editedRows[original.rowId]);
+                const estadoCliente = rowEstadoMap.get(original.rowId);
                 return (
                   <Box
                     key={row.id}
@@ -731,9 +909,20 @@ export default function DistribucionPage() {
                         <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                           Com {original.nrodecomanda ?? '—'}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {original.clienteNombre ?? '—'}
-                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">
+                            {original.clienteNombre ?? '—'}
+                          </Typography>
+                          {estadoCliente === 'parcial' && (
+                            <Chip
+                              label="Parcial"
+                              size="small"
+                              color="warning"
+                              variant="filled"
+                              icon={<WarningAmberIcon fontSize="small" />}
+                            />
+                          )}
+                        </Stack>
                       </Box>
                       <Checkbox
                         checked={row.getIsSelected()}
