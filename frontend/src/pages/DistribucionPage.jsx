@@ -141,12 +141,11 @@ export default function DistribucionPage() {
   const [pdfDialogState, setPdfDialogState] = useState({ open: false, data: null });
   const [pdfShareState, setPdfShareState] = useState({
     open: false,
-    whatsappUrl: '',
-    blobUrl: '',
     fileName: '',
     data: null,
   });
   const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [whatsappSharing, setWhatsappSharing] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -506,16 +505,11 @@ export default function DistribucionPage() {
 
   const resetPdfShareState = useCallback((updater) => {
     setPdfShareState((prev) => {
-      if (prev.blobUrl) {
-        URL.revokeObjectURL(prev.blobUrl);
-      }
       if (typeof updater === 'function') {
         return updater(prev);
       }
       return {
         open: false,
-        whatsappUrl: '',
-        blobUrl: '',
         fileName: '',
         data: null,
       };
@@ -523,6 +517,7 @@ export default function DistribucionPage() {
   }, []);
 
   const handleShareDialogClose = useCallback(() => {
+    setWhatsappSharing(false);
     resetPdfShareState();
   }, [resetPdfShareState]);
 
@@ -551,10 +546,6 @@ export default function DistribucionPage() {
     if (!pdfDialogState.data) return;
     setPdfGenerating(true);
     try {
-      const doc = buildDeliveryPdf(pdfDialogState.data);
-      const blob = doc.output('blob');
-      const blobUrl = URL.createObjectURL(blob);
-
       const timestamp = (() => {
         const now = new Date();
         const parts = [
@@ -580,23 +571,12 @@ export default function DistribucionPage() {
           .toLowerCase() || 'cliente';
       };
 
+      const doc = buildDeliveryPdf(pdfDialogState.data);
       const fileName = `comprobante_${sanitizeFileName(pdfDialogState.data.clienteNombre)}_${timestamp}.pdf`;
       doc.save(fileName);
 
-      const comandaDisplay = pdfDialogState.data.comandas?.length
-        ? pdfDialogState.data.comandas.join(', ')
-        : '—';
-      const whatsappMessage = encodeURIComponent(
-        `Comprobante de entrega — ${pdfDialogState.data.clienteNombre}\nComanda(s): ${comandaDisplay}\nTotal entregado: ${currencyFormatter.format(
-          Number(pdfDialogState.data.total ?? 0),
-        )}\nDescarga: ${blobUrl}`,
-      );
-      const whatsappUrl = `https://wa.me/?text=${whatsappMessage}`;
-
       resetPdfShareState(() => ({
         open: true,
-        whatsappUrl,
-        blobUrl,
         fileName,
         data: pdfDialogState.data,
       }));
@@ -605,6 +585,69 @@ export default function DistribucionPage() {
       setPdfGenerating(false);
     }
   };
+
+  const handleShareViaWhatsApp = useCallback(async () => {
+    if (!pdfShareState?.data) return;
+
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+      showSnackbar(
+        'Tu dispositivo no permite compartir archivos directamente. Descarga el PDF y envíalo manualmente.',
+        'info',
+      );
+      return;
+    }
+
+    setWhatsappSharing(true);
+    try {
+      const doc = buildDeliveryPdf(pdfShareState.data);
+      const blob = doc.output('blob');
+      const fileName = pdfShareState.fileName || 'comprobante_entrega.pdf';
+
+      let fileForShare = null;
+      if (typeof File === 'function') {
+        try {
+          fileForShare = new File([blob], fileName, { type: 'application/pdf' });
+        } catch (error) {
+          console.error('No se pudo crear el archivo para compartir', error);
+        }
+      }
+
+      if (!fileForShare) {
+        showSnackbar('No se pudo preparar el comprobante para compartir. Descárgalo manualmente.', 'error');
+        return;
+      }
+
+      if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [fileForShare] })) {
+        showSnackbar(
+          'Este dispositivo no admite compartir el comprobante como archivo. Descárgalo y envíalo manualmente.',
+          'info',
+        );
+        return;
+      }
+
+      const comandaDisplay = pdfShareState.data.comandas?.length
+        ? pdfShareState.data.comandas.join(', ')
+        : '—';
+      const shareText = `Comprobante de entrega — ${pdfShareState.data.clienteNombre}\nComanda(s): ${comandaDisplay}\nTotal entregado: ${currencyFormatter.format(
+        Number(pdfShareState.data.total ?? 0),
+      )}`;
+
+      await navigator.share({
+        title: `Comprobante de entrega — ${pdfShareState.data.clienteNombre}`,
+        text: shareText,
+        files: [fileForShare],
+      });
+      showSnackbar('El comprobante se compartió correctamente.', 'success');
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
+      console.error('No se pudo compartir el comprobante por WhatsApp', error);
+      showSnackbar('Ocurrió un problema al compartir el comprobante. Inténtalo nuevamente.', 'error');
+    } finally {
+      setWhatsappSharing(false);
+    }
+  }, [buildDeliveryPdf, pdfShareState, showSnackbar]);
 
   const handleDownloadPdfAgain = () => {
     if (!pdfShareState?.data) return;
@@ -719,14 +762,6 @@ export default function DistribucionPage() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
     setRowSelection({});
   }, [clienteSeleccionadoKey]);
-
-  useEffect(() => {
-    return () => {
-      if (pdfShareState.blobUrl) {
-        URL.revokeObjectURL(pdfShareState.blobUrl);
-      }
-    };
-  }, [pdfShareState.blobUrl]);
 
   const tableData = useMemo(() => {
     const keyMatch = clienteSeleccionadoKey;
@@ -1521,8 +1556,8 @@ export default function DistribucionPage() {
               {currencyFormatter.format(Number(pdfShareState.data?.total ?? 0))}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Comparte el comprobante directamente por WhatsApp o descárgalo nuevamente para
-              enviarlo por otro medio.
+              Adjunta el comprobante directamente en WhatsApp usando el botón o descárgalo
+              nuevamente para enviarlo por otro medio.
             </Typography>
           </Stack>
         </DialogContent>
@@ -1544,17 +1579,14 @@ export default function DistribucionPage() {
             Descargar PDF
           </Button>
           <Button
-            component="a"
-            href={pdfShareState.whatsappUrl || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={handleShareViaWhatsApp}
             startIcon={<WhatsAppIcon />}
             variant="contained"
             color="success"
-            disabled={!pdfShareState.whatsappUrl}
+            disabled={!pdfShareState.data || whatsappSharing}
             fullWidth={isTabletDown}
           >
-            Enviar por WhatsApp
+            {whatsappSharing ? 'Abriendo WhatsApp…' : 'Enviar por WhatsApp'}
           </Button>
           <Button onClick={handleShareDialogClose}>Cerrar</Button>
         </DialogActions>
