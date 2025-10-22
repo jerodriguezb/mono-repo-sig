@@ -312,30 +312,20 @@ export default function DistribucionPage() {
     const selectedRows = table.getSelectedRowModel().rows;
     if (selectedRows.length === 0) {
       setMassDialog({ open: false, value: '', error: '' });
-      return;
-    }
-
-    const numeric = Number(massDialog.value);
-    if (!Number.isFinite(numeric) || numeric < 0) {
-      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
-      return;
-    }
-
-    if (!Number.isInteger(numeric)) {
-      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
+      showSnackbar('Selecciona al menos una fila para aplicar la entrega masiva.', 'info');
       return;
     }
 
     const updates = new Map();
     selectedRows.forEach((tableRow) => {
       const row = tableRow.original;
-      const cantidad = clampDelivered(numeric, row.cantidad);
+      const cantidad = clampDelivered(row.cantidad, row.cantidad);
       updates.set(row.rowId, { cantidad });
     });
 
     applyDeliveredValue(updates);
     setMassDialog({ open: false, value: '', error: '' });
-    showSnackbar('Entrega masiva aplicada correctamente. Recuerda guardar los cambios.', 'success');
+    showSnackbar('Entrega completa aplicada correctamente. Recuerda guardar los cambios.', 'success');
   };
 
   const handleSaveChanges = async () => {
@@ -783,8 +773,6 @@ export default function DistribucionPage() {
   }
 
   const selectedCount = selectedRows.length;
-  const massPreviewValue = Number(massDialog.value);
-  const hasMassValue = !Number.isNaN(massPreviewValue);
   const filterableColumns = table
     .getAllLeafColumns()
     .filter((column) => column.getCanFilter());
@@ -1223,21 +1211,9 @@ export default function DistribucionPage() {
         <DialogTitle>Entrega Masiva</DialogTitle>
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
-            Ingresa la cantidad entregada que deseas asignar a las {selectedCount}{' '}
-            {selectedCount === 1 ? 'fila seleccionada' : 'filas seleccionadas'}. El valor se
-            ajustará automáticamente para no superar la cantidad solicitada de cada producto.
+            Esta acción marcará como entregados todos los bultos de los productos seleccionados
+            (Cantidad entregada = Cantidad total). ¿Deseas continuar?
           </DialogContentText>
-          <TextField
-            label="Cantidad entregada"
-            type="number"
-            fullWidth
-            value={massDialog.value}
-            onChange={(event) => setMassDialog((prev) => ({ ...prev, value: event.target.value }))}
-            inputProps={{ min: 0, step: 1, inputMode: 'numeric', pattern: '[0-9]*' }}
-            error={Boolean(massDialog.error)}
-            helperText={massDialog.error || 'Ingresa un número entero mayor o igual a 0.'}
-            sx={{ mb: 3 }}
-          />
           {selectedCount > 0 && (
             <Stack spacing={1}>
               <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
@@ -1245,9 +1221,7 @@ export default function DistribucionPage() {
               </Typography>
               {selectedRows.slice(0, 5).map((row) => {
                 const original = row.original;
-                const preview = hasMassValue
-                  ? clampDelivered(massPreviewValue, original.cantidad)
-                  : '—';
+                const preview = clampDelivered(original.cantidad, original.cantidad);
                 return (
                   <Paper key={row.id} variant="outlined" sx={{ p: 1.5 }}>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -1255,7 +1229,7 @@ export default function DistribucionPage() {
                     </Typography>
                     <Typography variant="body2">
                       Actual: {quantityFormatter.format(Number(original.cantidadEntregada ?? 0))} |{' '}
-                      Nuevo: {typeof preview === 'number' ? quantityFormatter.format(preview) : '—'}
+                      Nuevo: {quantityFormatter.format(preview)}
                     </Typography>
                   </Paper>
                 );
