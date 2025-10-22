@@ -35,6 +35,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   createColumnHelper,
   flexRender,
@@ -44,6 +45,8 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
 
 const columnHelper = createColumnHelper();
@@ -56,6 +59,17 @@ const quantityFormatter = new Intl.NumberFormat('es-AR', {
 const decimalFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
+});
+
+const numberFormatter = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const currencyFormatter = new Intl.NumberFormat('es-AR', {
+  style: 'currency',
+  currency: 'ARS',
+  minimumFractionDigits: 2,
 });
 
 const normalizeText = (value) =>
@@ -123,6 +137,13 @@ export default function DistribucionPage() {
   const [saving, setSaving] = useState(false);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
   const [clienteSeleccionadoKey, setClienteSeleccionadoKey] = useState(null);
+  const [pdfDialogState, setPdfDialogState] = useState({ open: false, data: null });
+  const [pdfShareState, setPdfShareState] = useState({
+    open: false,
+    fileName: '',
+    data: null,
+  });
+  const [pdfGenerating, setPdfGenerating] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -404,6 +425,172 @@ export default function DistribucionPage() {
     }
   };
 
+  const buildClienteComprobanteData = useCallback((cliente) => {
+    if (!cliente) return null;
+    const comandasSet = new Set();
+    const rowsData = (cliente.items ?? []).map((item) => {
+      if (item?.nrodecomanda) {
+        comandasSet.add(item.nrodecomanda);
+      }
+      const cantidadEntregada = Math.max(Number(item?.cantidadEntregada ?? 0), 0);
+      const monto = Number(item?.monto ?? 0);
+      const subtotal = cantidadEntregada * monto;
+      return {
+        productoDescripcion: item?.productoDescripcion ?? '—',
+        cantidadEntregada,
+        monto,
+        subtotal,
+      };
+    });
+    const totalCantidadEntregada = rowsData.reduce(
+      (acc, row) => acc + Number(row.cantidadEntregada ?? 0),
+      0,
+    );
+    const total = rowsData.reduce((acc, row) => acc + Number(row.subtotal ?? 0), 0);
+    return {
+      clienteNombre: cliente.clienteNombre ?? '—',
+      comandas: Array.from(comandasSet),
+      rows: rowsData,
+      total,
+      totalCantidadEntregada,
+    };
+  }, []);
+
+  const buildDeliveryPdf = useCallback((payload) => {
+    const doc = new jsPDF({ orientation: 'portrait' });
+    const safeCliente = payload?.clienteNombre ?? 'Cliente';
+    doc.setFontSize(16);
+    doc.text(`Comprobante de entrega — ${safeCliente}`, 40, 40);
+
+    const comandaDisplay = payload?.comandas?.length
+      ? payload.comandas.length === 1
+        ? payload.comandas[0]
+        : payload.comandas.join(', ')
+      : '—';
+
+    doc.setFontSize(12);
+    doc.text(`Cliente: ${safeCliente}`, 40, 62);
+    doc.text(`Comanda(s): ${comandaDisplay}`, 40, 78);
+
+    const body = (payload?.rows ?? []).map((row) => [
+      row.productoDescripcion,
+      numberFormatter.format(Number(row.cantidadEntregada ?? 0)),
+      currencyFormatter.format(Number(row.monto ?? 0)),
+      currencyFormatter.format(Number(row.subtotal ?? 0)),
+    ]);
+
+    autoTable(doc, {
+      startY: 100,
+      head: [['Producto', 'Cantidad entregada', 'Precio unitario', 'Subtotal']],
+      body,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 248, 252] },
+      columnStyles: {
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+      },
+      margin: { left: 40, right: 40 },
+    });
+
+    const finalY = doc.lastAutoTable?.finalY ?? 100;
+    doc.setFontSize(12);
+    doc.text(`Total: ${currencyFormatter.format(Number(payload?.total ?? 0))}`, 40, finalY + 24);
+
+    return doc;
+  }, []);
+
+  const resetPdfShareState = useCallback((updater) => {
+    setPdfShareState((prev) => {
+      if (typeof updater === 'function') {
+        return updater(prev);
+      }
+      return {
+        open: false,
+        fileName: '',
+        data: null,
+      };
+    });
+  }, []);
+
+  const handleShareDialogClose = useCallback(() => {
+    setWhatsappSharing(false);
+    resetPdfShareState();
+  }, [resetPdfShareState]);
+
+  const handleOpenPdfDialog = () => {
+    if (!clienteSeleccionadoData) {
+      showSnackbar('Selecciona un cliente para generar el comprobante.', 'info');
+      return;
+    }
+
+    if (!clienteTieneEntregas) {
+      showSnackbar('No hay entregas registradas para el cliente seleccionado.', 'info');
+      return;
+    }
+
+    const payload = buildClienteComprobanteData(clienteSeleccionadoData);
+    if (!payload) return;
+    setPdfDialogState({ open: true, data: payload });
+  };
+
+  const handlePdfDialogClose = () => {
+    if (pdfGenerating) return;
+    setPdfDialogState({ open: false, data: null });
+  };
+
+  const handleGeneratePdf = () => {
+    if (!pdfDialogState.data) return;
+    setPdfGenerating(true);
+    try {
+      const timestamp = (() => {
+        const now = new Date();
+        const parts = [
+          now.getFullYear(),
+          String(now.getMonth() + 1).padStart(2, '0'),
+          String(now.getDate()).padStart(2, '0'),
+        ];
+        const time = [
+          String(now.getHours()).padStart(2, '0'),
+          String(now.getMinutes()).padStart(2, '0'),
+          String(now.getSeconds()).padStart(2, '0'),
+        ].join('');
+        return `${parts.join('')}_${time}`;
+      })();
+
+      const sanitizeFileName = (value) => {
+        if (!value) return 'cliente';
+        return value
+          .normalize('NFD')
+          .replace(/\p{Diacritic}/gu, '')
+          .replace(/[^a-zA-Z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .toLowerCase() || 'cliente';
+      };
+
+      const doc = buildDeliveryPdf(pdfDialogState.data);
+      const fileName = `comprobante_${sanitizeFileName(pdfDialogState.data.clienteNombre)}_${timestamp}.pdf`;
+      doc.save(fileName);
+
+      resetPdfShareState(() => ({
+        open: true,
+        fileName,
+        data: pdfDialogState.data,
+      }));
+      setPdfDialogState({ open: false, data: null });
+    } finally {
+      setPdfGenerating(false);
+    }
+  };
+
+  const handleDownloadPdfAgain = () => {
+    if (!pdfShareState?.data) return;
+    const doc = buildDeliveryPdf(pdfShareState.data);
+    const fileName = pdfShareState.fileName || 'comprobante_entrega.pdf';
+    doc.save(fileName);
+  };
+
   const clientesData = useMemo(() => {
     if (!rows.length) return [];
 
@@ -485,6 +672,18 @@ export default function DistribucionPage() {
     if (!clienteSeleccionadoKey) return null;
     return clientesOptions.find((option) => option.key === clienteSeleccionadoKey) ?? null;
   }, [clienteSeleccionadoKey, clientesOptions]);
+
+  const clienteSeleccionadoData = useMemo(() => {
+    if (!clienteSeleccionadoKey) return null;
+    return clientesData.find((cliente) => cliente.clienteKey === clienteSeleccionadoKey) ?? null;
+  }, [clienteSeleccionadoKey, clientesData]);
+
+  const clienteTieneEntregas = useMemo(() => {
+    if (!clienteSeleccionadoData) return false;
+    return clienteSeleccionadoData.items.some((item) => Number(item.cantidadEntregada ?? 0) > 0);
+  }, [clienteSeleccionadoData]);
+
+  const canGenerateComprobante = Boolean(clienteSeleccionadoData && clienteTieneEntregas);
 
   useEffect(() => {
     if (!clienteSeleccionadoKey) return;
@@ -929,6 +1128,16 @@ export default function DistribucionPage() {
           >
             Recargar
           </Button>
+          <Button
+            variant="outlined"
+            startIcon={<PictureAsPdfIcon />}
+            onClick={handleOpenPdfDialog}
+            disabled={!canGenerateComprobante || pdfGenerating}
+            fullWidth={isTabletDown}
+            sx={{ minHeight: 48, borderRadius: 2, px: 2, width: { xs: '100%', sm: 'auto' } }}
+          >
+            Comprobante
+          </Button>
         </Stack>
         <Button
           variant="contained"
@@ -1206,6 +1415,107 @@ export default function DistribucionPage() {
           />
         </Stack>
       </Paper>
+
+      <Dialog
+        open={pdfDialogState.open}
+        onClose={handlePdfDialogClose}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Generar comprobante</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              {pdfDialogState.data?.clienteNombre ?? '—'}
+            </Typography>
+            <Stack spacing={0.5}>
+              <Typography variant="body2" color="text.secondary">
+                Comanda(s)
+              </Typography>
+              <Typography variant="body1">
+                {pdfDialogState.data?.comandas?.length
+                  ? pdfDialogState.data.comandas.join(', ')
+                  : '—'}
+              </Typography>
+            </Stack>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={{ xs: 1, sm: 3 }}
+              justifyContent="space-between"
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Total bultos entregados:{' '}
+                {numberFormatter.format(
+                  Number(pdfDialogState.data?.totalCantidadEntregada ?? 0),
+                )}
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Total a entregar:{' '}
+                {currencyFormatter.format(Number(pdfDialogState.data?.total ?? 0))}
+              </Typography>
+            </Stack>
+            <DialogContentText>
+              ¿Deseas generar el comprobante de entrega en PDF para el cliente seleccionado?
+            </DialogContentText>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handlePdfDialogClose} disabled={pdfGenerating}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleGeneratePdf}
+            variant="contained"
+            startIcon={<PictureAsPdfIcon />}
+            disabled={pdfGenerating}
+          >
+            {pdfGenerating ? 'Generando…' : 'Generar PDF'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={pdfShareState.open}
+        onClose={handleShareDialogClose}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Comprobante generado</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.5}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              {pdfShareState.data?.clienteNombre ?? '—'}
+            </Typography>
+            <Typography variant="body2">
+              Total entregado:{' '}
+              {currencyFormatter.format(Number(pdfShareState.data?.total ?? 0))}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Descarga el comprobante y compártelo por WhatsApp adjuntando el PDF guardado en tu
+              dispositivo. También puedes conservarlo para enviarlo por otro medio.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions
+          sx={{
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: { xs: 1, sm: 1 },
+            px: { xs: 3, sm: 2 },
+            pb: { xs: 2.5, sm: 1.5 },
+          }}
+        >
+          <Button
+            onClick={handleDownloadPdfAgain}
+            startIcon={<PictureAsPdfIcon />}
+            variant="outlined"
+            fullWidth={isTabletDown}
+          >
+            Descargar PDF
+          </Button>
+          <Button onClick={handleShareDialogClose}>Cerrar</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={massDialog.open} onClose={handleMassDialogClose} fullWidth maxWidth="sm">
         <DialogTitle>Entrega Masiva</DialogTitle>
