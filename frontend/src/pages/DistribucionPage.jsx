@@ -586,12 +586,12 @@ export default function DistribucionPage() {
     }
   };
 
-  const handleShareViaWhatsApp = useCallback(async () => {
+  const handleShareViaWhatsApp = useCallback(() => {
     if (!pdfShareState?.data) return;
 
-    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
+    if (typeof window === 'undefined') {
       showSnackbar(
-        'Tu dispositivo no permite compartir archivos directamente. Descarga el PDF y envíalo manualmente.',
+        'No se pudo abrir WhatsApp desde este dispositivo. Usa la descarga manual para compartir el comprobante.',
         'info',
       );
       return;
@@ -600,50 +600,37 @@ export default function DistribucionPage() {
     setWhatsappSharing(true);
     try {
       const doc = buildDeliveryPdf(pdfShareState.data);
-      const blob = doc.output('blob');
       const fileName = pdfShareState.fileName || 'comprobante_entrega.pdf';
-
-      let fileForShare = null;
-      if (typeof File === 'function') {
-        try {
-          fileForShare = new File([blob], fileName, { type: 'application/pdf' });
-        } catch (error) {
-          console.error('No se pudo crear el archivo para compartir', error);
-        }
-      }
-
-      if (!fileForShare) {
-        showSnackbar('No se pudo preparar el comprobante para compartir. Descárgalo manualmente.', 'error');
-        return;
-      }
-
-      if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [fileForShare] })) {
-        showSnackbar(
-          'Este dispositivo no admite compartir el comprobante como archivo. Descárgalo y envíalo manualmente.',
-          'info',
-        );
-        return;
-      }
+      doc.save(fileName);
 
       const comandaDisplay = pdfShareState.data.comandas?.length
         ? pdfShareState.data.comandas.join(', ')
         : '—';
-      const shareText = `Comprobante de entrega — ${pdfShareState.data.clienteNombre}\nComanda(s): ${comandaDisplay}\nTotal entregado: ${currencyFormatter.format(
-        Number(pdfShareState.data.total ?? 0),
-      )}`;
-
-      await navigator.share({
-        title: `Comprobante de entrega — ${pdfShareState.data.clienteNombre}`,
-        text: shareText,
-        files: [fileForShare],
-      });
-      showSnackbar('El comprobante se compartió correctamente.', 'success');
-    } catch (error) {
-      if (error?.name === 'AbortError') {
-        return;
+      const shareMessage = [
+        `Comprobante de entrega — ${pdfShareState.data.clienteNombre}`,
+        `Comanda(s): ${comandaDisplay}`,
+        `Total entregado: ${currencyFormatter.format(Number(pdfShareState.data.total ?? 0))}`,
+        '',
+        'Adjunta el PDF descargado antes de enviar este mensaje.',
+      ].join('\n');
+      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareMessage)}`;
+      const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      if (!popup) {
+        showSnackbar(
+          'No se pudo abrir WhatsApp automáticamente. Abre la aplicación y adjunta el PDF descargado manualmente.',
+          'info',
+        );
+      } else if (popup.opener) {
+        popup.opener = null;
       }
-      console.error('No se pudo compartir el comprobante por WhatsApp', error);
-      showSnackbar('Ocurrió un problema al compartir el comprobante. Inténtalo nuevamente.', 'error');
+
+      showSnackbar('Se descargó el comprobante. Adjunta el PDF en WhatsApp antes de enviarlo.', 'success');
+    } catch (error) {
+      console.error('No se pudo preparar el comprobante para WhatsApp', error);
+      showSnackbar(
+        'Ocurrió un problema al preparar el comprobante. Descárgalo manualmente desde el botón.',
+        'error',
+      );
     } finally {
       setWhatsappSharing(false);
     }
@@ -1556,8 +1543,9 @@ export default function DistribucionPage() {
               {currencyFormatter.format(Number(pdfShareState.data?.total ?? 0))}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Adjunta el comprobante directamente en WhatsApp usando el botón o descárgalo
-              nuevamente para enviarlo por otro medio.
+              Al tocar “Enviar por WhatsApp” se descargará nuevamente el comprobante y se abrirá
+              WhatsApp para que lo adjuntes manualmente. También puedes descargarlo con el botón
+              inferior para compartirlo por otro medio.
             </Typography>
           </Stack>
         </DialogContent>
