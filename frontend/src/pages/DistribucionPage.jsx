@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -32,6 +34,7 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import {
   createColumnHelper,
   flexRender,
@@ -61,6 +64,14 @@ const normalizeText = (value) =>
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase()
     .trim();
+
+const getClienteKey = (clienteId, clienteNombre) => {
+  if (clienteId) return String(clienteId);
+  const normalized = normalizeText(clienteNombre);
+  if (normalized) return normalized;
+  if (clienteNombre) return String(clienteNombre);
+  return '';
+};
 
 const decodeJwtPayload = (token) => {
   if (!token) return null;
@@ -116,6 +127,7 @@ export default function DistribucionPage() {
   const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
   const [saving, setSaving] = useState(false);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [clienteSeleccionadoKey, setClienteSeleccionadoKey] = useState(null);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -134,12 +146,16 @@ export default function DistribucionPage() {
 
   const transformComandas = useCallback((comandas = []) => {
     const result = [];
-    comandas.forEach((comanda) => {
+    comandas.forEach((comanda, comandaIndex) => {
       const clienteNombre = comanda?.codcli?.razonsocial ?? '';
+      const clienteId = comanda?.codcli?._id ? String(comanda.codcli._id) : null;
+      const clienteKeyBase = getClienteKey(clienteId, clienteNombre);
       const items = Array.isArray(comanda?.items) ? comanda.items : [];
       items.forEach((item, index) => {
         const itemId = item?._id ? String(item._id) : null;
         const rowId = buildRowId(comanda?._id ?? `comanda-${index}`, itemId, index);
+        const clienteKey =
+          clienteKeyBase || String(comanda?._id ?? `cliente-${comandaIndex ?? index}`);
         const cantidad = Number(item?.cantidad ?? 0);
         const monto = Number(item?.monto ?? 0);
         const cantidadEntregada = Number(item?.cantidadentregada ?? 0);
@@ -149,6 +165,8 @@ export default function DistribucionPage() {
           itemId: itemId ?? `item-${index}`,
           nrodecomanda: comanda?.nrodecomanda ?? '',
           clienteNombre,
+          clienteId,
+          clienteKey,
           productoDescripcion: item?.codprod?.descripcion ?? '',
           cantidad,
           monto,
@@ -398,6 +416,127 @@ export default function DistribucionPage() {
     }
   };
 
+  const clientesData = useMemo(() => {
+    if (!rows.length) return [];
+    const map = new Map();
+
+    rows.forEach((row) => {
+      const key = row.clienteKey || getClienteKey(row.clienteId, row.clienteNombre) || row.rowId;
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          clienteId: row.clienteId ?? null,
+          clienteNombre: row.clienteNombre ?? '—',
+          items: [],
+          totalBultos: 0,
+          totalEntregado: 0,
+        });
+      }
+
+      const cliente = map.get(key);
+      cliente.items.push(row);
+      cliente.totalBultos += Number(row.cantidad ?? 0);
+      cliente.totalEntregado += Number(row.cantidadEntregada ?? 0);
+    });
+
+    return Array.from(map.values()).map((cliente) => {
+      const totalBultos = Number(cliente.totalBultos ?? 0);
+      const totalEntregado = Number(cliente.totalEntregado ?? 0);
+      const hasBultos = totalBultos > 0;
+      const deliveredGreaterOrEqual = hasBultos
+        ? totalEntregado + 1e-6 >= totalBultos
+        : totalEntregado > 0;
+
+      let estado = 'pendiente';
+      if (totalEntregado <= 0) {
+        estado = 'pendiente';
+      } else if (deliveredGreaterOrEqual) {
+        estado = 'completo';
+      } else {
+        estado = 'parcial';
+      }
+
+      return {
+        ...cliente,
+        estado,
+        pendientes: Math.max(totalBultos - totalEntregado, 0),
+      };
+    });
+  }, [rows]);
+
+  const clientesPendientes = useMemo(
+    () => clientesData.filter((cliente) => cliente.estado === 'pendiente').length,
+    [clientesData],
+  );
+
+  const clientesOptions = useMemo(() => {
+    const sorted = [...clientesData].sort((a, b) => {
+      const left = a.clienteNombre ?? '';
+      const right = b.clienteNombre ?? '';
+      return left.localeCompare(right, 'es', { sensitivity: 'base' });
+    });
+
+    return sorted.map((cliente) => ({
+      key: cliente.key,
+      clienteId: cliente.clienteId,
+      clienteNombre: cliente.clienteNombre ?? '—',
+      estado: cliente.estado,
+      pendientes: cliente.pendientes,
+      totalBultos: cliente.totalBultos,
+      searchValue: normalizeText(cliente.clienteNombre ?? ''),
+    }));
+  }, [clientesData]);
+
+  const clienteEstadoMap = useMemo(() => {
+    const map = new Map();
+    clientesData.forEach((cliente) => {
+      map.set(cliente.key, cliente.estado);
+    });
+    return map;
+  }, [clientesData]);
+
+  const selectedClienteOption = useMemo(
+    () => clientesOptions.find((option) => option.key === clienteSeleccionadoKey) ?? null,
+    [clienteSeleccionadoKey, clientesOptions],
+  );
+
+  const filterClientesOptions = useCallback((options, { inputValue }) => {
+    const normalized = normalizeText(inputValue);
+    if (!normalized) {
+      return options.slice(0, 15);
+    }
+
+    const filtered = [];
+    for (let index = 0; index < options.length && filtered.length < 15; index += 1) {
+      const option = options[index];
+      if (!option) continue;
+      if (!option.searchValue && !normalized) {
+        filtered.push(option);
+        continue;
+      }
+      if (option.searchValue?.includes(normalized)) {
+        filtered.push(option);
+      }
+    }
+    return filtered;
+  }, []);
+
+  const tableData = useMemo(() => {
+    if (!clienteSeleccionadoKey) return rows;
+    return rows.filter((row) => {
+      const key = row.clienteKey || getClienteKey(row.clienteId, row.clienteNombre) || row.rowId;
+      return key === clienteSeleccionadoKey;
+    });
+  }, [clienteSeleccionadoKey, rows]);
+
+  useEffect(() => {
+    if (!clienteSeleccionadoKey) return;
+    const exists = clientesOptions.some((option) => option.key === clienteSeleccionadoKey);
+    if (!exists) {
+      setClienteSeleccionadoKey(null);
+    }
+  }, [clienteSeleccionadoKey, clientesOptions]);
+
   const filterFns = useMemo(
     () => ({
       includesString: (row, columnId, value) => {
@@ -447,6 +586,46 @@ export default function DistribucionPage() {
         cell: (info) => info.getValue() ?? '—',
         filterFn: 'includesString',
         meta: { filterLabel: 'cliente' },
+      }),
+      columnHelper.display({
+        id: 'estadoCliente',
+        header: 'Estado',
+        cell: ({ row }) => {
+          const key = row.original?.clienteKey || row.original?.rowId;
+          const estado = clienteEstadoMap.get(key) ?? 'pendiente';
+
+          if (estado === 'parcial') {
+            return (
+              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: 'warning.main' }}>
+                <WarningAmberIcon fontSize="small" color="warning" />
+                <Typography variant="body2" sx={{ fontWeight: 600, color: 'warning.main' }}>
+                  Parcial
+                </Typography>
+              </Stack>
+            );
+          }
+
+          if (estado === 'completo') {
+            return (
+              <Typography variant="body2" sx={{ fontWeight: 600, color: 'success.main' }}>
+                Completo
+              </Typography>
+            );
+          }
+
+          if (estado === 'pendiente') {
+            return (
+              <Typography variant="body2" color="text.secondary">
+                Pendiente
+              </Typography>
+            );
+          }
+
+          return <Typography variant="body2">—</Typography>;
+        },
+        enableSorting: false,
+        enableColumnFilter: false,
+        meta: { align: 'center' },
       }),
       columnHelper.accessor('productoDescripcion', {
         header: 'Producto',
@@ -504,11 +683,11 @@ export default function DistribucionPage() {
         meta: { filterLabel: 'total entregado', align: 'right' },
       }),
     ],
-    [handleCantidadEntregadaChange, isTabletDown],
+    [clienteEstadoMap, handleCantidadEntregadaChange, isTabletDown],
   );
 
   const table = useReactTable({
-    data: rows,
+    data: tableData,
     columns,
     state: {
       columnFilters,
@@ -553,6 +732,11 @@ export default function DistribucionPage() {
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [columnFilters]);
+
+  useEffect(() => {
+    setRowSelection({});
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [clienteSeleccionadoKey]);
 
   const selectedRows = table.getSelectedRowModel().rows;
   const hasEditedRows = Object.keys(editedRows).length > 0;
@@ -616,6 +800,68 @@ export default function DistribucionPage() {
           </Typography>
         </Stack>
       </Box>
+
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={{ xs: 1.5, sm: 2 }}
+        alignItems={{ xs: 'stretch', sm: 'center' }}
+        sx={{ mb: 2 }}
+      >
+        <Autocomplete
+          options={clientesOptions}
+          value={selectedClienteOption}
+          onChange={(_, newValue) => setClienteSeleccionadoKey(newValue?.key ?? null)}
+          filterOptions={filterClientesOptions}
+          getOptionLabel={(option) => option?.clienteNombre ?? ''}
+          isOptionEqualToValue={(option, value) => option.key === value.key}
+          clearOnEscape
+          fullWidth
+          disabled={clientesOptions.length === 0}
+          renderOption={(props, option) => (
+            <li {...props}>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                spacing={2}
+                sx={{ width: '100%' }}
+              >
+                <Typography variant="body2">{option.clienteNombre}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Pend: {quantityFormatter.format(Number(option.pendientes ?? 0))}
+                </Typography>
+              </Stack>
+            </li>
+          )}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Filtrar por cliente"
+              placeholder="Selecciona un cliente"
+              size={isTabletDown ? 'medium' : 'small'}
+              fullWidth
+            />
+          )}
+          ListboxProps={{ sx: { maxHeight: 280 } }}
+        />
+        <Paper
+          variant="outlined"
+          sx={{
+            px: 2,
+            py: 1.5,
+            borderRadius: 2,
+            width: { xs: '100%', sm: 'auto' },
+            minWidth: { sm: 200 },
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            Clientes pendientes
+          </Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700, color: 'warning.main' }}>
+            {clientesPendientes}
+          </Typography>
+        </Paper>
+      </Stack>
 
       {isSmallScreen && filterableColumns.length > 0 && (
         <Paper sx={{ mb: 2, p: 2, borderRadius: 2 }} variant="outlined">
@@ -712,6 +958,9 @@ export default function DistribucionPage() {
               pageRows.map((row) => {
                 const original = row.original;
                 const isEdited = Boolean(editedRows[original.rowId]);
+                const estadoCliente = clienteEstadoMap.get(
+                  original?.clienteKey || original?.rowId,
+                );
                 return (
                   <Box
                     key={row.id}
@@ -731,9 +980,20 @@ export default function DistribucionPage() {
                         <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                           Com {original.nrodecomanda ?? '—'}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {original.clienteNombre ?? '—'}
-                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" color="text.secondary">
+                            {original.clienteNombre ?? '—'}
+                          </Typography>
+                          {estadoCliente === 'parcial' && (
+                            <Chip
+                              label="Parcial"
+                              size="small"
+                              color="warning"
+                              variant="outlined"
+                              sx={{ fontWeight: 600 }}
+                            />
+                          )}
+                        </Stack>
                       </Box>
                       <Checkbox
                         checked={row.getIsSelected()}
