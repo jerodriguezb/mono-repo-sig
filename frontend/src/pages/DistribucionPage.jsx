@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -32,6 +34,7 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import {
   createColumnHelper,
   flexRender,
@@ -87,10 +90,13 @@ const clampDelivered = (value, max) => {
   const numeric = Number(value);
   if (Number.isNaN(numeric)) return 0;
   const sanitized = Math.max(numeric, 0);
-  if (Number.isFinite(max)) {
-    return Math.min(sanitized, max);
+  const integerValue = Math.trunc(sanitized);
+  const limitValue = Number(max);
+  if (!Number.isFinite(limitValue)) {
+    return integerValue;
   }
-  return sanitized;
+  const limit = Math.trunc(Math.max(limitValue, 0));
+  return Math.min(integerValue, limit);
 };
 
 const buildRowId = (comandaId, itemId, index) => {
@@ -116,6 +122,7 @@ export default function DistribucionPage() {
   const [massDialog, setMassDialog] = useState({ open: false, value: '', error: '' });
   const [saving, setSaving] = useState(false);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
+  const [clienteSeleccionadoKey, setClienteSeleccionadoKey] = useState(null);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -140,15 +147,19 @@ export default function DistribucionPage() {
       items.forEach((item, index) => {
         const itemId = item?._id ? String(item._id) : null;
         const rowId = buildRowId(comanda?._id ?? `comanda-${index}`, itemId, index);
-        const cantidad = Number(item?.cantidad ?? 0);
+        const cantidad = Math.trunc(Math.max(Number(item?.cantidad ?? 0), 0));
         const monto = Number(item?.monto ?? 0);
-        const cantidadEntregada = Number(item?.cantidadentregada ?? 0);
+        const cantidadEntregada = clampDelivered(item?.cantidadentregada ?? 0, cantidad);
+        const clienteId = comanda?.codcli?._id ? String(comanda.codcli._id) : null;
+        const clienteSearchValue = normalizeText(clienteNombre);
         result.push({
           rowId,
           comandaId: comanda?._id ?? null,
           itemId: itemId ?? `item-${index}`,
           nrodecomanda: comanda?.nrodecomanda ?? '',
           clienteNombre,
+          clienteId,
+          clienteSearchValue,
           productoDescripcion: item?.codprod?.descripcion ?? '',
           cantidad,
           monto,
@@ -250,7 +261,7 @@ export default function DistribucionPage() {
       prev.map((row) => {
         const update = rowUpdates.get(row.rowId);
         if (!update) return row;
-        const cantidad = Number(update.cantidad ?? 0);
+        const cantidad = Math.trunc(Number(update.cantidad ?? 0));
         return {
           ...row,
           cantidadEntregada: cantidad,
@@ -264,7 +275,7 @@ export default function DistribucionPage() {
       rowUpdates.forEach((update, rowId) => {
         const baseRow = rows.find((row) => row.rowId === rowId);
         if (!baseRow) return;
-        const cantidad = Number(update.cantidad ?? 0);
+        const cantidad = Math.trunc(Number(update.cantidad ?? 0));
         if (cantidad === baseRow.cantidadEntregadaOriginal) {
           delete next[rowId];
         } else {
@@ -305,8 +316,13 @@ export default function DistribucionPage() {
     }
 
     const numeric = Number(massDialog.value);
-    if (Number.isNaN(numeric) || numeric < 0) {
-      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un valor válido (≥ 0).' }));
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
+      return;
+    }
+
+    if (!Number.isInteger(numeric)) {
+      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
       return;
     }
 
@@ -398,14 +414,180 @@ export default function DistribucionPage() {
     }
   };
 
+  const clientesData = useMemo(() => {
+    if (!rows.length) return [];
+
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const key = row.clienteId
+        ? `id:${row.clienteId}`
+        : `name:${row.clienteSearchValue ?? normalizeText(row.clienteNombre ?? '')}`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          clienteKey: key,
+          clienteId: row.clienteId ?? null,
+          clienteNombre: row.clienteNombre ?? '',
+          searchValue: row.clienteSearchValue ?? normalizeText(row.clienteNombre ?? ''),
+          items: [],
+          totalBultos: 0,
+          totalEntregado: 0,
+        });
+      }
+
+      const entry = grouped.get(key);
+      entry.items.push(row);
+      entry.totalBultos += Math.trunc(Number(row.cantidad ?? 0));
+      entry.totalEntregado += Math.trunc(Number(row.cantidadEntregada ?? 0));
+    });
+
+    return Array.from(grouped.values()).map((entry) => {
+      const totalSolicitado = Math.max(entry.totalBultos, 0);
+      const totalEntregado = Math.max(entry.totalEntregado, 0);
+      const faltante = Math.max(totalSolicitado - totalEntregado, 0);
+
+      let estado = 'pendiente';
+      if (totalEntregado === 0) {
+        estado = 'pendiente';
+      } else if (faltante === 0) {
+        estado = 'completo';
+      } else {
+        estado = 'parcial';
+      }
+
+      return {
+        ...entry,
+        totalBultos: totalSolicitado,
+        totalEntregado,
+        faltante,
+        estado,
+      };
+    });
+  }, [rows]);
+
+  const clienteEstadoMap = useMemo(() => {
+    const map = new Map();
+    clientesData.forEach((cliente) => {
+      map.set(cliente.clienteKey, cliente.estado);
+    });
+    return map;
+  }, [clientesData]);
+
+  const clientesPendientesCount = useMemo(
+    () => clientesData.reduce((count, cliente) => count + (cliente.estado === 'pendiente' ? 1 : 0), 0),
+    [clientesData],
+  );
+
+  const clientesOptions = useMemo(
+    () =>
+      clientesData.map((cliente) => ({
+        key: cliente.clienteKey,
+        clienteId: cliente.clienteId,
+        clienteNombre: cliente.clienteNombre || '—',
+        searchValue: cliente.searchValue,
+        estado: cliente.estado,
+        pendientes: cliente.faltante,
+      })),
+    [clientesData],
+  );
+
+  const clienteSeleccionadoOption = useMemo(() => {
+    if (!clienteSeleccionadoKey) return null;
+    return clientesOptions.find((option) => option.key === clienteSeleccionadoKey) ?? null;
+  }, [clienteSeleccionadoKey, clientesOptions]);
+
+  useEffect(() => {
+    if (!clienteSeleccionadoKey) return;
+    const exists = clientesOptions.some((option) => option.key === clienteSeleccionadoKey);
+    if (!exists) {
+      setClienteSeleccionadoKey(null);
+    }
+  }, [clienteSeleccionadoKey, clientesOptions]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+    setRowSelection({});
+  }, [clienteSeleccionadoKey]);
+
+  const tableData = useMemo(() => {
+    const keyMatch = clienteSeleccionadoKey;
+
+    return rows
+      .filter((row) => {
+        if (!keyMatch) return true;
+        const rowKey = row.clienteId
+          ? `id:${row.clienteId}`
+          : `name:${row.clienteSearchValue ?? normalizeText(row.clienteNombre ?? '')}`;
+        return rowKey === keyMatch;
+      })
+      .map((row) => {
+        const rowKey = row.clienteId
+          ? `id:${row.clienteId}`
+          : `name:${row.clienteSearchValue ?? normalizeText(row.clienteNombre ?? '')}`;
+        const estado = clienteEstadoMap.get(rowKey) ?? 'pendiente';
+        const cantidad = Math.trunc(Math.max(Number(row.cantidad ?? 0), 0));
+        const cantidadEntregada = Math.trunc(Math.max(Number(row.cantidadEntregada ?? 0), 0));
+        const faltante = Math.max(cantidad - cantidadEntregada, 0);
+        let itemEstado = 'pendiente';
+        if (cantidadEntregada === 0) {
+          itemEstado = 'pendiente';
+        } else if (faltante === 0) {
+          itemEstado = 'completo';
+        } else {
+          itemEstado = 'parcial';
+        }
+        return { ...row, clienteEstado: estado, itemEstado };
+      });
+  }, [rows, clienteSeleccionadoKey, clienteEstadoMap]);
+
+  const filterClientesOptions = useCallback((options, { inputValue }) => {
+    const normalizedValue = normalizeText(inputValue ?? '');
+    if (!normalizedValue) {
+      return options.slice(0, 15);
+    }
+    return options.filter((option) => option.searchValue.includes(normalizedValue)).slice(0, 15);
+  }, []);
+
+  const renderEstadoDisplay = useCallback((estado, size = 'small') => {
+    if (estado === 'parcial') {
+      return (
+        <Chip
+          label="Parcial"
+          size={size}
+          color="warning"
+          variant="outlined"
+          icon={<WarningAmberRoundedIcon fontSize="small" />}
+          sx={{ '& .MuiChip-icon': { mr: 0 } }}
+        />
+      );
+    }
+
+    if (estado === 'completo') {
+      return (
+        <Typography
+          variant={size === 'small' ? 'body2' : 'body1'}
+          sx={{ fontWeight: 600, color: 'success.main' }}
+        >
+          Completo
+        </Typography>
+      );
+    }
+
+    return (
+      <Typography variant={size === 'small' ? 'body2' : 'body1'} sx={{ color: 'text.secondary' }}>
+        Pendiente
+      </Typography>
+    );
+  }, []);
+
   const filterFns = useMemo(
     () => ({
       includesString: (row, columnId, value) => {
         if (!value && value !== 0) return true;
         const rowValue = row.getValue(columnId);
-        return String(rowValue ?? '')
-          .toLowerCase()
-          .includes(String(value ?? '').toLowerCase());
+        const normalizedRow = normalizeText(String(rowValue ?? ''));
+        const normalizedFilter = normalizeText(String(value ?? ''));
+        return normalizedRow.includes(normalizedFilter);
       },
     }),
     [],
@@ -448,6 +630,13 @@ export default function DistribucionPage() {
         filterFn: 'includesString',
         meta: { filterLabel: 'cliente' },
       }),
+      columnHelper.accessor('clienteEstado', {
+        header: 'Estado',
+        cell: (info) => renderEstadoDisplay(info.getValue()),
+        enableColumnFilter: false,
+        enableSorting: false,
+        meta: { align: 'center' },
+      }),
       columnHelper.accessor('productoDescripcion', {
         header: 'Producto',
         cell: (info) => info.getValue() ?? '—',
@@ -486,7 +675,13 @@ export default function DistribucionPage() {
               type="number"
               size={isTabletDown ? 'medium' : 'small'}
               onChange={(event) => handleCantidadEntregadaChange(row, event.target.value)}
-              inputProps={{ min: 0, max: row.cantidad, step: '0.01' }}
+              inputProps={{
+                min: 0,
+                max: row.cantidad,
+                step: 1,
+                inputMode: 'numeric',
+                pattern: '[0-9]*',
+              }}
               fullWidth={isTabletDown}
               sx={{ maxWidth: isTabletDown ? '100%' : 120 }}
             />
@@ -504,11 +699,11 @@ export default function DistribucionPage() {
         meta: { filterLabel: 'total entregado', align: 'right' },
       }),
     ],
-    [handleCantidadEntregadaChange, isTabletDown],
+    [handleCantidadEntregadaChange, isTabletDown, renderEstadoDisplay],
   );
 
   const table = useReactTable({
-    data: rows,
+    data: tableData,
     columns,
     state: {
       columnFilters,
@@ -657,6 +852,66 @@ export default function DistribucionPage() {
       <Stack
         direction={{ xs: 'column', md: 'row' }}
         spacing={{ xs: 1.5, md: 2 }}
+        alignItems={{ xs: 'stretch', md: 'center' }}
+        sx={{ mb: 2 }}
+      >
+        <Autocomplete
+          fullWidth
+          value={clienteSeleccionadoOption}
+          options={clientesOptions}
+          onChange={(_, value) => setClienteSeleccionadoKey(value?.key ?? null)}
+          isOptionEqualToValue={(option, value) => option.key === (value?.key ?? '')}
+          getOptionLabel={(option) => option?.clienteNombre ?? ''}
+          filterOptions={filterClientesOptions}
+          clearOnEscape
+          includeInputInList
+          ListboxProps={{ style: { maxHeight: 320 } }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Filtrar por cliente"
+              placeholder="Buscar cliente"
+              size={isTabletDown ? 'medium' : 'small'}
+            />
+          )}
+          renderOption={(props, option) => (
+            <li {...props} key={option.key}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                  {option.clienteNombre}
+                </Typography>
+                {option.estado !== 'completo' && option.pendientes > 0 && (
+                  <Typography variant="caption" color="warning.main">
+                    Pend: {quantityFormatter.format(Number(option.pendientes ?? 0))}
+                  </Typography>
+                )}
+              </Stack>
+            </li>
+          )}
+          noOptionsText="No se encontraron clientes"
+          sx={{
+            minWidth: { md: 300 },
+          }}
+        />
+        <Paper
+          variant="outlined"
+          sx={{
+            px: { xs: 2, sm: 3 },
+            py: { xs: 1, sm: 1.25 },
+            borderRadius: 2,
+            bgcolor: 'background.paper',
+            width: { xs: '100%', md: 'auto' },
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, textAlign: { xs: 'center', md: 'left' } }}>
+            Pendientes: <Box component="span" color="warning.main">{clientesPendientesCount}</Box>
+          </Typography>
+        </Paper>
+      </Stack>
+
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={{ xs: 1.5, md: 2 }}
         justifyContent="space-between"
         alignItems={{ xs: 'stretch', md: 'center' }}
         sx={{ mb: 2 }}
@@ -726,14 +981,27 @@ export default function DistribucionPage() {
                       gap: 1.5,
                     }}
                   >
-                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                      <Box>
+                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                      <Box sx={{ flexGrow: 1 }}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                           Com {original.nrodecomanda ?? '—'}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {original.clienteNombre ?? '—'}
-                        </Typography>
+                        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.5, flexWrap: 'wrap' }}>
+                          <Typography variant="body2" color="text.secondary">
+                            {original.clienteNombre ?? '—'}
+                          </Typography>
+                          {original.itemEstado === 'parcial' && (
+                            <Box sx={{ mt: { xs: 0.25, sm: 0 } }}>{renderEstadoDisplay('parcial', 'small')}</Box>
+                          )}
+                          {original.itemEstado === 'completo' && (
+                            <Typography
+                              variant="caption"
+                              sx={{ fontWeight: 600, color: 'success.main', mt: { xs: 0.25, sm: 0 } }}
+                            >
+                              Completo
+                            </Typography>
+                          )}
+                        </Stack>
                       </Box>
                       <Checkbox
                         checked={row.getIsSelected()}
@@ -791,7 +1059,13 @@ export default function DistribucionPage() {
                           onChange={(event) =>
                             handleCantidadEntregadaChange(original, event.target.value)
                           }
-                          inputProps={{ min: 0, max: original.cantidad, step: '0.01' }}
+                          inputProps={{
+                            min: 0,
+                            max: original.cantidad,
+                            step: 1,
+                            inputMode: 'numeric',
+                            pattern: '[0-9]*',
+                          }}
                         />
                       </Grid>
                       <Grid item xs={12} sm={3}>
@@ -823,7 +1097,7 @@ export default function DistribucionPage() {
               stickyHeader
               size="small"
               sx={{
-                minWidth: isTabletDown ? 720 : 960,
+                minWidth: isTabletDown ? 720 : 1020,
                 '& .MuiTableCell-root': {
                   px: { xs: 1, sm: 1.5 },
                   py: { xs: 1, sm: 1.5 },
@@ -959,9 +1233,9 @@ export default function DistribucionPage() {
             fullWidth
             value={massDialog.value}
             onChange={(event) => setMassDialog((prev) => ({ ...prev, value: event.target.value }))}
-            inputProps={{ min: 0, step: '0.01' }}
+            inputProps={{ min: 0, step: 1, inputMode: 'numeric', pattern: '[0-9]*' }}
             error={Boolean(massDialog.error)}
-            helperText={massDialog.error || 'Ingresa un número mayor o igual a 0.'}
+            helperText={massDialog.error || 'Ingresa un número entero mayor o igual a 0.'}
             sx={{ mb: 3 }}
           />
           {selectedCount > 0 && (
