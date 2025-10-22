@@ -90,10 +90,13 @@ const clampDelivered = (value, max) => {
   const numeric = Number(value);
   if (Number.isNaN(numeric)) return 0;
   const sanitized = Math.max(numeric, 0);
-  if (Number.isFinite(max)) {
-    return Math.min(sanitized, max);
+  const integerValue = Math.trunc(sanitized);
+  const limitValue = Number(max);
+  if (!Number.isFinite(limitValue)) {
+    return integerValue;
   }
-  return sanitized;
+  const limit = Math.trunc(Math.max(limitValue, 0));
+  return Math.min(integerValue, limit);
 };
 
 const buildRowId = (comandaId, itemId, index) => {
@@ -144,9 +147,9 @@ export default function DistribucionPage() {
       items.forEach((item, index) => {
         const itemId = item?._id ? String(item._id) : null;
         const rowId = buildRowId(comanda?._id ?? `comanda-${index}`, itemId, index);
-        const cantidad = Number(item?.cantidad ?? 0);
+        const cantidad = Math.trunc(Math.max(Number(item?.cantidad ?? 0), 0));
         const monto = Number(item?.monto ?? 0);
-        const cantidadEntregada = Number(item?.cantidadentregada ?? 0);
+        const cantidadEntregada = clampDelivered(item?.cantidadentregada ?? 0, cantidad);
         const clienteId = comanda?.codcli?._id ? String(comanda.codcli._id) : null;
         const clienteSearchValue = normalizeText(clienteNombre);
         result.push({
@@ -258,7 +261,7 @@ export default function DistribucionPage() {
       prev.map((row) => {
         const update = rowUpdates.get(row.rowId);
         if (!update) return row;
-        const cantidad = Number(update.cantidad ?? 0);
+        const cantidad = Math.trunc(Number(update.cantidad ?? 0));
         return {
           ...row,
           cantidadEntregada: cantidad,
@@ -272,7 +275,7 @@ export default function DistribucionPage() {
       rowUpdates.forEach((update, rowId) => {
         const baseRow = rows.find((row) => row.rowId === rowId);
         if (!baseRow) return;
-        const cantidad = Number(update.cantidad ?? 0);
+        const cantidad = Math.trunc(Number(update.cantidad ?? 0));
         if (cantidad === baseRow.cantidadEntregadaOriginal) {
           delete next[rowId];
         } else {
@@ -313,8 +316,13 @@ export default function DistribucionPage() {
     }
 
     const numeric = Number(massDialog.value);
-    if (Number.isNaN(numeric) || numeric < 0) {
-      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un valor válido (≥ 0).' }));
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
+      return;
+    }
+
+    if (!Number.isInteger(numeric)) {
+      setMassDialog((prev) => ({ ...prev, error: 'Ingresa un número entero válido (≥ 0).' }));
       return;
     }
 
@@ -429,24 +437,29 @@ export default function DistribucionPage() {
 
       const entry = grouped.get(key);
       entry.items.push(row);
-      entry.totalBultos += Number(row.cantidad ?? 0);
-      entry.totalEntregado += Number(row.cantidadEntregada ?? 0);
+      entry.totalBultos += Math.trunc(Number(row.cantidad ?? 0));
+      entry.totalEntregado += Math.trunc(Number(row.cantidadEntregada ?? 0));
     });
 
     return Array.from(grouped.values()).map((entry) => {
-      const allComplete = entry.items.every(
-        (item) => Number(item.cantidadEntregada ?? 0) >= Number(item.cantidad ?? 0),
-      );
+      const totalSolicitado = Math.max(entry.totalBultos, 0);
+      const totalEntregado = Math.max(entry.totalEntregado, 0);
+      const faltante = Math.max(totalSolicitado - totalEntregado, 0);
 
       let estado = 'pendiente';
-      if (allComplete) {
+      if (totalEntregado === 0) {
+        estado = 'pendiente';
+      } else if (faltante === 0) {
         estado = 'completo';
-      } else if (entry.totalEntregado > 0) {
+      } else {
         estado = 'parcial';
       }
 
       return {
         ...entry,
+        totalBultos: totalSolicitado,
+        totalEntregado,
+        faltante,
         estado,
       };
     });
@@ -473,7 +486,7 @@ export default function DistribucionPage() {
         clienteNombre: cliente.clienteNombre || '—',
         searchValue: cliente.searchValue,
         estado: cliente.estado,
-        pendientes: Math.max(cliente.totalBultos - cliente.totalEntregado, 0),
+        pendientes: cliente.faltante,
       })),
     [clientesData],
   );
@@ -512,7 +525,18 @@ export default function DistribucionPage() {
           ? `id:${row.clienteId}`
           : `name:${row.clienteSearchValue ?? normalizeText(row.clienteNombre ?? '')}`;
         const estado = clienteEstadoMap.get(rowKey) ?? 'pendiente';
-        return { ...row, clienteEstado: estado };
+        const cantidad = Math.trunc(Math.max(Number(row.cantidad ?? 0), 0));
+        const cantidadEntregada = Math.trunc(Math.max(Number(row.cantidadEntregada ?? 0), 0));
+        const faltante = Math.max(cantidad - cantidadEntregada, 0);
+        let itemEstado = 'pendiente';
+        if (cantidadEntregada === 0) {
+          itemEstado = 'pendiente';
+        } else if (faltante === 0) {
+          itemEstado = 'completo';
+        } else {
+          itemEstado = 'parcial';
+        }
+        return { ...row, clienteEstado: estado, itemEstado };
       });
   }, [rows, clienteSeleccionadoKey, clienteEstadoMap]);
 
@@ -651,7 +675,13 @@ export default function DistribucionPage() {
               type="number"
               size={isTabletDown ? 'medium' : 'small'}
               onChange={(event) => handleCantidadEntregadaChange(row, event.target.value)}
-              inputProps={{ min: 0, max: row.cantidad, step: '0.01' }}
+              inputProps={{
+                min: 0,
+                max: row.cantidad,
+                step: 1,
+                inputMode: 'numeric',
+                pattern: '[0-9]*',
+              }}
               fullWidth={isTabletDown}
               sx={{ maxWidth: isTabletDown ? '100%' : 120 }}
             />
@@ -960,10 +990,10 @@ export default function DistribucionPage() {
                           <Typography variant="body2" color="text.secondary">
                             {original.clienteNombre ?? '—'}
                           </Typography>
-                          {original.clienteEstado === 'parcial' && (
+                          {original.itemEstado === 'parcial' && (
                             <Box sx={{ mt: { xs: 0.25, sm: 0 } }}>{renderEstadoDisplay('parcial', 'small')}</Box>
                           )}
-                          {original.clienteEstado === 'completo' && (
+                          {original.itemEstado === 'completo' && (
                             <Typography
                               variant="caption"
                               sx={{ fontWeight: 600, color: 'success.main', mt: { xs: 0.25, sm: 0 } }}
@@ -1029,7 +1059,13 @@ export default function DistribucionPage() {
                           onChange={(event) =>
                             handleCantidadEntregadaChange(original, event.target.value)
                           }
-                          inputProps={{ min: 0, max: original.cantidad, step: '0.01' }}
+                          inputProps={{
+                            min: 0,
+                            max: original.cantidad,
+                            step: 1,
+                            inputMode: 'numeric',
+                            pattern: '[0-9]*',
+                          }}
                         />
                       </Grid>
                       <Grid item xs={12} sm={3}>
@@ -1197,9 +1233,9 @@ export default function DistribucionPage() {
             fullWidth
             value={massDialog.value}
             onChange={(event) => setMassDialog((prev) => ({ ...prev, value: event.target.value }))}
-            inputProps={{ min: 0, step: '0.01' }}
+            inputProps={{ min: 0, step: 1, inputMode: 'numeric', pattern: '[0-9]*' }}
             error={Boolean(massDialog.error)}
-            helperText={massDialog.error || 'Ingresa un número mayor o igual a 0.'}
+            helperText={massDialog.error || 'Ingresa un número entero mayor o igual a 0.'}
             sx={{ mb: 3 }}
           />
           {selectedCount > 0 && (
