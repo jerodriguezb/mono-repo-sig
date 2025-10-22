@@ -36,7 +36,6 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import WhatsAppIcon from '@mui/icons-material/WhatsApp';
 import {
   createColumnHelper,
   flexRender,
@@ -145,7 +144,6 @@ export default function DistribucionPage() {
     data: null,
   });
   const [pdfGenerating, setPdfGenerating] = useState(false);
-  const [whatsappSharing, setWhatsappSharing] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -585,56 +583,6 @@ export default function DistribucionPage() {
       setPdfGenerating(false);
     }
   };
-
-  const handleShareViaWhatsApp = useCallback(() => {
-    if (!pdfShareState?.data) return;
-
-    if (typeof window === 'undefined') {
-      showSnackbar(
-        'No se pudo abrir WhatsApp desde este dispositivo. Usa la descarga manual para compartir el comprobante.',
-        'info',
-      );
-      return;
-    }
-
-    setWhatsappSharing(true);
-    try {
-      const doc = buildDeliveryPdf(pdfShareState.data);
-      const fileName = pdfShareState.fileName || 'comprobante_entrega.pdf';
-      doc.save(fileName);
-
-      const comandaDisplay = pdfShareState.data.comandas?.length
-        ? pdfShareState.data.comandas.join(', ')
-        : '—';
-      const shareMessage = [
-        `Comprobante de entrega — ${pdfShareState.data.clienteNombre}`,
-        `Comanda(s): ${comandaDisplay}`,
-        `Total entregado: ${currencyFormatter.format(Number(pdfShareState.data.total ?? 0))}`,
-        '',
-        'Adjunta el PDF descargado antes de enviar este mensaje.',
-      ].join('\n');
-      const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareMessage)}`;
-      const popup = window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-      if (!popup) {
-        showSnackbar(
-          'No se pudo abrir WhatsApp automáticamente. Abre la aplicación y adjunta el PDF descargado manualmente.',
-          'info',
-        );
-      } else if (popup.opener) {
-        popup.opener = null;
-      }
-
-      showSnackbar('Se descargó el comprobante. Adjunta el PDF en WhatsApp antes de enviarlo.', 'success');
-    } catch (error) {
-      console.error('No se pudo preparar el comprobante para WhatsApp', error);
-      showSnackbar(
-        'Ocurrió un problema al preparar el comprobante. Descárgalo manualmente desde el botón.',
-        'error',
-      );
-    } finally {
-      setWhatsappSharing(false);
-    }
-  }, [buildDeliveryPdf, pdfShareState, showSnackbar]);
 
   const handleDownloadPdfAgain = () => {
     if (!pdfShareState?.data) return;
@@ -1543,9 +1491,8 @@ export default function DistribucionPage() {
               {currencyFormatter.format(Number(pdfShareState.data?.total ?? 0))}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Al tocar “Enviar por WhatsApp” se descargará nuevamente el comprobante y se abrirá
-              WhatsApp para que lo adjuntes manualmente. También puedes descargarlo con el botón
-              inferior para compartirlo por otro medio.
+              Descarga el comprobante y compártelo por WhatsApp adjuntando el PDF guardado en tu
+              dispositivo. También puedes conservarlo para enviarlo por otro medio.
             </Typography>
           </Stack>
         </DialogContent>
@@ -1565,16 +1512,6 @@ export default function DistribucionPage() {
             fullWidth={isTabletDown}
           >
             Descargar PDF
-          </Button>
-          <Button
-            onClick={handleShareViaWhatsApp}
-            startIcon={<WhatsAppIcon />}
-            variant="contained"
-            color="success"
-            disabled={!pdfShareState.data || whatsappSharing}
-            fullWidth={isTabletDown}
-          >
-            {whatsappSharing ? 'Abriendo WhatsApp…' : 'Enviar por WhatsApp'}
           </Button>
           <Button onClick={handleShareDialogClose}>Cerrar</Button>
         </DialogActions>
