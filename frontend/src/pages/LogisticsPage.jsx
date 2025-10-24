@@ -16,6 +16,7 @@ import {
   TableBody,
   TableCell,
   TableContainer,
+  TableFooter,
   TableHead,
   TableRow,
   TableSortLabel,
@@ -184,6 +185,8 @@ export default function LogisticsPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [statusSummary, setStatusSummary] = useState(() => buildEmptyStatusSummary());
   const [statusLoading, setStatusLoading] = useState(false);
+  const [totalPrecioGlobal, setTotalPrecioGlobal] = useState(0);
+  const [totalEntregadoGlobal, setTotalEntregadoGlobal] = useState(0);
 
   const [estados, setEstados] = useState([]);
   const [camiones, setCamiones] = useState([]);
@@ -201,6 +204,7 @@ export default function LogisticsPage() {
   const productoTimer = useRef(null);
   const camioneroTimer = useRef(null);
   const usuarioTimer = useRef(null);
+  const totalsRequestRef = useRef(0);
 
   const collator = useMemo(() => new Intl.Collator('es', { sensitivity: 'base', numeric: true }), []);
 
@@ -456,7 +460,9 @@ export default function LogisticsPage() {
   });
 
   const selectedComandas = table.getSelectedRowModel().flatRows.map((row) => row.original);
-  const buildParamsFromFilters = useCallback(() => {
+  const visibleColumns = table.getVisibleLeafColumns();
+  const firstDataColumnId = visibleColumns.find((column) => column.id !== 'select')?.id ?? null;
+  const buildParamsFromFilters = useCallback((overrides = {}) => {
     const params = { page, limit: PAGE_SIZE };
     const sortingColumnMap = {
       nrodecomanda: 'nrodecomanda',
@@ -465,6 +471,7 @@ export default function LogisticsPage() {
       puntoDistribucion: 'puntoDistribucion',
       cliente: 'cliente',
       precioTotal: 'precioTotal',
+      totalEntregado: 'totalEntregado',
       ruta: 'ruta',
       camionero: 'camionero',
       usuario: 'usuario',
@@ -512,8 +519,62 @@ export default function LogisticsPage() {
           break;
       }
     });
-    return params;
+    return { ...params, ...overrides };
   }, [columnFilters, page, sorting]);
+
+  const fetchTotals = useCallback(
+    async (totalCount, currentPageData = []) => {
+      const requestId = totalsRequestRef.current + 1;
+      totalsRequestRef.current = requestId;
+
+      let globalPrice = 0;
+      let globalDelivered = 0;
+
+      const accumulateTotals = (comandasList) => {
+        if (!Array.isArray(comandasList)) return;
+        comandasList.forEach((comanda) => {
+          if (!comanda) return;
+          globalPrice += resolvePrecioTotal(comanda);
+          globalDelivered += sumDeliveredTotal(comanda?.items);
+        });
+      };
+
+      accumulateTotals(currentPageData);
+
+      if (!totalCount) {
+        if (totalsRequestRef.current === requestId) {
+          setTotalPrecioGlobal(globalPrice);
+          setTotalEntregadoGlobal(globalDelivered);
+        }
+        return;
+      }
+
+      const totalPagesCount = Math.ceil(totalCount / PAGE_SIZE);
+
+      for (let currentPage = 1; currentPage <= totalPagesCount; currentPage += 1) {
+        if (currentPage === page) continue;
+
+        try {
+          const params = buildParamsFromFilters({ page: currentPage, limit: PAGE_SIZE });
+          const { data: response } = await api.get('/comandas/logistica', { params });
+          accumulateTotals(response?.comandas ?? []);
+        } catch (error) {
+          console.error('Error obteniendo comandas para totalizadores', error);
+          if (totalsRequestRef.current === requestId) {
+            setTotalPrecioGlobal(0);
+            setTotalEntregadoGlobal(0);
+          }
+          return;
+        }
+      }
+
+      if (totalsRequestRef.current === requestId) {
+        setTotalPrecioGlobal(globalPrice);
+        setTotalEntregadoGlobal(globalDelivered);
+      }
+    },
+    [buildParamsFromFilters, page],
+  );
 
   const fetchComandas = useCallback(async () => {
     setLoading(true);
@@ -524,13 +585,16 @@ export default function LogisticsPage() {
       setTotal(response.total ?? 0);
       setTotalPages(response.totalPages ?? 0);
       setRowSelection({});
+      await fetchTotals(response.total ?? 0, response.comandas ?? []);
     } catch (error) {
       console.error('Error obteniendo comandas activas', error);
+      setTotalPrecioGlobal(0);
+      setTotalEntregadoGlobal(0);
       showSnackbar('No se pudieron obtener las comandas activas', 'error');
     } finally {
       setLoading(false);
     }
-  }, [buildParamsFromFilters, showSnackbar]);
+  }, [buildParamsFromFilters, fetchTotals, showSnackbar]);
 
   const fetchStatusSummary = useCallback(async () => {
     setStatusLoading(true);
@@ -1293,6 +1357,51 @@ export default function LogisticsPage() {
                 ))
               )}
             </TableBody>
+            <TableFooter>
+              <TableRow sx={{ bgcolor: 'grey.100' }}>
+                {visibleColumns.map((column) => {
+                  if (column.id === 'precioTotal') {
+                    return (
+                      <TableCell
+                        key={`totals-${column.id}`}
+                        align="right"
+                        sx={{ fontWeight: 600, color: 'primary.main' }}
+                      >
+                        {currencyFormatter.format(totalPrecioGlobal)}
+                      </TableCell>
+                    );
+                  }
+                  if (column.id === 'totalEntregado') {
+                    return (
+                      <TableCell
+                        key={`totals-${column.id}`}
+                        align="right"
+                        sx={{ fontWeight: 600, color: 'success.main' }}
+                      >
+                        {currencyFormatter.format(totalEntregadoGlobal)}
+                      </TableCell>
+                    );
+                  }
+                  if (column.id === firstDataColumnId) {
+                    return (
+                      <TableCell
+                        key={`totals-${column.id}`}
+                        align={column.columnDef.meta?.align ?? 'left'}
+                        sx={{ fontWeight: 600 }}
+                      >
+                        Totales filtrados
+                      </TableCell>
+                    );
+                  }
+                  return (
+                    <TableCell
+                      key={`totals-${column.id}`}
+                      align={column.columnDef.meta?.align ?? 'left'}
+                    />
+                  );
+                })}
+              </TableRow>
+            </TableFooter>
           </Table>
         </TableContainer>
         <Divider />
