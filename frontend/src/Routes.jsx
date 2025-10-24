@@ -10,6 +10,7 @@ import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
 import DistribucionPage from './pages/DistribucionPage.jsx';
+import DistribucionTouchPage from './pages/DistribucionTouchPage.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -30,6 +31,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/ordenes" element={<OrdersPage />} />
         <Route path="/historial-comandas" element={<HistorialComandas />} />
         <Route path="/distribucion" element={<DistribucionPage />} />
+        <Route path="/pantalla-distribucion" element={<DistribucionTouchPage />} />
         <Route path="/logistics" element={<LogisticsPage />} />
         {/* Otras rutas aquí */}
       </Route>
