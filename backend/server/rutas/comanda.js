@@ -235,6 +235,7 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'puntoDistribucion',
     'cliente',
     'precioTotal',
+    'totalEntregado',
     'ruta',
     'camionero',
     'usuario',
@@ -253,6 +254,35 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             {
               $convert: {
                 input: '$$item.cantidad',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+            {
+              $convert: {
+                input: '$$item.monto',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const buildDeliveredTotalExpression = () => ({
+    $sum: {
+      $map: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        in: {
+          $multiply: [
+            {
+              $convert: {
+                input: '$$item.cantidadentregada',
                 to: 'double',
                 onNull: 0,
                 onError: 0,
@@ -335,6 +365,39 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             },
           },
           { $set: { __precioTotalSort: '$$REMOVE' } },
+        ];
+      case 'totalEntregado':
+        return [
+          {
+            $addFields: {
+              __totalEntregadoSort: {
+                $let: {
+                  vars: {
+                    existing: {
+                      $convert: {
+                        input: '$totalEntregado',
+                        to: 'double',
+                        onNull: null,
+                        onError: null,
+                      },
+                    },
+                  },
+                  in: {
+                    $ifNull: ['$$existing', buildDeliveredTotalExpression()],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __totalEntregadoSort: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $unset: '__totalEntregadoSort' },
         ];
       case 'ruta':
         return [

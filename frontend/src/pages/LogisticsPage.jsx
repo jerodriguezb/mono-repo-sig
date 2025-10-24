@@ -16,6 +16,7 @@ import {
   TableBody,
   TableCell,
   TableContainer,
+  TableFooter,
   TableHead,
   TableRow,
   TableSortLabel,
@@ -184,6 +185,8 @@ export default function LogisticsPage() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [statusSummary, setStatusSummary] = useState(() => buildEmptyStatusSummary());
   const [statusLoading, setStatusLoading] = useState(false);
+  const [totalPrecioGlobal, setTotalPrecioGlobal] = useState(0);
+  const [totalEntregadoGlobal, setTotalEntregadoGlobal] = useState(0);
 
   const [estados, setEstados] = useState([]);
   const [camiones, setCamiones] = useState([]);
@@ -465,6 +468,7 @@ export default function LogisticsPage() {
       puntoDistribucion: 'puntoDistribucion',
       cliente: 'cliente',
       precioTotal: 'precioTotal',
+      totalEntregado: 'totalEntregado',
       ruta: 'ruta',
       camionero: 'camionero',
       usuario: 'usuario',
@@ -524,6 +528,7 @@ export default function LogisticsPage() {
       setTotal(response.total ?? 0);
       setTotalPages(response.totalPages ?? 0);
       setRowSelection({});
+      return response;
     } catch (error) {
       console.error('Error obteniendo comandas activas', error);
       showSnackbar('No se pudieron obtener las comandas activas', 'error');
@@ -531,6 +536,52 @@ export default function LogisticsPage() {
       setLoading(false);
     }
   }, [buildParamsFromFilters, showSnackbar]);
+
+  const fetchTotals = useCallback(
+    async ({ initialResponse } = {}) => {
+      try {
+        const params = { ...buildParamsFromFilters(), page: 1 };
+        let response = initialResponse;
+        if (!response || response.page !== 1) {
+          const { data } = await api.get('/comandas/logistica', { params });
+          response = data ?? {};
+        }
+
+        const limitPerPageRaw = response?.limit ?? params.limit ?? PAGE_SIZE;
+        const limitPerPage = Math.max(Number(limitPerPageRaw) || PAGE_SIZE, 1);
+        params.limit = limitPerPage;
+
+        let globalPrice = 0;
+        let globalDelivered = 0;
+        const accumulateTotals = (comandasList = []) => {
+          comandasList.forEach((comanda) => {
+            globalPrice += resolvePrecioTotal(comanda);
+            globalDelivered += sumDeliveredTotal(comanda?.items);
+          });
+        };
+
+        accumulateTotals(response?.comandas ?? []);
+
+        const totalRecords = Number(response?.total ?? 0);
+        const totalPagesCount = Math.ceil(totalRecords / limitPerPage) || 0;
+
+        for (let nextPage = 2; nextPage <= totalPagesCount; nextPage += 1) {
+          const { data: pageData } = await api.get('/comandas/logistica', {
+            params: { ...params, page: nextPage },
+          });
+          accumulateTotals(pageData?.comandas ?? []);
+        }
+
+        setTotalPrecioGlobal(globalPrice);
+        setTotalEntregadoGlobal(globalDelivered);
+      } catch (error) {
+        console.error('Error calculando totales globales', error);
+        setTotalPrecioGlobal(0);
+        setTotalEntregadoGlobal(0);
+      }
+    },
+    [buildParamsFromFilters],
+  );
 
   const fetchStatusSummary = useCallback(async () => {
     setStatusLoading(true);
@@ -578,8 +629,13 @@ export default function LogisticsPage() {
   }, [showSnackbar]);
 
   const refreshData = useCallback(async () => {
-    await Promise.all([fetchComandas(), fetchStatusSummary()]);
-  }, [fetchComandas, fetchStatusSummary]);
+    const statusPromise = fetchStatusSummary();
+    const comandasResponse = await fetchComandas();
+    await Promise.all([
+      statusPromise,
+      fetchTotals({ initialResponse: page === 1 ? comandasResponse : null }),
+    ]);
+  }, [fetchComandas, fetchStatusSummary, fetchTotals, page]);
 
   useEffect(() => {
     refreshData();
@@ -1293,6 +1349,20 @@ export default function LogisticsPage() {
                 ))
               )}
             </TableBody>
+            <TableFooter>
+              <TableRow>
+                <TableCell colSpan={6} align="right" sx={{ fontWeight: 600 }}>
+                  Totales:
+                </TableCell>
+                <TableCell align="right" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                  {currencyFormatter.format(totalPrecioGlobal ?? 0)}
+                </TableCell>
+                <TableCell align="right" sx={{ color: 'success.main', fontWeight: 600 }}>
+                  {currencyFormatter.format(totalEntregadoGlobal ?? 0)}
+                </TableCell>
+                <TableCell colSpan={6} />
+              </TableRow>
+            </TableFooter>
           </Table>
         </TableContainer>
         <Divider />
