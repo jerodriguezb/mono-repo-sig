@@ -515,8 +515,7 @@ export default function DistribucionPage() {
   }, []);
 
   const handleShareDialogClose = useCallback(() => {
-    setWhatsappSharing(false);
-    resetPdfShareState();
+     resetPdfShareState();
   }, [resetPdfShareState]);
 
   const handleOpenPdfDialog = () => {
