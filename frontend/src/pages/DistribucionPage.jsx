@@ -992,10 +992,10 @@ export default function DistribucionPage() {
           <Typography variant={isSmallScreen ? 'h5' : 'h4'} sx={{ fontWeight: 600 }}>
             En distribución
           </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.9 }}>
+          {/* <Typography variant="body2" sx={{ opacity: 0.9 }}>
             Gestiona tus comandas y actualiza las entregas con una interfaz preparada para
             pantallas táctiles.
-          </Typography>
+          </Typography> */}
         </Stack>
       </Box>
 
@@ -1091,7 +1091,7 @@ export default function DistribucionPage() {
           }}
         >
           <Typography variant="subtitle2" sx={{ fontWeight: 600, textAlign: { xs: 'center', md: 'left' } }}>
-            Pendientes: <Box component="span" color="warning.main">{clientesPendientesCount}</Box>
+            Pendientes comandas x gestión: <Box component="span" color="warning.main">{clientesPendientesCount}</Box>
           </Typography>
         </Paper>
       </Stack>
