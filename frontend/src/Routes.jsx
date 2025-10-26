@@ -9,6 +9,7 @@ import OrdersPage from './pages/OrdersPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
+import DistribucionPage from './pages/DistribucionPage.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -28,6 +29,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="comandas" element={<ComandasPage />} />
         <Route path="/ordenes" element={<OrdersPage />} />
         <Route path="/historial-comandas" element={<HistorialComandas />} />
+        <Route path="/distribucion" element={<DistribucionPage />} />
         <Route path="/logistics" element={<LogisticsPage />} />
         {/* Otras rutas aquí */}
       </Route>

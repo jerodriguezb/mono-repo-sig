@@ -16,6 +16,7 @@ const {
   verificaCam_role,
   verificaAdminCam_role,
   verificaAdminPrev_role,
+  ROLES,
 } = require('../middlewares/autenticacion');
 
 const router = express.Router();
@@ -56,14 +57,33 @@ const commonPopulate = [
   { path: 'camionero', select: 'role nombres apellidos' },
 ];
 
+const ensureComandasAccess = (req, res, next) => {
+  if (req.usuario?.role === ROLES.CAMION) {
+    return verificaCam_role(req, res, next);
+  }
+  return verificaAdminCam_role(req, res, next);
+};
+
 // -----------------------------------------------------------------------------
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
-router.get('/comandas', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, estado } = req.query;
+router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(async (req, res) => {
+  const { desde = 0, limite = 500, estado, camionero } = req.query;
 
   if (estado && !isValidObjectId(estado)) {
     return res.json({ ok: true, comandas: [], cantidad: 0 });
+  }
+
+  let camioneroId = null;
+  if (camionero) {
+    if (!isValidObjectId(camionero)) {
+      return res.json({ ok: true, comandas: [], cantidad: 0 });
+    }
+    camioneroId = new mongoose.Types.ObjectId(camionero);
+  }
+
+  if (req.usuario?.role === ROLES.CAMION && req.usuario?._id) {
+    camioneroId = new mongoose.Types.ObjectId(req.usuario._id);
   }
 
   const query = {};
@@ -73,6 +93,10 @@ router.get('/comandas', asyncHandler(async (req, res) => {
     query.codestado = estadoId;
   }
 
+  if (camioneroId) {
+    query.camionero = camioneroId;
+  }
+
   const comandas = await Comanda.find(query)
     // .skip(toNumber(desde, 0))
     // .limit(toNumber(limite, 500))
@@ -80,9 +104,8 @@ router.get('/comandas', asyncHandler(async (req, res) => {
     .populate(commonPopulate)
     .lean()
     .exec();
-  const cantidadQuery = estado
-    ? { codestado: query.codestado, activo: true }
-    : { activo: true };
+
+  const cantidadQuery = { activo: true, ...query };
   const cantidad = await Comanda.countDocuments(cantidadQuery);
   res.json({ ok: true, comandas, cantidad });
 }));
@@ -212,6 +235,7 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     'puntoDistribucion',
     'cliente',
     'precioTotal',
+    'totalEntregado',
     'ruta',
     'camionero',
     'usuario',
@@ -230,6 +254,35 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             {
               $convert: {
                 input: '$$item.cantidad',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+            {
+              $convert: {
+                input: '$$item.monto',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const buildDeliveredTotalExpression = () => ({
+    $sum: {
+      $map: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        in: {
+          $multiply: [
+            {
+              $convert: {
+                input: '$$item.cantidadentregada',
                 to: 'double',
                 onNull: 0,
                 onError: 0,
@@ -312,6 +365,39 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             },
           },
           { $set: { __precioTotalSort: '$$REMOVE' } },
+        ];
+      case 'totalEntregado':
+        return [
+          {
+            $addFields: {
+              __totalEntregadoSort: {
+                $let: {
+                  vars: {
+                    existing: {
+                      $convert: {
+                        input: '$totalEntregado',
+                        to: 'double',
+                        onNull: null,
+                        onError: null,
+                      },
+                    },
+                  },
+                  in: {
+                    $ifNull: ['$$existing', buildDeliveredTotalExpression()],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __totalEntregadoSort: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $unset: '__totalEntregadoSort' },
         ];
       case 'ruta':
         return [

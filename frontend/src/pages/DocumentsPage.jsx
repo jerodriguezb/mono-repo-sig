@@ -680,6 +680,8 @@ export default function DocumentsPage() {
     [itemDraft.productoId, productCache],
   );
 
+  const showDocumentNumberFields = baseType === 'R';
+
   const renderStepContent = () => {
     switch (activeStep) {
       case 0:
@@ -751,7 +753,7 @@ export default function DocumentsPage() {
         return (
           <Paper sx={{ p: 3 }}>
             <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={showDocumentNumberFields ? 4 : 6}>
                 <TextField
                   label="Fecha"
                   type="date"
@@ -761,33 +763,31 @@ export default function DocumentsPage() {
                   InputLabelProps={{ shrink: true }}
                 />
               </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Prefijo"
-                  value={prefijo}
-                  onChange={handlePrefijoChange}
-                  fullWidth
-                  inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
-                  helperText={baseType === 'R' ? 'Editable para remitos.' : 'Asignado automáticamente.'}
-                  disabled={baseType !== 'R'}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Número sugerido"
-                  value={numeroSugerido}
-                  onChange={handleNumeroSugeridoChange}
-                  fullWidth
-                  InputProps={{ readOnly: baseType !== 'R' }}
-                  inputProps={baseType === 'R' ? { inputMode: 'numeric', pattern: '[0-9]*' } : undefined}
-                  error={baseType === 'R' && Boolean(numeroSugeridoError)}
-                  helperText={
-                    baseType === 'R'
-                      ? numeroSugeridoError || 'Ingresá manualmente un número entero positivo (8 dígitos).'
-                      : dataError.sequence || 'Se consulta el backend antes de grabar.'
-                  }
-                />
-              </Grid>
+              {showDocumentNumberFields && (
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Prefijo"
+                    value={prefijo}
+                    onChange={handlePrefijoChange}
+                    fullWidth
+                    inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
+                    helperText="Editable para remitos."
+                  />
+                </Grid>
+              )}
+              {showDocumentNumberFields && (
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Número sugerido"
+                    value={numeroSugerido}
+                    onChange={handleNumeroSugeridoChange}
+                    fullWidth
+                    inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
+                    error={Boolean(numeroSugeridoError)}
+                    helperText={numeroSugeridoError || 'Ingresá manualmente un número entero positivo (8 dígitos).'}
+                  />
+                </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                   <InputLabel htmlFor="responsable-input">Responsable</InputLabel>

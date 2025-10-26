@@ -70,6 +70,33 @@ const normalizeNotaRecepcionNumber = (numero, prefijo) => {
   if (!pattern.test(trimmed)) return null;
   return trimmed;
 };
+const buildNotaRecepcionRegex = (prefijo) => new RegExp(`^${prefijo}NR\\d{8}$`, 'i');
+const extractNotaRecepcionSecuencia = (numero) => {
+  if (typeof numero !== 'string') return null;
+  const trimmed = numero.trim().toUpperCase();
+  const match = trimmed.match(/NR(\d{8})$/);
+  if (!match) return null;
+  const secuencia = Number(match[1]);
+  return Number.isSafeInteger(secuencia) ? secuencia : null;
+};
+const obtenerSiguienteNumeroNotaRecepcion = async ({ prefijo, session }) => {
+  const prefijoNormalizado = prefijo || '0001';
+  const regex = buildNotaRecepcionRegex(prefijoNormalizado);
+  const ultimoDocumento = await Documento.findOne({
+    tipo: 'NR',
+    prefijo: prefijoNormalizado,
+    NrodeDocumento: { $regex: regex },
+  })
+    .sort({ NrodeDocumento: -1 })
+    .select({ NrodeDocumento: 1 })
+    .session(session)
+    .lean()
+    .exec();
+
+  const secuenciaActual = extractNotaRecepcionSecuencia(ultimoDocumento?.NrodeDocumento) || 0;
+  const siguienteSecuencia = secuenciaActual + 1;
+  return `${prefijoNormalizado}NR${padSecuencia(siguienteSecuencia)}`;
+};
 const normalizeAjusteIncrementNumber = (numero, prefijo) => {
   if (numero === undefined || numero === null) return null;
   const trimmed = numero.toString().trim().toUpperCase();
@@ -78,6 +105,33 @@ const normalizeAjusteIncrementNumber = (numero, prefijo) => {
   const pattern = new RegExp(`^${expectedPrefijo}AJ\\d{8}$`);
   if (!pattern.test(trimmed)) return null;
   return trimmed;
+};
+const buildAjusteIncrementRegex = (prefijo) => new RegExp(`^${prefijo}AJ\\d{8}$`, 'i');
+const extractAjusteSecuencia = (numero) => {
+  if (typeof numero !== 'string') return null;
+  const trimmed = numero.trim().toUpperCase();
+  const match = trimmed.match(/AJ(\d{8})$/);
+  if (!match) return null;
+  const secuencia = Number(match[1]);
+  return Number.isSafeInteger(secuencia) ? secuencia : null;
+};
+const obtenerSiguienteNumeroAjusteIncremental = async ({ prefijo, session }) => {
+  const prefijoNormalizado = prefijo || '0001';
+  const regex = buildAjusteIncrementRegex(prefijoNormalizado);
+  const ultimoDocumento = await Documento.findOne({
+    tipo: 'AJ',
+    prefijo: prefijoNormalizado,
+    NrodeDocumento: { $regex: regex },
+  })
+    .sort({ NrodeDocumento: -1 })
+    .select({ NrodeDocumento: 1 })
+    .session(session)
+    .lean()
+    .exec();
+
+  const secuenciaActual = extractAjusteSecuencia(ultimoDocumento?.NrodeDocumento) || 0;
+  const siguienteSecuencia = secuenciaActual + 1;
+  return `${prefijoNormalizado}AJ${padSecuencia(siguienteSecuencia)}`;
 };
 const isAjusteIncrementalOperacion = (operacion) => {
   if (operacion === undefined || operacion === null) return false;
@@ -300,9 +354,9 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
   }
 
   let remitoNumero = null;
-  let notaRecepcionNumero = null;
-  let ajusteIncrementNumero = null;
+  let notaRecepcionNumeroManual = null;
   let ajusteManualNumero = null;
+  const shouldAutoAsignarNotaRecepcionNumero = tipo === 'NR';
   if (tipo === 'R') {
     remitoNumero = normalizeRemitoNumber(numeroCrudo);
     if (!remitoNumero) {
@@ -310,24 +364,27 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     }
   }
   if (tipo === 'NR') {
-    notaRecepcionNumero = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
-    if (!notaRecepcionNumero) {
-      return badRequest(
-        res,
-        `El número de nota de recepción es obligatorio y debe respetar el formato ${resolvedPrefijo}NR########.`,
-      );
+    if (numeroCrudo !== undefined && numeroCrudo !== null && `${numeroCrudo}`.trim() !== '') {
+      const notaRecepcionNumeroValidado = normalizeNotaRecepcionNumber(numeroCrudo, resolvedPrefijo);
+      if (!notaRecepcionNumeroValidado) {
+        return badRequest(
+          res,
+          `El número de nota de recepción debe respetar el formato ${resolvedPrefijo}NR########.`,
+        );
+      }
+      if (!shouldAutoAsignarNotaRecepcionNumero) {
+        notaRecepcionNumeroManual = notaRecepcionNumeroValidado;
+      }
     }
   }
   const ajusteOperacionRaw = body?.ajusteOperacion ?? body?.operacionAjuste ?? body?.operacion;
   const isAjusteIncremental = tipo === 'AJ' && isAjusteIncrementalOperacion(ajusteOperacionRaw);
   const nroSugeridoRaw = body?.nroSugerido;
   const nroSugeridoProvided = nroSugeridoRaw !== undefined && nroSugeridoRaw !== null;
-  if (tipo === 'AJ' && (isAjusteIncremental || nroSugeridoProvided)) {
+  const shouldAutoAsignarAjusteNumero = tipo === 'AJ' && isAjusteIncremental;
+  if (tipo === 'AJ' && nroSugeridoProvided) {
     if (typeof nroSugeridoRaw !== 'string' || !nroSugeridoRaw.trim()) {
-      const message = isAjusteIncremental
-        ? 'El número sugerido es obligatorio para los ajustes positivos.'
-        : 'El número sugerido debe ser un string no vacío.';
-      return badRequest(res, message);
+      return badRequest(res, 'El número sugerido debe ser un string no vacío.');
     }
     const nroSugeridoTrimmed = nroSugeridoRaw.trim();
     const nroSugeridoValidado = normalizeAjusteIncrementNumber(nroSugeridoTrimmed, resolvedPrefijo);
@@ -337,10 +394,8 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
         `El número sugerido para el ajuste debe respetar el formato ${resolvedPrefijo}AJ########.`,
       );
     }
-    if (isAjusteIncremental) {
-      ajusteIncrementNumero = nroSugeridoValidado;
-    } else {
-      ajusteManualNumero = nroSugeridoRaw;
+    if (!shouldAutoAsignarAjusteNumero) {
+      ajusteManualNumero = nroSugeridoValidado;
     }
   }
 
@@ -445,7 +500,7 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     }
   }
 
-  const data = {
+  const baseDocumentoData = {
     tipo,
     proveedor: proveedorId,
     fechaRemito: body.fechaRemito,
@@ -453,202 +508,271 @@ router.post('/documentos', [verificaToken], asyncHandler(async (req, res) => {
     items: itemsParaDocumento,
     observaciones: body.observaciones,
   };
-  if (prefijo) data.prefijo = prefijo;
+  if (prefijo) baseDocumentoData.prefijo = prefijo;
   if (tipo === 'R') {
-    data.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
+    baseDocumentoData.NrodeDocumento = `${resolvedPrefijo}${tipo}${remitoNumero}`;
   }
-  if (tipo === 'NR') {
-    data.NrodeDocumento = notaRecepcionNumero;
+  if (tipo === 'NR' && !shouldAutoAsignarNotaRecepcionNumero && notaRecepcionNumeroManual) {
+    baseDocumentoData.NrodeDocumento = notaRecepcionNumeroManual;
   }
   if (tipo === 'AJ') {
-    if (ajusteIncrementNumero) {
-      data.NrodeDocumento = ajusteIncrementNumero;
-    } else if (ajusteManualNumero) {
-      data.NrodeDocumento = ajusteManualNumero;
+    if (ajusteManualNumero) {
+      baseDocumentoData.NrodeDocumento = ajusteManualNumero;
     }
   }
 
-  if (data.NrodeDocumento) {
+  if (baseDocumentoData.NrodeDocumento) {
     const existingDocumento = await Documento.exists({
-      NrodeDocumento: data.NrodeDocumento,
+      NrodeDocumento: baseDocumentoData.NrodeDocumento,
       activo: true,
     });
     if (existingDocumento) {
       return res.status(409).json({
         ok: false,
-        err: { message: `Ya existe un documento activo con el número ${data.NrodeDocumento}.` },
+        err: {
+          message: `Ya existe un documento activo con el número ${baseDocumentoData.NrodeDocumento}.`,
+        },
       });
     }
   }
 
-  const session = await mongoose.startSession();
+  const shouldAutoAsignarNumero = shouldAutoAsignarAjusteNumero || shouldAutoAsignarNotaRecepcionNumero;
+  const maxAutoAssignAttempts = shouldAutoAsignarNumero ? 5 : 1;
   let documentoDB;
-  const stockResult = { updates: [], errors: [] };
+  let stockResult = { updates: [], errors: [] };
+  let creationError = null;
 
-  try {
-    await session.startTransaction();
+  for (let attempt = 0; attempt < maxAutoAssignAttempts; attempt += 1) {
+    const session = await mongoose.startSession();
+    const attemptStockResult = { updates: [], errors: [] };
+    try {
+      await session.startTransaction();
 
-    const documento = new Documento(data);
-    documentoDB = await documento.save({ session });
-
-    const fechaMovimientoDocumento =
-      documentoDB?.fechaRemito instanceof Date
-        ? documentoDB.fechaRemito
-        : new Date(documentoDB?.fechaRemito || data.fechaRemito);
-
-    if (tipo === 'R') {
-      for (const item of items) {
-        try {
-          const updatedProduct = await Producserv.findByIdAndUpdate(
-            item.producto,
-            { $inc: { stkactual: item.cantidad } },
-            { new: true, session },
-          );
-          if (!updatedProduct) {
-            stockResult.errors.push(`No se encontró el producto ${item.codprod} para actualizar el stock.`);
-            continue;
-          }
-          stockResult.updates.push({
-            producto: String(updatedProduct._id),
-            codprod: item.codprod,
-            incremento: item.cantidad,
-            stkactual: Number(updatedProduct.stkactual ?? 0),
-          });
-        } catch (error) {
-          const message = error?.message || 'operación fallida';
-          stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
-        }
+      const documentoData = { ...baseDocumentoData };
+      if (shouldAutoAsignarAjusteNumero) {
+        documentoData.NrodeDocumento = await obtenerSiguienteNumeroAjusteIncremental({
+          prefijo: resolvedPrefijo,
+          session,
+        });
       }
-
-      const stockMovements = items.map((item) => ({
-        codprod: item.producto,
-        movimiento: movimientoCompraId,
-        cantidad: item.cantidad,
-        fecha: fechaMovimientoDocumento,
-        usuario: userId,
-        activo: true,
-      }));
-      if (stockMovements.length > 0) {
-        await Stock.insertMany(stockMovements, { session });
-      }
-    }
-
-    if (tipo === 'AJ') {
-      for (const item of items) {
-        const delta = isAjusteIncremental ? item.cantidad : -item.cantidad;
-        try {
-          const updatedProduct = await Producserv.findByIdAndUpdate(
-            item.producto,
-            { $inc: { stkactual: delta } },
-            { new: true, session },
-          );
-          if (!updatedProduct) {
-            stockResult.errors.push(`No se encontró el producto ${item.codprod} para actualizar el stock.`);
-            continue;
-          }
-          const updatePayload = {
-            producto: String(updatedProduct._id),
-            codprod: item.codprod,
-            stkactual: Number(updatedProduct.stkactual ?? 0),
-            operacion: isAjusteIncremental ? 'increment' : 'decrement',
-          };
-          if (isAjusteIncremental) {
-            updatePayload.incremento = item.cantidad;
-          } else {
-            updatePayload.decremento = item.cantidad;
-          }
-          stockResult.updates.push(updatePayload);
-        } catch (error) {
-          const message = error?.message || 'operación fallida';
-          stockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
-        }
-      }
-
-      const movimientoAjusteId = isAjusteIncremental
-        ? movimientoAjustePositivoId
-        : movimientoAjusteNegativoId;
-
-      if (movimientoAjusteId) {
-        const stockMovementsAjuste = items.map((item) => ({
-          codprod: item.producto,
-          movimiento: movimientoAjusteId,
-          cantidad: isAjusteIncremental ? item.cantidad : -Math.abs(item.cantidad),
-          fecha: fechaMovimientoDocumento,
-          usuario: userId,
-          activo: true,
-        }));
-        if (stockMovementsAjuste.length > 0) {
-          await Stock.insertMany(stockMovementsAjuste, { session });
-        }
-      }
-    }
-
-    if (tipo === 'NR') {
-      for (const item of aggregatedItemsNR) {
-        const producto = await Producserv.findOne({ _id: item.producto })
-          .session(session)
-          .lean();
-
-        if (!producto) {
-          const error = new Error(`El producto ${item.codprod} no existe.`);
-          error.status = 400;
-          throw error;
-        }
-
-        if (producto.activo !== true) {
-          const error = new Error(`El producto ${item.codprod} está inactivo y no puede recibir stock.`);
-          error.status = 400;
-          throw error;
-        }
-
-        const updatedProduct = await Producserv.findByIdAndUpdate(
-          item.producto,
-          { $inc: { stkactual: item.cantidad } },
-          { new: true, session },
-        );
-
-        if (!updatedProduct) {
-          const error = new Error(`No se pudo actualizar el stock del producto ${item.codprod}.`);
-          error.status = 500;
-          throw error;
-        }
-
-        stockResult.updates.push({
-          producto: String(updatedProduct._id ?? item.producto),
-          codprod: item.codprod,
-          incremento: item.cantidad,
-          stkactual: Number(updatedProduct.stkactual ?? 0),
+      if (shouldAutoAsignarNotaRecepcionNumero) {
+        documentoData.NrodeDocumento = await obtenerSiguienteNumeroNotaRecepcion({
+          prefijo: resolvedPrefijo,
+          session,
         });
       }
 
-      if (movimientoIngresoPositivoId) {
-        const stockMovementsNR = items.map((item) => ({
+      const documento = new Documento(documentoData);
+      const documentoGuardado = await documento.save({ session });
+
+      const fechaMovimientoDocumento =
+        documentoGuardado?.fechaRemito instanceof Date
+          ? documentoGuardado.fechaRemito
+          : new Date(documentoGuardado?.fechaRemito || documentoData.fechaRemito);
+
+      if (tipo === 'R') {
+        for (const item of items) {
+          try {
+            const updatedProduct = await Producserv.findByIdAndUpdate(
+              item.producto,
+              { $inc: { stkactual: item.cantidad } },
+              { new: true, session },
+            );
+            if (!updatedProduct) {
+              attemptStockResult.errors.push(
+                `No se encontró el producto ${item.codprod} para actualizar el stock.`,
+              );
+              continue;
+            }
+            attemptStockResult.updates.push({
+              producto: String(updatedProduct._id),
+              codprod: item.codprod,
+              incremento: item.cantidad,
+              stkactual: Number(updatedProduct.stkactual ?? 0),
+            });
+          } catch (error) {
+            const message = error?.message || 'operación fallida';
+            attemptStockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+          }
+        }
+
+        const stockMovements = items.map((item) => ({
           codprod: item.producto,
-          movimiento: movimientoIngresoPositivoId,
+          movimiento: movimientoCompraId,
           cantidad: item.cantidad,
           fecha: fechaMovimientoDocumento,
           usuario: userId,
           activo: true,
         }));
-        if (stockMovementsNR.length > 0) {
-          await Stock.insertMany(stockMovementsNR, { session });
+        if (stockMovements.length > 0) {
+          await Stock.insertMany(stockMovements, { session });
         }
       }
-    }
 
-    await session.commitTransaction();
-  } catch (error) {
-    await session.abortTransaction();
-    return res.status(error.status || 500).json({
-      ok: false,
-      err: { message: error?.message || 'No se pudo guardar el documento' },
-    });
-  } finally {
-    await session.endSession();
+      if (tipo === 'AJ') {
+        for (const item of items) {
+          const delta = isAjusteIncremental ? item.cantidad : -item.cantidad;
+          try {
+            const updateFilter = { _id: item.producto };
+            if (!isAjusteIncremental && delta < 0) {
+              const productoActual = await Producserv.findById(item.producto)
+                .session(session)
+                .select({ stkactual: 1 })
+                .lean();
+
+              if (!productoActual) {
+                attemptStockResult.errors.push(
+                  `No se encontró el producto ${item.codprod} para actualizar el stock.`,
+                );
+                continue;
+              }
+
+              const stockActual = Number(productoActual.stkactual ?? 0);
+              const stockResultante = stockActual + delta;
+              if (stockResultante < 0) {
+                const stockError = new Error(
+                  `No se puede ajustar el stock de ${item.codprod}: el resultado quedaría negativo.`,
+                );
+                stockError.status = 400;
+                stockError.code = 'STOCK_NEGATIVE';
+                throw stockError;
+              }
+
+              updateFilter.stkactual = { $gte: Math.abs(delta) };
+            }
+
+            const updatedProduct = await Producserv.findOneAndUpdate(
+              updateFilter,
+              { $inc: { stkactual: delta } },
+              { new: true, session },
+            );
+            if (!updatedProduct) {
+              attemptStockResult.errors.push(
+                `No se encontró el producto ${item.codprod} para actualizar el stock.`,
+              );
+              continue;
+            }
+            const updatePayload = {
+              producto: String(updatedProduct._id),
+              codprod: item.codprod,
+              stkactual: Number(updatedProduct.stkactual ?? 0),
+              operacion: isAjusteIncremental ? 'increment' : 'decrement',
+            };
+            if (isAjusteIncremental) {
+              updatePayload.incremento = item.cantidad;
+            } else {
+              updatePayload.decremento = item.cantidad;
+            }
+            attemptStockResult.updates.push(updatePayload);
+          } catch (error) {
+            const message = error?.message || 'operación fallida';
+            attemptStockResult.errors.push(`Error al actualizar el stock de ${item.codprod}: ${message}`);
+            if (error?.code === 'STOCK_NEGATIVE') {
+              throw error;
+            }
+          }
+        }
+
+        const movimientoAjusteId = isAjusteIncremental
+          ? movimientoAjustePositivoId
+          : movimientoAjusteNegativoId;
+
+        if (movimientoAjusteId) {
+          const stockMovementsAjuste = items.map((item) => ({
+            codprod: item.producto,
+            movimiento: movimientoAjusteId,
+            cantidad: isAjusteIncremental ? item.cantidad : -Math.abs(item.cantidad),
+            fecha: fechaMovimientoDocumento,
+            usuario: userId,
+            activo: true,
+          }));
+          if (stockMovementsAjuste.length > 0) {
+            await Stock.insertMany(stockMovementsAjuste, { session });
+          }
+        }
+      }
+
+      if (tipo === 'NR') {
+        for (const item of aggregatedItemsNR) {
+          const producto = await Producserv.findOne({ _id: item.producto })
+            .session(session)
+            .lean();
+
+          if (!producto) {
+            const error = new Error(`El producto ${item.codprod} no existe.`);
+            error.status = 400;
+            throw error;
+          }
+
+          if (producto.activo !== true) {
+            const error = new Error(
+              `El producto ${item.codprod} está inactivo y no puede recibir stock.`,
+            );
+            error.status = 400;
+            throw error;
+          }
+
+          const updatedProduct = await Producserv.findByIdAndUpdate(
+            item.producto,
+            { $inc: { stkactual: item.cantidad } },
+            { new: true, session },
+          );
+
+          if (!updatedProduct) {
+            const error = new Error(`No se pudo actualizar el stock del producto ${item.codprod}.`);
+            error.status = 500;
+            throw error;
+          }
+
+          attemptStockResult.updates.push({
+            producto: String(updatedProduct._id ?? item.producto),
+            codprod: item.codprod,
+            incremento: item.cantidad,
+            stkactual: Number(updatedProduct.stkactual ?? 0),
+          });
+        }
+
+        if (movimientoIngresoPositivoId) {
+          const stockMovementsNR = items.map((item) => ({
+            codprod: item.producto,
+            movimiento: movimientoIngresoPositivoId,
+            cantidad: item.cantidad,
+            fecha: fechaMovimientoDocumento,
+            usuario: userId,
+            activo: true,
+          }));
+          if (stockMovementsNR.length > 0) {
+            await Stock.insertMany(stockMovementsNR, { session });
+          }
+        }
+      }
+
+      await session.commitTransaction();
+      documentoDB = documentoGuardado;
+      stockResult = attemptStockResult;
+      creationError = null;
+      break;
+    } catch (error) {
+      await session.abortTransaction();
+      const isDuplicateKeyError =
+        error?.code === 11000 ||
+        error?.code === 11001 ||
+        (typeof error?.message === 'string' && error.message.includes('E11000 duplicate key'));
+      if (shouldAutoAsignarNumero && isDuplicateKeyError && attempt < maxAutoAssignAttempts - 1) {
+        creationError = error;
+        continue;
+      }
+      creationError = error;
+      break;
+    } finally {
+      await session.endSession();
+    }
   }
 
   if (!documentoDB) {
-    return res.status(500).json({ ok: false, err: { message: 'No se pudo guardar el documento' } });
+    const status = creationError?.status || 500;
+    const message = creationError?.message || 'No se pudo guardar el documento';
+    return res.status(status).json({ ok: false, err: { message } });
   }
 
   await documentoDB.populate(documentoPopulate);
