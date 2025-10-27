@@ -33,6 +33,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -40,6 +41,7 @@ import logo from '../assets/logo.png';
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
   { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
+  { label: 'Precios', path: '/precios',   icon: <AttachMoneyIcon /> },
   { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
   { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
