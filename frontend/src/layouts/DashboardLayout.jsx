@@ -33,6 +33,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
+import MonetizationOnIcon from '@mui/icons-material/MonetizationOn';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -42,6 +43,7 @@ const navItems = [
   { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
   { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
+  { label: 'Precios', path: '/precios', icon: <MonetizationOnIcon /> },
   { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
   { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
 
