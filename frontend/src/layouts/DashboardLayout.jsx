@@ -33,6 +33,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
+import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -51,6 +52,7 @@ const navItems = [
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
 ];
 
 export default function DashboardLayout({ themeName, setThemeName }) {
