@@ -21,14 +21,49 @@ import api from '../api/axios.js';
 
 const pageSize = 20;
 
-const numberFormatter = new Intl.NumberFormat('es-AR', {
+const currencyFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
+const percentFormatter = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+function parseLocalizedNumber(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  if (typeof value === 'number') {
+    return Number.isNaN(value) ? null : value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.replace(/\./g, '').replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
 function formatCurrency(value) {
-  if (value === null || typeof value === 'undefined' || Number.isNaN(Number(value))) return '';
-  return numberFormatter.format(Number(value));
+  const parsed = parseLocalizedNumber(value);
+  if (parsed === null) return typeof value === 'string' ? value : '';
+  return currencyFormatter.format(parsed);
+}
+
+function formatPercentage(value) {
+  const parsed = parseLocalizedNumber(value);
+  if (parsed === null) return typeof value === 'string' ? value : '';
+  return `${percentFormatter.format(parsed)}%`;
+}
+
+function numericSortComparator(a, b) {
+  const valueA = parseLocalizedNumber(a);
+  const valueB = parseLocalizedNumber(b);
+
+  if (valueA === null && valueB === null) return 0;
+  if (valueA === null) return -1;
+  if (valueB === null) return 1;
+  return valueA - valueB;
 }
 
 function CustomFooter({ totalCount = 0 }) {
@@ -114,6 +149,7 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       minWidth: 160,
       type: 'number',
       valueFormatter: ({ value }) => formatCurrency(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'ivacompra',
@@ -121,7 +157,8 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       flex: 0.6,
       minWidth: 140,
       type: 'number',
-      valueFormatter: ({ value }) => (value == null ? '' : `${value}%`),
+      valueFormatter: ({ value }) => formatPercentage(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'preciototalcompra',
@@ -130,6 +167,7 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       minWidth: 170,
       type: 'number',
       valueFormatter: ({ value }) => formatCurrency(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'precionetoventa',
@@ -138,6 +176,7 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       minWidth: 160,
       type: 'number',
       valueFormatter: ({ value }) => formatCurrency(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'ivaventa',
@@ -145,7 +184,8 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       flex: 0.6,
       minWidth: 140,
       type: 'number',
-      valueFormatter: ({ value }) => (value == null ? '' : `${value}%`),
+      valueFormatter: ({ value }) => formatPercentage(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'preciototalventa',
@@ -154,6 +194,7 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       minWidth: 180,
       type: 'number',
       valueFormatter: ({ value }) => formatCurrency(value),
+      sortComparator: numericSortComparator,
     },
     {
       field: 'activo',
