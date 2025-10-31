@@ -72,6 +72,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
 
   const [listOptions, setListOptions] = React.useState([]);
   const [loadingLists, setLoadingLists] = React.useState(false);
+  const [availableListOptions, setAvailableListOptions] = React.useState([]);
+  const [checkingAvailability, setCheckingAvailability] = React.useState(false);
+  const [usedListIds, setUsedListIds] = React.useState([]);
 
   const [productOptions, setProductOptions] = React.useState([]);
   const [loadingProducts, setLoadingProducts] = React.useState(false);
@@ -114,6 +117,84 @@ export default function PriceFormDialog({ open, onClose, row }) {
       cancelled = true;
     };
   }, [open, listOptions.length]);
+
+  React.useEffect(() => {
+    if (!open || !form.producto) {
+      setUsedListIds([]);
+      setCheckingAvailability(false);
+      return undefined;
+    }
+
+    const productoId = form.producto?._id ?? form.producto;
+    if (!productoId) {
+      setUsedListIds([]);
+      setCheckingAvailability(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setCheckingAvailability(true);
+
+    api
+      .get('/precios', {
+        params: { codproducto: productoId, limite: 500 },
+        signal: controller.signal,
+      })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const used = (data?.precios ?? [])
+          .map((precio) => precio?.lista?._id ?? precio?.lista)
+          .filter(Boolean)
+          .map((value) => String(value));
+        setUsedListIds(used);
+      })
+      .catch((error) => {
+        if (error?.code === 'ERR_CANCELED') return;
+        console.error('Error al verificar listas disponibles para el producto', error);
+        if (!cancelled) {
+          setUsedListIds([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingAvailability(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [open, form.producto]);
+
+  React.useEffect(() => {
+    if (!listOptions.length) {
+      setAvailableListOptions([]);
+      return;
+    }
+
+    if (!form.producto) {
+      setAvailableListOptions(listOptions);
+      return;
+    }
+
+    const usedSet = new Set(usedListIds.map((value) => String(value)));
+    const filtered = listOptions.filter((lista) => {
+      const id = lista?._id ?? lista;
+      if (!id) return false;
+      return !usedSet.has(String(id));
+    });
+
+    if (isEdit && row?.lista) {
+      const currentId = String(row.lista?._id ?? row.lista);
+      const existsInFiltered = filtered.some((lista) => String(lista?._id ?? lista) === currentId);
+      if (!existsInFiltered) {
+        const match = listOptions.find((lista) => String(lista?._id ?? lista) === currentId);
+        if (match) filtered.push(match);
+      }
+    }
+
+    setAvailableListOptions(filtered);
+  }, [listOptions, usedListIds, form.producto, isEdit, row]);
 
   React.useEffect(() => {
     if (isEdit && row) {
@@ -211,6 +292,12 @@ export default function PriceFormDialog({ open, onClose, row }) {
     const errs = {};
     if (!form.producto?._id && !form.producto) errs.producto = 'Seleccioná un producto o servicio';
     if (!form.lista?._id && !form.lista) errs.lista = 'Seleccioná una lista';
+    if (!isEdit && form.producto && form.lista) {
+      const selectedListId = String(form.lista?._id ?? form.lista);
+      if (usedListIds.some((id) => String(id) === selectedListId)) {
+        errs.lista = 'La lista seleccionada ya tiene un precio para este producto';
+      }
+    }
 
     const netoCompra = normalizeNumber(form.precionetocompra);
     const totalCompra = normalizeNumber(form.preciototalcompra);
@@ -229,7 +316,7 @@ export default function PriceFormDialog({ open, onClose, row }) {
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  }, [form]);
+  }, [form, isEdit, usedListIds]);
 
   const handleSubmit = async (event) => {
     event?.preventDefault?.();
@@ -295,7 +382,8 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 onInputChange={handleProductInputChange}
                 onChange={(_, value) => {
                   ensureProductoInOptions(value);
-                  setForm((prev) => ({ ...prev, producto: value }));
+                  setForm((prev) => ({ ...prev, producto: value, lista: null }));
+                  setErrors((prev) => ({ ...prev, lista: undefined }));
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -318,12 +406,18 @@ export default function PriceFormDialog({ open, onClose, row }) {
               />
 
               <Autocomplete
-                options={listOptions}
+                options={availableListOptions}
                 value={form.lista}
-                loading={loadingLists}
+                loading={loadingLists || checkingAvailability}
                 getOptionLabel={(option) => option?.lista ?? ''}
                 isOptionEqualToValue={(option, value) => option?._id === value?._id}
                 onChange={(_, value) => setForm((prev) => ({ ...prev, lista: value }))}
+                noOptionsText={
+                  form.producto
+                    ? 'No hay listas disponibles para este producto'
+                    : 'Seleccioná primero un producto'
+                }
+                disabled={!form.producto || (!isEdit && checkingAvailability)}
                 renderInput={(params) => (
                   <TextField
                     {...params}
@@ -335,7 +429,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
                       ...params.InputProps,
                       endAdornment: (
                         <React.Fragment>
-                          {loadingLists ? <CircularProgress color="inherit" size={20} /> : null}
+                          {loadingLists || checkingAvailability ? (
+                            <CircularProgress color="inherit" size={20} />
+                          ) : null}
                           {params.InputProps.endAdornment}
                         </React.Fragment>
                       ),
