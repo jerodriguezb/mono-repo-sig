@@ -23,15 +23,68 @@ const precioPopulate = ['codproducto', 'lista'];
 // 1. LISTAR PRECIOS -------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/precios', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500 } = req.query;
-  const query = { activo: true };
+  const {
+    desde = 0,
+    limite = 500,
+    sortField,
+    sortOrder,
+    codproducto,
+    lista,
+  } = req.query;
 
-  const precios = await Precio.find(query)
-    .skip(toNumber(desde, 0))
-    .limit(toNumber(limite, 500))
-    .sort('fecha')
-    .populate(precioPopulate)
-    .lean()
+  const rawSkip = toNumber(desde, 0);
+  const skip = Number.isFinite(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
+  const rawLimit = toNumber(limite, 500);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 500;
+
+  const query = { activo: true };
+  if (codproducto) query.codproducto = codproducto;
+  if (lista) query.lista = lista;
+
+  const sortFieldMap = {
+    productoDescripcion: 'codproducto.descripcion',
+    listaNombre: 'lista.lista',
+    precionetocompra: 'precionetocompra',
+    ivacompra: 'ivacompra',
+    preciototalcompra: 'preciototalcompra',
+    precionetoventa: 'precionetoventa',
+    ivaventa: 'ivaventa',
+    preciototalventa: 'preciototalventa',
+    activo: 'activo',
+    fecha: 'fecha',
+  };
+
+  const sortKey = typeof sortField === 'string' ? sortFieldMap[sortField] : undefined;
+  const sortPath = sortKey || 'fecha';
+  const sortDir = sortOrder === 'desc' ? -1 : 1;
+
+  const pipeline = [
+    { $match: query },
+    {
+      $lookup: {
+        from: 'producservs',
+        localField: 'codproducto',
+        foreignField: '_id',
+        as: 'codproducto',
+      },
+    },
+    { $unwind: { path: '$codproducto', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'listas',
+        localField: 'lista',
+        foreignField: '_id',
+        as: 'lista',
+      },
+    },
+    { $unwind: { path: '$lista', preserveNullAndEmptyArrays: true } },
+    { $sort: { [sortPath]: sortDir, _id: 1 } },
+    { $skip: skip },
+    { $limit: limit },
+  ];
+
+  const precios = await Precio.aggregate(pipeline)
+    .collation({ locale: 'es', strength: 2 })
     .exec();
 
   const cantidad = await Precio.countDocuments(query);
