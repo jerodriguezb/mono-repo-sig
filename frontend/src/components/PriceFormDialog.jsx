@@ -71,7 +71,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
   const [saving, setSaving] = React.useState(false);
 
   const [listOptions, setListOptions] = React.useState([]);
+  const [availableListOptions, setAvailableListOptions] = React.useState([]);
   const [loadingLists, setLoadingLists] = React.useState(false);
+  const [loadingAvailableLists, setLoadingAvailableLists] = React.useState(false);
 
   const [productOptions, setProductOptions] = React.useState([]);
   const [loadingProducts, setLoadingProducts] = React.useState(false);
@@ -101,6 +103,7 @@ export default function PriceFormDialog({ open, onClose, row }) {
           if (cancelled) return;
           const listas = (data?.listas ?? []).filter((lista) => lista.activo !== false);
           setListOptions(listas);
+          setAvailableListOptions(listas);
         })
         .catch((error) => {
           console.error('Error al obtener listas de precios', error);
@@ -131,12 +134,17 @@ export default function PriceFormDialog({ open, onClose, row }) {
       setForm(nextForm);
       ensureProductoInOptions(row.codproducto);
       setAutoTotalCompra(shouldAutoFillCompra(nextForm));
+      setAvailableListOptions((prev) => {
+        if (prev.length) return prev;
+        return listOptions;
+      });
     } else {
       setForm(initialFormState);
       setAutoTotalCompra(true);
+      setAvailableListOptions(listOptions);
     }
     setErrors({});
-  }, [row, isEdit, ensureProductoInOptions]);
+  }, [row, isEdit, ensureProductoInOptions, listOptions]);
 
   React.useEffect(() => () => {
     if (productoTimer.current) clearTimeout(productoTimer.current);
@@ -187,6 +195,78 @@ export default function PriceFormDialog({ open, onClose, row }) {
   const handleToggle = (event) => {
     setForm((prev) => ({ ...prev, activo: event.target.checked }));
   };
+
+  const ensureListInOptions = React.useCallback((options, targetList) => {
+    if (!targetList) return options;
+    const targetId = targetList?._id ?? targetList;
+    if (!targetId) return options;
+    const exists = options.some((lista) => (lista?._id ?? lista) === targetId);
+    if (exists) return options;
+    const fromBase = listOptions.find((lista) => (lista?._id ?? lista) === targetId);
+    if (fromBase) return [...options, fromBase];
+    if (typeof targetList === 'object' && targetList !== null) return [...options, targetList];
+    return options;
+  }, [listOptions]);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+
+    const productId = form.producto?._id ?? form.producto;
+    if (!productId) {
+      setAvailableListOptions(listOptions);
+      if (form.lista) {
+        setForm((prev) => ({ ...prev, lista: null }));
+      }
+      setLoadingAvailableLists(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoadingAvailableLists(true);
+
+    api
+      .get('/precios', { params: { codproducto: productId, limite: 1000 } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const usedIds = new Set(
+          (data?.precios ?? []).map((precio) => precio?.lista?._id ?? precio?.lista),
+        );
+
+        let filtered = listOptions.filter((lista) => !usedIds.has(lista?._id ?? lista));
+
+        const currentList = form.lista;
+        const rowProductId = row?.codproducto?._id ?? row?.codproducto;
+        const rowList = row?.lista;
+
+        if (isEdit && rowList && productId === rowProductId) {
+          filtered = ensureListInOptions(filtered, rowList);
+        }
+
+        if (currentList) {
+          filtered = ensureListInOptions(filtered, currentList);
+        }
+
+        setAvailableListOptions(filtered);
+
+        const currentListId = currentList?._id ?? currentList;
+        const isCurrentValid = filtered.some((lista) => (lista?._id ?? lista) === currentListId);
+        if (currentListId && !isCurrentValid) {
+          setForm((prev) => ({ ...prev, lista: null }));
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Error al obtener precios del producto', error);
+        setAvailableListOptions(listOptions);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAvailableLists(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, form.producto, form.lista, listOptions, row, isEdit, ensureListInOptions]);
 
   React.useEffect(() => {
     if (!autoTotalCompra) return;
@@ -295,7 +375,16 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 onInputChange={handleProductInputChange}
                 onChange={(_, value) => {
                   ensureProductoInOptions(value);
-                  setForm((prev) => ({ ...prev, producto: value }));
+                  setForm((prev) => {
+                    const prevId = prev.producto?._id ?? prev.producto;
+                    const nextId = value?._id ?? value;
+                    const sameProduct = prevId && nextId && prevId === nextId;
+                    return {
+                      ...prev,
+                      producto: value,
+                      lista: sameProduct ? prev.lista : null,
+                    };
+                  });
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -318,9 +407,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
               />
 
               <Autocomplete
-                options={listOptions}
+                options={availableListOptions}
                 value={form.lista}
-                loading={loadingLists}
+                loading={loadingLists || loadingAvailableLists}
                 getOptionLabel={(option) => option?.lista ?? ''}
                 isOptionEqualToValue={(option, value) => option?._id === value?._id}
                 onChange={(_, value) => setForm((prev) => ({ ...prev, lista: value }))}
@@ -335,7 +424,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
                       ...params.InputProps,
                       endAdornment: (
                         <React.Fragment>
-                          {loadingLists ? <CircularProgress color="inherit" size={20} /> : null}
+                          {(loadingLists || loadingAvailableLists)
+                            ? <CircularProgress color="inherit" size={20} />
+                            : null}
                           {params.InputProps.endAdornment}
                         </React.Fragment>
                       ),
