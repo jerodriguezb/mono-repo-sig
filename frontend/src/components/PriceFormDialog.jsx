@@ -72,12 +72,16 @@ export default function PriceFormDialog({ open, onClose, row }) {
 
   const [listOptions, setListOptions] = React.useState([]);
   const [loadingLists, setLoadingLists] = React.useState(false);
+  const [listMessage, setListMessage] = React.useState('');
+  const [listDisabled, setListDisabled] = React.useState(true);
 
   const [productOptions, setProductOptions] = React.useState([]);
   const [loadingProducts, setLoadingProducts] = React.useState(false);
 
   const productoTimer = React.useRef(null);
   const productoAbort = React.useRef(null);
+  const listaAbort = React.useRef(null);
+  const currentListIdRef = React.useRef(null);
   const [autoTotalCompra, setAutoTotalCompra] = React.useState(true);
 
   const ensureProductoInOptions = React.useCallback((producto) => {
@@ -90,30 +94,14 @@ export default function PriceFormDialog({ open, onClose, row }) {
   }, []);
 
   React.useEffect(() => {
-    if (!open) return undefined;
-    let cancelled = false;
-
-    if (!listOptions.length) {
-      setLoadingLists(true);
-      api
-        .get('/listas', { params: { limite: 500 } })
-        .then(({ data }) => {
-          if (cancelled) return;
-          const listas = (data?.listas ?? []).filter((lista) => lista.activo !== false);
-          setListOptions(listas);
-        })
-        .catch((error) => {
-          console.error('Error al obtener listas de precios', error);
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingLists(false);
-        });
+    if (!open) {
+      if (listaAbort.current) listaAbort.current.abort();
+      setListOptions([]);
+      setListMessage('');
+      setListDisabled(true);
+      setLoadingLists(false);
     }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, listOptions.length]);
+  }, [open]);
 
   React.useEffect(() => {
     if (isEdit && row) {
@@ -187,6 +175,102 @@ export default function PriceFormDialog({ open, onClose, row }) {
   const handleToggle = (event) => {
     setForm((prev) => ({ ...prev, activo: event.target.checked }));
   };
+
+  React.useEffect(() => {
+    currentListIdRef.current = form.lista?._id ?? form.lista ?? null;
+  }, [form.lista]);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+
+    const productoId = form.producto?._id ?? form.producto;
+
+    if (listaAbort.current) {
+      listaAbort.current.abort();
+      listaAbort.current = null;
+    }
+
+    if (!productoId) {
+      setListOptions([]);
+      setListDisabled(true);
+      setListMessage('');
+      setLoadingLists(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    listaAbort.current = controller;
+    let alive = true;
+
+    setLoadingLists(true);
+    setListDisabled(true);
+    setListMessage('');
+
+    const fetchLists = async () => {
+      try {
+        const [preciosResponse, listasResponse] = await Promise.all([
+          api.get('/precios', {
+            params: { codproducto: productoId, limite: 500 },
+            signal: controller.signal,
+          }),
+          api.get('/listas', { params: { limite: 500 }, signal: controller.signal }),
+        ]);
+
+        if (!alive) return;
+
+        const precios = preciosResponse?.data?.precios ?? [];
+        const listas = (listasResponse?.data?.listas ?? []).filter((lista) => lista?.activo !== false);
+        const usedListIds = new Set(
+          precios
+            .map((precio) => precio?.lista?._id ?? precio?.lista)
+            .filter((id) => Boolean(id))
+        );
+        const currentListId = currentListIdRef.current;
+
+        const availableLists = listas.filter((lista) => {
+          const id = lista?._id;
+          if (!id) return false;
+          if (usedListIds.has(id) && (!currentListId || id !== currentListId)) return false;
+          return true;
+        });
+
+        setListOptions(availableLists);
+
+        if (!availableLists.length) {
+          setListDisabled(true);
+          setListMessage('No hay listas disponibles para este producto');
+          setForm((prev) => {
+            if (!prev.lista) return prev;
+            return { ...prev, lista: null };
+          });
+        } else {
+          setListDisabled(false);
+          setListMessage('');
+        }
+      } catch (error) {
+        if (error?.code === 'ERR_CANCELED') return;
+        if (!alive) return;
+        console.error('Error al cargar listas disponibles', error);
+        setListOptions([]);
+        setListDisabled(true);
+        setListMessage('No se pudieron cargar las listas disponibles');
+      } finally {
+        if (alive) {
+          setLoadingLists(false);
+          if (listaAbort.current === controller) {
+            listaAbort.current = null;
+          }
+        }
+      }
+    };
+
+    fetchLists();
+
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [form.producto, open]);
 
   React.useEffect(() => {
     if (!autoTotalCompra) return;
@@ -265,6 +349,8 @@ export default function PriceFormDialog({ open, onClose, row }) {
       const status = error?.response?.status;
       if (status === 401 || status === 403) {
         window.alert('No tenés permisos para guardar precios. Iniciá sesión nuevamente.');
+      } else if (status === 400 || status === 409) {
+        window.alert('Este producto ya tiene precio en la lista seleccionada');
       } else {
         const message = error?.response?.data?.error || error?.response?.data?.message || error?.message;
         window.alert(message || 'Error al guardar el precio. Revisá los datos e intentá nuevamente.');
@@ -295,7 +381,11 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 onInputChange={handleProductInputChange}
                 onChange={(_, value) => {
                   ensureProductoInOptions(value);
-                  setForm((prev) => ({ ...prev, producto: value }));
+                  setForm((prev) => ({ ...prev, producto: value, lista: null }));
+                  setListMessage('');
+                  setListOptions([]);
+                  setListDisabled(!value);
+                  setErrors((prev) => ({ ...prev, lista: undefined }));
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -324,13 +414,14 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 getOptionLabel={(option) => option?.lista ?? ''}
                 isOptionEqualToValue={(option, value) => option?._id === value?._id}
                 onChange={(_, value) => setForm((prev) => ({ ...prev, lista: value }))}
+                disabled={listDisabled}
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Lista"
                     required
                     error={Boolean(errors.lista)}
-                    helperText={errors.lista}
+                    helperText={errors.lista || listMessage}
                     InputProps={{
                       ...params.InputProps,
                       endAdornment: (
@@ -426,7 +517,17 @@ export default function PriceFormDialog({ open, onClose, row }) {
           <Button onClick={() => onClose(false)} disabled={saving}>
             Cancelar
           </Button>
-          <Button type="submit" variant="contained" disabled={saving}>
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={
+              saving
+              || loadingLists
+              || listDisabled
+              || !form.producto
+              || !form.lista
+            }
+          >
             {saving ? 'Guardando…' : isEdit ? 'Guardar' : 'Crear'}
           </Button>
         </DialogActions>
