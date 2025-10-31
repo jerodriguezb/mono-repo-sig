@@ -71,13 +71,16 @@ export default function PriceFormDialog({ open, onClose, row }) {
   const [saving, setSaving] = React.useState(false);
 
   const [listOptions, setListOptions] = React.useState([]);
+  const [availableListOptions, setAvailableListOptions] = React.useState([]);
   const [loadingLists, setLoadingLists] = React.useState(false);
+  const [filteringLists, setFilteringLists] = React.useState(false);
 
   const [productOptions, setProductOptions] = React.useState([]);
   const [loadingProducts, setLoadingProducts] = React.useState(false);
 
   const productoTimer = React.useRef(null);
   const productoAbort = React.useRef(null);
+  const availableListsAbort = React.useRef(null);
   const [autoTotalCompra, setAutoTotalCompra] = React.useState(true);
 
   const ensureProductoInOptions = React.useCallback((producto) => {
@@ -101,6 +104,7 @@ export default function PriceFormDialog({ open, onClose, row }) {
           if (cancelled) return;
           const listas = (data?.listas ?? []).filter((lista) => lista.activo !== false);
           setListOptions(listas);
+          setAvailableListOptions(listas);
         })
         .catch((error) => {
           console.error('Error al obtener listas de precios', error);
@@ -108,12 +112,14 @@ export default function PriceFormDialog({ open, onClose, row }) {
         .finally(() => {
           if (!cancelled) setLoadingLists(false);
         });
+    } else {
+      setAvailableListOptions(listOptions);
     }
 
     return () => {
       cancelled = true;
     };
-  }, [open, listOptions.length]);
+  }, [open, listOptions]);
 
   React.useEffect(() => {
     if (isEdit && row) {
@@ -141,7 +147,79 @@ export default function PriceFormDialog({ open, onClose, row }) {
   React.useEffect(() => () => {
     if (productoTimer.current) clearTimeout(productoTimer.current);
     if (productoAbort.current) productoAbort.current.abort();
+    if (availableListsAbort.current) availableListsAbort.current.abort();
   }, []);
+
+  const updateAvailableLists = React.useCallback(
+    async (productoId, currentListaId = null) => {
+      if (!Array.isArray(listOptions) || listOptions.length === 0) {
+        if (availableListsAbort.current) {
+          availableListsAbort.current.abort();
+          availableListsAbort.current = null;
+        }
+        setAvailableListOptions([]);
+        setFilteringLists(false);
+        return;
+      }
+
+      if (availableListsAbort.current) {
+        availableListsAbort.current.abort();
+      }
+
+      if (!productoId) {
+        availableListsAbort.current = null;
+        setAvailableListOptions(listOptions);
+        setFilteringLists(false);
+        return;
+      }
+
+      const controller = new AbortController();
+      availableListsAbort.current = controller;
+      setFilteringLists(true);
+      try {
+        const { data } = await api.get('/precios', {
+          params: { codproducto: productoId, limite: 500 },
+          signal: controller.signal,
+        });
+        const precios = Array.isArray(data?.precios) ? data.precios : [];
+        const usedListIds = new Set(
+          precios
+            .map((precio) => precio?.lista?._id ?? precio?.lista ?? null)
+            .filter(Boolean),
+        );
+
+        const available = listOptions.filter((lista) => !usedListIds.has(lista?._id));
+
+        if (currentListaId && !available.some((lista) => lista?._id === currentListaId)) {
+          const currentOption = listOptions.find((lista) => lista?._id === currentListaId);
+          if (currentOption) available.unshift(currentOption);
+        }
+
+        setAvailableListOptions(available);
+      } catch (error) {
+        if (error?.code !== 'ERR_CANCELED') {
+          console.error('Error al obtener listas disponibles para el producto', error);
+          setAvailableListOptions(listOptions);
+        }
+      } finally {
+        if (availableListsAbort.current === controller) {
+          availableListsAbort.current = null;
+          setFilteringLists(false);
+        } else if (!controller.signal.aborted) {
+          setFilteringLists(false);
+        }
+      }
+    },
+    [listOptions],
+  );
+
+  React.useEffect(() => {
+    if (!open) return;
+    if (!listOptions.length) return;
+    const productoId = form.producto?._id ?? form.producto ?? null;
+    const listaId = isEdit ? row?.lista?._id ?? row?.lista ?? null : null;
+    updateAvailableLists(productoId, listaId);
+  }, [open, listOptions, form.producto, isEdit, row, updateAvailableLists]);
 
   const handleProductInputChange = React.useCallback((_, value) => {
     if (productoTimer.current) clearTimeout(productoTimer.current);
@@ -295,7 +373,14 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 onInputChange={handleProductInputChange}
                 onChange={(_, value) => {
                   ensureProductoInOptions(value);
-                  setForm((prev) => ({ ...prev, producto: value }));
+                  setForm((prev) => ({
+                    ...prev,
+                    producto: value,
+                    lista:
+                      prev.producto?._id && prev.producto?._id === value?._id
+                        ? prev.lista
+                        : null,
+                  }));
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -318,24 +403,41 @@ export default function PriceFormDialog({ open, onClose, row }) {
               />
 
               <Autocomplete
-                options={listOptions}
+                options={availableListOptions}
                 value={form.lista}
-                loading={loadingLists}
+                loading={loadingLists || filteringLists}
                 getOptionLabel={(option) => option?.lista ?? ''}
                 isOptionEqualToValue={(option, value) => option?._id === value?._id}
                 onChange={(_, value) => setForm((prev) => ({ ...prev, lista: value }))}
+                noOptionsText={
+                  loadingLists || filteringLists
+                    ? 'Cargando…'
+                    : form.producto
+                      ? 'No hay listas disponibles para este producto'
+                      : 'No hay opciones'
+                }
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Lista"
                     required
                     error={Boolean(errors.lista)}
-                    helperText={errors.lista}
+                    helperText={
+                      errors.lista
+                      || (form.producto
+                        && !loadingLists
+                        && !filteringLists
+                        && availableListOptions.length === 0
+                        ? 'No hay listas disponibles para este producto'
+                        : undefined)
+                    }
                     InputProps={{
                       ...params.InputProps,
                       endAdornment: (
                         <React.Fragment>
-                          {loadingLists ? <CircularProgress color="inherit" size={20} /> : null}
+                          {loadingLists || filteringLists ? (
+                            <CircularProgress color="inherit" size={20} />
+                          ) : null}
                           {params.InputProps.endAdornment}
                         </React.Fragment>
                       ),
