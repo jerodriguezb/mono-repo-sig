@@ -15,6 +15,140 @@ const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 const toNumber = (v, d) => Number(v ?? d);
+const escapeRegExp = (value = '') => String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+
+const parseNumber = (value) => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const hasComma = trimmed.includes(',');
+  const hasDot = trimmed.includes('.');
+
+  let normalized = trimmed.replace(/\s+/g, '');
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    normalized = normalized.replace(',', '.');
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value !== 'string') return null;
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return null;
+};
+
+const buildStringCondition = (path, operator, rawValue) => {
+  if (operator === 'isEmpty') {
+    return {
+      $or: [
+        { [path]: { $exists: false } },
+        { [path]: null },
+        { [path]: '' },
+      ],
+    };
+  }
+
+  if (operator === 'isNotEmpty') {
+    return {
+      [path]: { $nin: [null, ''] },
+    };
+  }
+
+  if (Array.isArray(rawValue)) {
+    const sanitized = rawValue
+      .map((entry) => String(entry ?? '').trim())
+      .filter((entry) => entry);
+    if (!sanitized.length) return null;
+    return {
+      $or: sanitized.map((entry) => ({
+        [path]: { $regex: `^${escapeRegExp(entry)}$`, $options: 'i' },
+      })),
+    };
+  }
+
+  const value = String(rawValue ?? '').trim();
+  if (!value) return null;
+  const escaped = escapeRegExp(value);
+
+  if (operator === 'equals' || operator === '=' || operator === 'is') {
+    return {
+      [path]: { $regex: `^${escaped}$`, $options: 'i' },
+    };
+  }
+
+  if (operator === 'startsWith') {
+    return {
+      [path]: { $regex: `^${escaped}`, $options: 'i' },
+    };
+  }
+
+  if (operator === 'endsWith') {
+    return {
+      [path]: { $regex: `${escaped}$`, $options: 'i' },
+    };
+  }
+
+  // default contains
+  return {
+    [path]: { $regex: escaped, $options: 'i' },
+  };
+};
+
+const buildNumberCondition = (path, operator, rawValue) => {
+  if (operator === 'isEmpty') {
+    return {
+      $or: [
+        { [path]: { $exists: false } },
+        { [path]: null },
+      ],
+    };
+  }
+
+  if (operator === 'isNotEmpty') {
+    return {
+      [path]: { $ne: null },
+    };
+  }
+
+  const value = parseNumber(rawValue);
+  if (value === null) return null;
+
+  switch (operator) {
+    case 'notEqual':
+    case '!=':
+      return { [path]: { $ne: value } };
+    case '>':
+    case 'greaterThan':
+      return { [path]: { $gt: value } };
+    case '>=':
+    case 'greaterThanOrEqual':
+      return { [path]: { $gte: value } };
+    case '<':
+    case 'lessThan':
+      return { [path]: { $lt: value } };
+    case '<=':
+    case 'lessThanOrEqual':
+      return { [path]: { $lte: value } };
+    case 'equals':
+    case '=':
+    default:
+      return { [path]: value };
+  }
+};
 
 // Populate básico para referencias
 const precioPopulate = ['codproducto', 'lista'];
@@ -30,6 +164,8 @@ router.get('/precios', asyncHandler(async (req, res) => {
     sortOrder,
     codproducto,
     lista,
+    search,
+    filters: rawFilters,
   } = req.query;
 
   const rawSkip = toNumber(desde, 0);
@@ -37,9 +173,93 @@ router.get('/precios', asyncHandler(async (req, res) => {
   const rawLimit = toNumber(limite, 500);
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 500;
 
-  const query = { activo: true };
-  if (codproducto) query.codproducto = codproducto;
-  if (lista) query.lista = lista;
+  let parsedFilters = [];
+  if (rawFilters) {
+    try {
+      const candidate = JSON.parse(rawFilters);
+      if (Array.isArray(candidate)) parsedFilters = candidate;
+    } catch (error) {
+      // Ignorar filtros inválidos, pero dejar registro para debugging
+      console.warn('Filtros de precios inválidos', error);
+    }
+  }
+
+  const hasActivoFilter = parsedFilters.some((filter) => filter?.field === 'activo');
+
+  const baseConditions = [];
+  if (!hasActivoFilter) baseConditions.push({ activo: true });
+  if (codproducto) baseConditions.push({ codproducto });
+  if (lista) baseConditions.push({ lista });
+
+  const numericFields = new Map([
+    ['precionetocompra', 'precionetocompra'],
+    ['ivacompra', 'ivacompra'],
+    ['preciototalcompra', 'preciototalcompra'],
+    ['precionetoventa', 'precionetoventa'],
+    ['ivaventa', 'ivaventa'],
+    ['preciototalventa', 'preciototalventa'],
+  ]);
+
+  const aggregatedConditions = [];
+
+  parsedFilters.forEach((filter) => {
+    if (!filter || typeof filter !== 'object') return;
+    const { field, operator, value } = filter;
+    if (value === undefined || value === null || value === '') {
+      if (operator !== 'isEmpty' && operator !== 'isNotEmpty') return;
+    }
+
+    if (numericFields.has(field)) {
+      const condition = buildNumberCondition(numericFields.get(field), operator, value);
+      if (condition) baseConditions.push(condition);
+      return;
+    }
+
+    if (field === 'activo') {
+      if (operator === 'isEmpty') {
+        aggregatedConditions.push({ $or: [
+          { activo: { $exists: false } },
+          { activo: null },
+        ] });
+        return;
+      }
+
+      if (operator === 'isNotEmpty') {
+        baseConditions.push({ activo: { $ne: null } });
+        return;
+      }
+
+      const boolValue = parseBoolean(value);
+      if (boolValue === null) return;
+      baseConditions.push({ activo: boolValue });
+      return;
+    }
+
+    if (field === 'productoDescripcion') {
+      const condition = buildStringCondition('codproducto.descripcion', operator, value);
+      if (condition) aggregatedConditions.push(condition);
+      return;
+    }
+
+    if (field === 'listaNombre') {
+      const condition = buildStringCondition('lista.lista', operator, value);
+      if (condition) aggregatedConditions.push(condition);
+      return;
+    }
+  });
+
+  const searchTerm = typeof search === 'string' ? search.trim() : '';
+  if (searchTerm) {
+    const escaped = escapeRegExp(searchTerm);
+    aggregatedConditions.push({
+      $or: [
+        { 'codproducto.descripcion': { $regex: escaped, $options: 'i' } },
+        { 'lista.lista': { $regex: escaped, $options: 'i' } },
+      ],
+    });
+  }
+
+  const initialMatch = baseConditions.length ? { $and: baseConditions } : {};
 
   const sortFieldMap = {
     productoDescripcion: 'codproducto.descripcion',
@@ -58,8 +278,12 @@ router.get('/precios', asyncHandler(async (req, res) => {
   const sortPath = sortKey || 'fecha';
   const sortDir = sortOrder === 'desc' ? -1 : 1;
 
-  const pipeline = [
-    { $match: query },
+  const pipeline = [];
+  if (Object.keys(initialMatch).length) {
+    pipeline.push({ $match: initialMatch });
+  }
+
+  pipeline.push(
     {
       $lookup: {
         from: 'producservs',
@@ -78,16 +302,39 @@ router.get('/precios', asyncHandler(async (req, res) => {
       },
     },
     { $unwind: { path: '$lista', preserveNullAndEmptyArrays: true } },
-    { $sort: { [sortPath]: sortDir, _id: 1 } },
-    { $skip: skip },
-    { $limit: limit },
-  ];
+  );
 
-  const precios = await Precio.aggregate(pipeline)
+  if (aggregatedConditions.length) {
+    pipeline.push({ $match: { $and: aggregatedConditions } });
+  }
+
+  pipeline.push(
+    { $sort: { [sortPath]: sortDir, _id: 1 } },
+    {
+      $facet: {
+        data: [
+          { $skip: skip },
+          { $limit: limit },
+        ],
+        total: [
+          { $count: 'count' },
+        ],
+      },
+    },
+    { $unwind: { path: '$total', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        precios: '$data',
+        cantidad: { $ifNull: ['$total.count', 0] },
+      },
+    },
+  );
+
+  const [result = { precios: [], cantidad: 0 }] = await Precio.aggregate(pipeline)
     .collation({ locale: 'es', strength: 2 })
     .exec();
 
-  const cantidad = await Precio.countDocuments(query);
+  const { precios = [], cantidad = 0 } = result;
   res.json({ ok: true, precios, cantidad });
 }));
 

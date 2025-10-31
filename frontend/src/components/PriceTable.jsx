@@ -90,23 +90,44 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
   const [sortModel, setSortModel] = useState([
     { field: 'productoDescripcion', sort: 'asc' },
   ]);
+  const [filterModel, setFilterModel] = useState({ items: [], quickFilterValues: [] });
+  const [listOptions, setListOptions] = useState([]);
 
-  const fetchData = useCallback(async (nextPage = 0, model = sortModel) => {
+  const fetchData = useCallback(async (
+    nextPage = 0,
+    sModel = sortModel,
+    fModel = filterModel,
+  ) => {
     const pageIndex = Number.isFinite(nextPage) && nextPage >= 0 ? nextPage : 0;
     setLoading(true);
     try {
-      const { data } = await api.get('/precios', {
-        params: {
-          desde: pageIndex * pageSize,
-          limite: pageSize,
-          ...(Array.isArray(model) && model.length > 0
-            ? {
-              sortField: model[0].field,
-              sortOrder: model[0].sort,
-            }
-            : {}),
-        },
-      });
+      const params = {
+        desde: pageIndex * pageSize,
+        limite: pageSize,
+      };
+
+      if (Array.isArray(sModel) && sModel.length > 0) {
+        params.sortField = sModel[0].field;
+        params.sortOrder = sModel[0].sort;
+      }
+
+      const validFilters = Array.isArray(fModel?.items)
+        ? fModel.items.filter((item) => {
+          if (!item) return false;
+          if (item.operator === 'isEmpty' || item.operator === 'isNotEmpty') return true;
+          return item.value !== undefined && item.value !== null && String(item.value).trim() !== '';
+        })
+        : [];
+
+      if (validFilters.length > 0) {
+        params.filters = JSON.stringify(validFilters);
+      }
+
+      if (Array.isArray(fModel?.quickFilterValues) && fModel.quickFilterValues.length > 0) {
+        params.search = fModel.quickFilterValues.join(' ');
+      }
+
+      const { data } = await api.get('/precios', { params });
       const mapped = (data?.precios ?? []).map((precio) => ({
         ...precio,
         productoDescripcion: precio?.codproducto?.descripcion ?? '',
@@ -119,20 +140,41 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
     } finally {
       setLoading(false);
     }
-  }, [sortModel]);
+  }, [filterModel, sortModel]);
 
   const initialLoad = useRef(false);
 
   useEffect(() => {
     if (initialLoad.current) return;
     initialLoad.current = true;
-    fetchData(0, sortModel);
+    fetchData(0, sortModel, filterModel);
     setPage(0);
-  }, [fetchData, sortModel]);
+  }, [fetchData, sortModel, filterModel]);
 
   useImperativeHandle(ref, () => ({
-    refresh: () => fetchData(page, sortModel),
+    refresh: () => fetchData(page, sortModel, filterModel),
   }));
+
+  useEffect(() => {
+    let cancelled = false;
+    if (listOptions.length > 0) return undefined;
+    api
+      .get('/listas', { params: { limite: 500 } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const options = (data?.listas ?? [])
+          .filter((lista) => lista?.lista)
+          .map((lista) => ({ value: lista.lista, label: lista.lista }));
+        setListOptions(options);
+      })
+      .catch((error) => {
+        console.error('Error al obtener listas para filtros', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [listOptions.length]);
 
   const columns = useMemo(() => [
     {
@@ -149,6 +191,8 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
       flex: 1,
       minWidth: 160,
       sortable: true,
+      type: 'singleSelect',
+      valueOptions: listOptions,
       sortComparator: (a = '', b = '') => a.localeCompare(b, 'es', { sensitivity: 'base' }),
     },
     {
@@ -219,14 +263,14 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
         />,
       ],
     },
-  ], [onEdit]);
+  ], [listOptions, onEdit]);
 
   const totalPages = Math.max(1, Math.ceil(rowCount / pageSize));
 
   const goToPage = (nextPage) => {
     if (nextPage < 0 || nextPage >= totalPages) return;
     setPage(nextPage);
-    fetchData(nextPage, sortModel);
+    fetchData(nextPage, sortModel, filterModel);
   };
 
   return (
@@ -249,7 +293,15 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
             setSortModel(model);
             const nextPage = 0;
             setPage(nextPage);
-            fetchData(nextPage, model);
+            fetchData(nextPage, model, filterModel);
+          }}
+          filterMode="server"
+          filterModel={filterModel}
+          onFilterModelChange={(model) => {
+            setFilterModel(model);
+            const nextPage = 0;
+            setPage(nextPage);
+            fetchData(nextPage, sortModel, model);
           }}
           disableRowSelectionOnClick
           slots={{
