@@ -1,8 +1,10 @@
 import React, {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -85,15 +87,24 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [rowCount, setRowCount] = useState(0);
-  const [sortModel, setSortModel] = useState([]);
+  const [sortModel, setSortModel] = useState([
+    { field: 'productoDescripcion', sort: 'asc' },
+  ]);
 
-  const fetchData = async (nextPage = page) => {
+  const fetchData = useCallback(async (nextPage = 0, model = sortModel) => {
+    const pageIndex = Number.isFinite(nextPage) && nextPage >= 0 ? nextPage : 0;
     setLoading(true);
     try {
       const { data } = await api.get('/precios', {
         params: {
-          desde: nextPage * pageSize,
+          desde: pageIndex * pageSize,
           limite: pageSize,
+          ...(Array.isArray(model) && model.length > 0
+            ? {
+              sortField: model[0].field,
+              sortOrder: model[0].sort,
+            }
+            : {}),
         },
       });
       const mapped = (data?.precios ?? []).map((precio) => ({
@@ -108,15 +119,19 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sortModel]);
+
+  const initialLoad = useRef(false);
 
   useEffect(() => {
-    fetchData(0);
+    if (initialLoad.current) return;
+    initialLoad.current = true;
+    fetchData(0, sortModel);
     setPage(0);
-  }, []);
+  }, [fetchData, sortModel]);
 
   useImperativeHandle(ref, () => ({
-    refresh: () => fetchData(page),
+    refresh: () => fetchData(page, sortModel),
   }));
 
   const columns = useMemo(() => [
@@ -211,7 +226,7 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
   const goToPage = (nextPage) => {
     if (nextPage < 0 || nextPage >= totalPages) return;
     setPage(nextPage);
-    fetchData(nextPage);
+    fetchData(nextPage, sortModel);
   };
 
   return (
@@ -228,9 +243,14 @@ const PriceTable = forwardRef(function PriceTable({ onEdit }, ref) {
           page={page}
           pageSize={pageSize}
           onPageChange={goToPage}
-          sortingMode="client"
+          sortingMode="server"
           sortModel={sortModel}
-          onSortModelChange={(model) => setSortModel(model)}
+          onSortModelChange={(model) => {
+            setSortModel(model);
+            const nextPage = 0;
+            setPage(nextPage);
+            fetchData(nextPage, model);
+          }}
           disableRowSelectionOnClick
           slots={{
             toolbar: GridToolbarQuickFilter,
