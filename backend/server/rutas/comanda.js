@@ -528,8 +528,76 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     { path: 'camionero', select: 'nombres apellidos role email' },
   ];
 
-  const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
-  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+  const stockAvailabilityStages = [
+    {
+      $lookup: {
+        from: 'producservs',
+        localField: 'items.codprod',
+        foreignField: '_id',
+        as: '__productosStock',
+      },
+    },
+    {
+      $addFields: {
+        __stockScore: {
+          $sum: {
+            $map: {
+              input: { $ifNull: ['$__productosStock', []] },
+              as: 'producto',
+              in: {
+                $max: [
+                  {
+                    $convert: {
+                      input: '$$producto.stkactual',
+                      to: 'double',
+                      onNull: 0,
+                      onError: 0,
+                    },
+                  },
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        __hasStock: { $gt: ['__stockScore', 0] },
+      },
+    },
+    {
+      $set: { __productosStock: '$$REMOVE' },
+    },
+  ];
+
+  const applyStockPriority = (stages) => stages.map((stage) => {
+    if (!stage || typeof stage !== 'object' || Array.isArray(stage)) return stage;
+    if (stage.$sort) {
+      return {
+        $sort: {
+          __hasStock: -1,
+          __stockScore: -1,
+          ...stage.$sort,
+        },
+      };
+    }
+    return stage;
+  });
+
+  const sortPipeline = applyStockPriority(
+    buildSortPipeline(isValidSortField ? sortField : null),
+  );
+
+  const pipeline = [
+    { $match: query },
+    ...stockAvailabilityStages,
+    ...sortPipeline,
+    { $set: { __hasStock: '$$REMOVE', __stockScore: '$$REMOVE' } },
+    { $skip: skip },
+    { $limit: limit },
+  ];
 
   const aggregation = Comanda.aggregate(pipeline).collation({
     locale: 'es',
