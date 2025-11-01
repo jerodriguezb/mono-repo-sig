@@ -3,6 +3,7 @@
 // Node.js v22.17.1 + Mongoose v8.16.5
 
 const express = require('express');
+const mongoose = require('mongoose');
 const Precio = require('../modelos/precio');
 const { verificaToken, verificaAdmin_role } = require('../middlewares/autenticacion');
 
@@ -16,6 +17,15 @@ const asyncHandler = (fn) => (req, res, next) => {
 };
 const toNumber = (v, d) => Number(v ?? d);
 const escapeRegExp = (value = '') => String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+
+const toObjectId = (value) => {
+  if (!value) return null;
+  if (value instanceof mongoose.Types.ObjectId) return value;
+  if (typeof value === 'string' && mongoose.Types.ObjectId.isValid(value)) {
+    return new mongoose.Types.ObjectId(value);
+  }
+  return null;
+};
 
 const parseNumber = (value) => {
   if (typeof value === 'number') {
@@ -188,8 +198,22 @@ router.get('/precios', asyncHandler(async (req, res) => {
 
   const baseConditions = [];
   if (!hasActivoFilter) baseConditions.push({ activo: true });
-  if (codproducto) baseConditions.push({ codproducto });
-  if (lista) baseConditions.push({ lista });
+
+  if (codproducto) {
+    const codproductoId = toObjectId(codproducto);
+    if (!codproductoId) {
+      return res.json({ ok: true, precios: [], cantidad: 0 });
+    }
+    baseConditions.push({ codproducto: codproductoId });
+  }
+
+  if (lista) {
+    const listaId = toObjectId(lista);
+    if (!listaId) {
+      return res.json({ ok: true, precios: [], cantidad: 0 });
+    }
+    baseConditions.push({ lista: listaId });
+  }
 
   const numericFields = new Map([
     ['precionetocompra', 'precionetocompra'],
