@@ -339,6 +339,28 @@ router.get('/precios', asyncHandler(async (req, res) => {
 }));
 
 // -----------------------------------------------------------------------------
+// 1.a VALIDAR DUPLICADOS -------------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/precios/existe', asyncHandler(async (req, res) => {
+  const { codproducto, lista, excluir } = req.query;
+
+  if (!codproducto || !lista) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'Los parámetros codproducto y lista son obligatorios' },
+    });
+  }
+
+  const conditions = { codproducto, lista };
+  if (excluir) {
+    conditions._id = { $ne: excluir };
+  }
+
+  const exists = await Precio.exists(conditions).exec();
+  res.json({ ok: true, existe: Boolean(exists) });
+}));
+
+// -----------------------------------------------------------------------------
 // 2. PRECIO POR ID -------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/precios/:id', asyncHandler(async (req, res) => {
@@ -352,6 +374,22 @@ router.get('/precios/:id', asyncHandler(async (req, res) => {
 // -----------------------------------------------------------------------------
 router.post('/precios', /* [verificaToken, verificaAdmin_role], */ asyncHandler(async (req, res) => {
   const body = req.body;
+
+  if (!body.codproducto || !body.lista) {
+    return res.status(400).json({
+      ok: false,
+      err: { message: 'codproducto y lista son obligatorios' },
+    });
+  }
+
+  const duplicate = await Precio.exists({ codproducto: body.codproducto, lista: body.lista }).exec();
+  if (duplicate) {
+    return res.status(409).json({
+      ok: false,
+      err: { message: 'Ya existe un precio para el producto y la lista seleccionados' },
+    });
+  }
+
   const precio = new Precio({
     codproducto: body.codproducto,
     lista: body.lista,
@@ -371,10 +409,38 @@ router.post('/precios', /* [verificaToken, verificaAdmin_role], */ asyncHandler(
 // 4. ACTUALIZAR PRECIO ----------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.put('/precios/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
-  const precioDB = await Precio.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true })
+  const { id } = req.params;
+  const existing = await Precio.findById(id).lean().exec();
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, err: { message: 'Precio no encontrado' } });
+  }
+
+  const targetCodproducto = req.body.codproducto ?? existing.codproducto;
+  const targetLista = req.body.lista ?? existing.lista;
+
+  const duplicate = await Precio.exists({
+    _id: { $ne: id },
+    codproducto: targetCodproducto,
+    lista: targetLista,
+  }).exec();
+
+  if (duplicate) {
+    return res.status(409).json({
+      ok: false,
+      err: { message: 'Ya existe un precio para el producto y la lista seleccionados' },
+    });
+  }
+
+  const updatePayload = {
+    ...req.body,
+    codproducto: targetCodproducto,
+    lista: targetLista,
+  };
+
+  const precioDB = await Precio.findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })
     .populate(precioPopulate)
     .exec();
-  if (!precioDB) return res.status(404).json({ ok: false, err: { message: 'Precio no encontrado' } });
   res.json({ ok: true, precio: precioDB });
 }));
 
