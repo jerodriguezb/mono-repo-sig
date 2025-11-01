@@ -68,7 +68,14 @@ const ensureComandasAccess = (req, res, next) => {
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, estado, camionero } = req.query;
+  const {
+    desde = 0,
+    limite = 500,
+    estado,
+    camionero,
+    sortField,
+    sortOrder,
+  } = req.query;
 
   if (estado && !isValidObjectId(estado)) {
     return res.json({ ok: true, comandas: [], cantidad: 0 });
@@ -97,13 +104,74 @@ router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(asyn
     query.camionero = camioneroId;
   }
 
+  const allowedSortFields = new Set([
+    'nrodecomanda',
+    'fecha',
+    'codestado',
+    'camionero',
+    'camion',
+    'codcli',
+    'fechadeentrega',
+    'puntoDistribucion',
+    'usuario',
+  ]);
+
+  const sortFieldMap = new Map([
+    ['cliente', 'codcli'],
+    ['estado', 'codestado'],
+  ]);
+
+  const normalizedSortField = typeof sortField === 'string' ? sortField.trim() : '';
+  const resolvedSortField = sortFieldMap.get(normalizedSortField) || normalizedSortField;
+  const hasExplicitSort = resolvedSortField && allowedSortFields.has(resolvedSortField);
+  const sortDirection = sortOrder === 'desc' ? -1 : 1;
+
+  const sortConfig = hasExplicitSort
+    ? { [resolvedSortField]: sortDirection, _id: sortDirection }
+    : { nrodecomanda: 1, _id: 1 };
+
   const comandas = await Comanda.find(query)
     // .skip(toNumber(desde, 0))
     // .limit(toNumber(limite, 500))
-    .sort('nrodecomanda')
+    .sort(sortConfig)
     .populate(commonPopulate)
     .lean()
     .exec();
+
+  if (!hasExplicitSort && Array.isArray(comandas) && comandas.length) {
+    const stockMetadata = new Map();
+
+    comandas.forEach((comanda, index) => {
+      const items = Array.isArray(comanda?.items) ? comanda.items : [];
+      const hasStock = items.some((item) => {
+        const product = item?.codprod;
+        if (!product || typeof product !== 'object') return false;
+        const stockValue = product?.stkactual;
+        const numericStock = typeof stockValue === 'number' ? stockValue : Number(stockValue);
+        return Number.isFinite(numericStock) && numericStock > 0;
+      }) ? 1 : 0;
+
+      stockMetadata.set(comanda, { hasStock, index });
+    });
+
+    comandas.sort((a, b) => {
+      const metaA = stockMetadata.get(a) || { hasStock: 0, index: 0 };
+      const metaB = stockMetadata.get(b) || { hasStock: 0, index: 0 };
+
+      if (metaB.hasStock !== metaA.hasStock) {
+        return metaB.hasStock - metaA.hasStock;
+      }
+
+      const nroA = typeof a?.nrodecomanda === 'number' ? a.nrodecomanda : Number(a?.nrodecomanda) || 0;
+      const nroB = typeof b?.nrodecomanda === 'number' ? b.nrodecomanda : Number(b?.nrodecomanda) || 0;
+
+      if (nroA !== nroB) {
+        return nroA - nroB;
+      }
+
+      return metaA.index - metaB.index;
+    });
+  }
 
   const cantidadQuery = { activo: true, ...query };
   const cantidad = await Comanda.countDocuments(cantidadQuery);
