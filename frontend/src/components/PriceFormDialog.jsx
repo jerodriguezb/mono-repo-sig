@@ -52,6 +52,16 @@ const normalizeNumber = (value) => {
 
 const sanitizeNumericInput = (value) => value.replace(/[^0-9.,-]/g, '');
 
+const extractId = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    if (value._id) return String(value._id);
+    if (value.id) return String(value.id);
+  }
+  return '';
+};
+
 const shouldAutoFillCompra = (data) => {
   const neto = normalizeNumber(data?.precionetocompra);
   const iva = normalizeNumber(data?.ivacompra);
@@ -72,13 +82,34 @@ export default function PriceFormDialog({ open, onClose, row }) {
 
   const [listOptions, setListOptions] = React.useState([]);
   const [loadingLists, setLoadingLists] = React.useState(false);
+  const [usedListIds, setUsedListIds] = React.useState([]);
+  const [loadingExistingLists, setLoadingExistingLists] = React.useState(false);
 
   const [productOptions, setProductOptions] = React.useState([]);
   const [loadingProducts, setLoadingProducts] = React.useState(false);
 
   const productoTimer = React.useRef(null);
   const productoAbort = React.useRef(null);
+  const usedListAbort = React.useRef(null);
   const [autoTotalCompra, setAutoTotalCompra] = React.useState(true);
+  const selectedProductId = React.useMemo(() => extractId(form.producto), [form.producto]);
+  const selectedListId = React.useMemo(() => extractId(form.lista), [form.lista]);
+  const currentPriceId = React.useMemo(() => (row?._id ? String(row._id) : ''), [row]);
+  const initialProductId = React.useMemo(() => extractId(row?.codproducto), [row]);
+  const initialListId = React.useMemo(() => extractId(row?.lista), [row]);
+  const usedListIdSet = React.useMemo(() => new Set(usedListIds.map((id) => String(id))), [usedListIds]);
+  const filteredListOptions = React.useMemo(() => {
+    if (!selectedProductId) return listOptions;
+    return listOptions.filter((option) => {
+      const optionId = extractId(option);
+      if (!optionId) return false;
+      if (selectedListId && optionId === selectedListId) return true;
+      if (initialProductId && initialProductId === selectedProductId && initialListId && optionId === initialListId) {
+        return true;
+      }
+      return !usedListIdSet.has(optionId);
+    });
+  }, [listOptions, usedListIdSet, selectedListId, selectedProductId, initialProductId, initialListId]);
 
   const ensureProductoInOptions = React.useCallback((producto) => {
     if (!producto) return;
@@ -116,6 +147,62 @@ export default function PriceFormDialog({ open, onClose, row }) {
   }, [open, listOptions.length]);
 
   React.useEffect(() => {
+    if (usedListAbort.current) {
+      usedListAbort.current.abort();
+      usedListAbort.current = null;
+    }
+
+    if (!open) {
+      setUsedListIds([]);
+      setLoadingExistingLists(false);
+      return undefined;
+    }
+
+    if (!selectedProductId) {
+      setUsedListIds([]);
+      setLoadingExistingLists(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    usedListAbort.current = controller;
+    setLoadingExistingLists(true);
+
+    const params = {
+      codproducto: selectedProductId,
+      limite: 500,
+      filters: JSON.stringify([{ field: 'activo', operator: 'isNotEmpty', value: true }]),
+    };
+
+    api
+      .get('/precios', { params, signal: controller.signal })
+      .then(({ data }) => {
+        const seen = new Set();
+        (data?.precios ?? []).forEach((precio) => {
+          const precioId = precio?._id ? String(precio._id) : '';
+          if (currentPriceId && precioId === currentPriceId) return;
+          const listaId = extractId(precio?.lista);
+          if (listaId) seen.add(listaId);
+        });
+        setUsedListIds(Array.from(seen));
+      })
+      .catch((error) => {
+        if (error?.code !== 'ERR_CANCELED') {
+          console.error('Error verificando listas utilizadas para el producto', error);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingExistingLists(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [open, selectedProductId, currentPriceId]);
+
+  React.useEffect(() => {
     if (isEdit && row) {
       const nextForm = {
         producto: row.codproducto ?? null,
@@ -141,6 +228,7 @@ export default function PriceFormDialog({ open, onClose, row }) {
   React.useEffect(() => () => {
     if (productoTimer.current) clearTimeout(productoTimer.current);
     if (productoAbort.current) productoAbort.current.abort();
+    if (usedListAbort.current) usedListAbort.current.abort();
   }, []);
 
   const handleProductInputChange = React.useCallback((_, value) => {
@@ -212,6 +300,20 @@ export default function PriceFormDialog({ open, onClose, row }) {
     if (!form.producto?._id && !form.producto) errs.producto = 'Seleccioná un producto o servicio';
     if (!form.lista?._id && !form.lista) errs.lista = 'Seleccioná una lista';
 
+    const productId = selectedProductId;
+    const listId = selectedListId;
+    const isInitialCombination = Boolean(
+      isEdit
+        && initialProductId
+        && initialProductId === productId
+        && initialListId
+        && initialListId === listId,
+    );
+
+    if (productId && listId && !isInitialCombination && usedListIdSet.has(listId)) {
+      errs.lista = 'El producto seleccionado ya tiene un precio asignado para esta lista';
+    }
+
     const netoCompra = normalizeNumber(form.precionetocompra);
     const totalCompra = normalizeNumber(form.preciototalcompra);
     const netoVenta = normalizeNumber(form.precionetoventa);
@@ -229,7 +331,7 @@ export default function PriceFormDialog({ open, onClose, row }) {
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  }, [form]);
+  }, [form, selectedProductId, selectedListId, usedListIdSet, isEdit, initialProductId, initialListId]);
 
   const handleSubmit = async (event) => {
     event?.preventDefault?.();
@@ -250,6 +352,31 @@ export default function PriceFormDialog({ open, onClose, row }) {
       };
 
       const headers = buildAuthHeaders();
+
+      const checkParams = {
+        codproducto: payload.codproducto,
+        lista: payload.lista,
+      };
+      if (isEdit && row?._id) checkParams.excluir = row._id;
+
+      try {
+        const { data: checkData } = await api.get('/precios/existe', { params: checkParams });
+        if (checkData?.existe) {
+          const message = 'El producto seleccionado ya tiene un precio asignado para esta lista.';
+          setErrors((prev) => ({ ...prev, lista: message }));
+          window.alert(message);
+          return;
+        }
+      } catch (error) {
+        const message = error?.response?.data?.err?.message
+          || error?.response?.data?.message
+          || error?.message;
+        setErrors((prev) => ({ ...prev, lista: message || 'Error al validar la lista seleccionada' }));
+        window.alert(message || 'No se pudo verificar la combinación de producto y lista. Intentá nuevamente.');
+        return;
+      }
+
+      setErrors((prev) => ({ ...prev, lista: undefined }));
 
       if (isEdit) {
         await api.put(`/precios/${row._id}`, payload, { headers });
@@ -295,7 +422,17 @@ export default function PriceFormDialog({ open, onClose, row }) {
                 onInputChange={handleProductInputChange}
                 onChange={(_, value) => {
                   ensureProductoInOptions(value);
-                  setForm((prev) => ({ ...prev, producto: value }));
+                  setForm((prev) => {
+                    const previousProductId = extractId(prev.producto);
+                    const nextProductId = extractId(value);
+                    const shouldKeepList = nextProductId && nextProductId === previousProductId;
+                    return {
+                      ...prev,
+                      producto: value,
+                      lista: shouldKeepList ? prev.lista : null,
+                    };
+                  });
+                  setErrors((prev) => ({ ...prev, producto: undefined, lista: undefined }));
                 }}
                 renderInput={(params) => (
                   <TextField
@@ -318,12 +455,41 @@ export default function PriceFormDialog({ open, onClose, row }) {
               />
 
               <Autocomplete
-                options={listOptions}
+                options={filteredListOptions}
                 value={form.lista}
-                loading={loadingLists}
+                loading={loadingLists || loadingExistingLists}
                 getOptionLabel={(option) => option?.lista ?? ''}
                 isOptionEqualToValue={(option, value) => option?._id === value?._id}
-                onChange={(_, value) => setForm((prev) => ({ ...prev, lista: value }))}
+                disabled={!selectedProductId}
+                noOptionsText={selectedProductId
+                  ? 'No hay listas disponibles para este producto'
+                  : 'Seleccioná un producto para ver las listas'}
+                onChange={(_, value) => {
+                  if (!value) {
+                    setForm((prev) => ({ ...prev, lista: null }));
+                    setErrors((prev) => ({ ...prev, lista: undefined }));
+                    return;
+                  }
+
+                  const optionId = extractId(value);
+                  const isSameAsCurrent = selectedListId && optionId === selectedListId;
+                  const isInitialCombination = Boolean(
+                    initialProductId
+                      && initialProductId === selectedProductId
+                      && initialListId
+                      && optionId === initialListId,
+                  );
+
+                  if (!isSameAsCurrent && !isInitialCombination && usedListIdSet.has(optionId)) {
+                    const message = 'El producto seleccionado ya tiene un precio asignado para esta lista.';
+                    setErrors((prev) => ({ ...prev, lista: message }));
+                    window.alert(message);
+                    return;
+                  }
+
+                  setErrors((prev) => ({ ...prev, lista: undefined }));
+                  setForm((prev) => ({ ...prev, lista: value }));
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
@@ -335,7 +501,9 @@ export default function PriceFormDialog({ open, onClose, row }) {
                       ...params.InputProps,
                       endAdornment: (
                         <React.Fragment>
-                          {loadingLists ? <CircularProgress color="inherit" size={20} /> : null}
+                          {loadingLists || loadingExistingLists ? (
+                            <CircularProgress color="inherit" size={20} />
+                          ) : null}
                           {params.InputProps.endAdornment}
                         </React.Fragment>
                       ),
