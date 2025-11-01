@@ -95,14 +95,27 @@ router.delete(
   '/estados/:id',
   [verificaToken, verificaAdmin_role],
   asyncHandler(async (req, res) => {
+    const estadoActual = await Estado.findById(req.params.id).exec();
+
+    if (!estadoActual)
+      return res.status(404).json({ ok: false, err: { message: 'Estado no encontrado' } });
+
+    const esEstadoCerrada =
+      typeof estadoActual.estado === 'string' && estadoActual.estado.trim().toLowerCase() === 'cerrada';
+
+    if (esEstadoCerrada)
+      return res.status(400).json({
+        ok: false,
+        err: {
+          message: 'No es posible eliminar el estado "Cerrada" porque implicaría volver a estados anteriores.',
+        },
+      });
+
     const estadoBorrado = await Estado.findByIdAndUpdate(
       req.params.id,
       { activo: false },
       { new: true }
     ).exec();
-
-    if (!estadoBorrado)
-      return res.status(404).json({ ok: false, err: { message: 'Estado no encontrado' } });
 
     res.json({ ok: true, estado: estadoBorrado });
   })
