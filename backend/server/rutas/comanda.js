@@ -528,8 +528,135 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     { path: 'camionero', select: 'nombres apellidos role email' },
   ];
 
-  const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
-  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+  const stockLookupStage = {
+    $lookup: {
+      from: 'producservs',
+      let: { productIds: '$items.codprod' },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $in: [
+                '$_id',
+                {
+                  $ifNull: ['$$productIds', []],
+                },
+              ],
+            },
+          },
+        },
+        { $project: { stkactual: 1 } },
+      ],
+      as: '__stockProducts',
+    },
+  };
+
+  const itemsWithPositiveStockExpr = {
+    $size: {
+      $filter: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        cond: {
+          $let: {
+            vars: {
+              product: {
+                $first: {
+                  $filter: {
+                    input: '$__stockProducts',
+                    as: 'prod',
+                    cond: { $eq: ['$$prod._id', '$$item.codprod'] },
+                  },
+                },
+              },
+              requestedQty: {
+                $convert: {
+                  input: { $ifNull: ['$$item.cantidad', 0] },
+                  to: 'double',
+                  onNull: 0,
+                  onError: 0,
+                },
+              },
+            },
+            in: {
+              $gte: [
+                {
+                  $subtract: [
+                    {
+                      $convert: {
+                        input: { $ifNull: ['$$product.stkactual', 0] },
+                        to: 'double',
+                        onNull: 0,
+                        onError: 0,
+                      },
+                    },
+                    '$$requestedQty',
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const stockEnrichmentStages = [
+    stockLookupStage,
+    {
+      $addFields: {
+        __totalItems: { $size: { $ifNull: ['$items', []] } },
+        __itemsWithPositiveStock: itemsWithPositiveStockExpr,
+      },
+    },
+    {
+      $addFields: {
+        __stockFulfillmentRatio: {
+          $cond: [
+            { $gt: ['$__totalItems', 0] },
+            { $divide: ['$__itemsWithPositiveStock', '$__totalItems'] },
+            0,
+          ],
+        },
+        __hasPositiveStock: { $gt: ['$__itemsWithPositiveStock', 0] },
+      },
+    },
+  ];
+
+  const prioritizeStockInSortStage = (stage) => {
+    if (!stage || typeof stage !== 'object' || Array.isArray(stage) || !stage.$sort) {
+      return stage;
+    }
+    return {
+      ...stage,
+      $sort: {
+        __stockFulfillmentRatio: -1,
+        __itemsWithPositiveStock: -1,
+        __hasPositiveStock: -1,
+        ...stage.$sort,
+      },
+    };
+  };
+
+  const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null)
+    .map(prioritizeStockInSortStage);
+
+  const pipeline = [
+    { $match: query },
+    ...stockEnrichmentStages,
+    ...sortPipeline,
+    { $skip: skip },
+    { $limit: limit },
+    {
+      $set: {
+        __stockProducts: '$$REMOVE',
+        __totalItems: '$$REMOVE',
+        __itemsWithPositiveStock: '$$REMOVE',
+        __stockFulfillmentRatio: '$$REMOVE',
+        __hasPositiveStock: '$$REMOVE',
+      },
+    },
+  ];
 
   const aggregation = Comanda.aggregate(pipeline).collation({
     locale: 'es',
