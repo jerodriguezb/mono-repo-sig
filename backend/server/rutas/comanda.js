@@ -126,24 +126,48 @@ router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(asyn
 
   let orderedComandas = comandas;
   if (!sortField) {
-    orderedComandas = [...comandas].sort((a, b) => {
-      const aHasStock = Array.isArray(a.items)
-        && a.items.some((item) => (item?.codprod?.stkactual ?? 0) > 0)
-        ? 1
-        : 0;
-      const bHasStock = Array.isArray(b.items)
-        && b.items.some((item) => (item?.codprod?.stkactual ?? 0) > 0)
-        ? 1
-        : 0;
-
-      if (bHasStock !== aHasStock) {
-        return bHasStock - aHasStock;
+    const resolveStockPriority = (items) => {
+      if (!Array.isArray(items) || items.length === 0) {
+        return Number.NEGATIVE_INFINITY;
       }
 
-      const aNumero = Number(a.nrodecomanda) || 0;
-      const bNumero = Number(b.nrodecomanda) || 0;
+      let hasValidStock = false;
+      let maxStock = Number.NEGATIVE_INFINITY;
+
+      items.forEach((item) => {
+        const rawStock = Number(item?.codprod?.stkactual);
+        if (!Number.isFinite(rawStock)) {
+          return;
+        }
+
+        hasValidStock = true;
+        if (rawStock > maxStock) {
+          maxStock = rawStock;
+        }
+      });
+
+      return hasValidStock ? maxStock : Number.NEGATIVE_INFINITY;
+    };
+
+    const comandasWithPriority = comandas.map((comanda) => ({
+      comanda,
+      stockPriority: resolveStockPriority(comanda.items),
+    }));
+
+    comandasWithPriority.sort((aEntry, bEntry) => {
+      const { stockPriority: aStock } = aEntry;
+      const { stockPriority: bStock } = bEntry;
+
+      if (aStock !== bStock) {
+        return bStock > aStock ? 1 : -1;
+      }
+
+      const aNumero = Number(aEntry.comanda.nrodecomanda) || 0;
+      const bNumero = Number(bEntry.comanda.nrodecomanda) || 0;
       return aNumero - bNumero;
     });
+
+    orderedComandas = comandasWithPriority.map((entry) => entry.comanda);
   }
 
   res.json({ ok: true, comandas: orderedComandas, cantidad });
