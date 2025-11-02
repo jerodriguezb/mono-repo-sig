@@ -3,7 +3,9 @@
 // Compatible con Node.js v22.17.1 y Mongoose v8.16.5
 
 const express = require('express');
+const mongoose = require('mongoose');
 const Comanda = require('../modelos/comanda');
+const Cliente = require('../modelos/cliente');
 const Producserv = require('../modelos/producserv');
 const Stock = require('../modelos/stock');
 const Tipomovimiento = require('../modelos/tipomovimiento');
@@ -14,6 +16,7 @@ const {
   verificaCam_role,
   verificaAdminCam_role,
   verificaAdminPrev_role,
+  ROLES,
 } = require('../middlewares/autenticacion');
 
 const router = express.Router();
@@ -26,6 +29,14 @@ const asyncHandler = (fn) => (req, res, next) => {
 };
 
 const toNumber = (v, def) => Number(v ?? def);
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
 /**
  * Conjunto de poblados comunes a la mayoría de endpoints.
@@ -46,19 +57,56 @@ const commonPopulate = [
   { path: 'camionero', select: 'role nombres apellidos' },
 ];
 
+const ensureComandasAccess = (req, res, next) => {
+  if (req.usuario?.role === ROLES.CAMION) {
+    return verificaCam_role(req, res, next);
+  }
+  return verificaAdminCam_role(req, res, next);
+};
+
 // -----------------------------------------------------------------------------
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
-router.get('/comandas', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500 } = req.query;
-  const comandas = await Comanda.find()
+router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(async (req, res) => {
+  const { desde = 0, limite = 500, estado, camionero } = req.query;
+
+  if (estado && !isValidObjectId(estado)) {
+    return res.json({ ok: true, comandas: [], cantidad: 0 });
+  }
+
+  let camioneroId = null;
+  if (camionero) {
+    if (!isValidObjectId(camionero)) {
+      return res.json({ ok: true, comandas: [], cantidad: 0 });
+    }
+    camioneroId = new mongoose.Types.ObjectId(camionero);
+  }
+
+  if (req.usuario?.role === ROLES.CAMION && req.usuario?._id) {
+    camioneroId = new mongoose.Types.ObjectId(req.usuario._id);
+  }
+
+  const query = {};
+
+  if (estado) {
+    const estadoId = new mongoose.Types.ObjectId(estado);
+    query.codestado = estadoId;
+  }
+
+  if (camioneroId) {
+    query.camionero = camioneroId;
+  }
+
+  const comandas = await Comanda.find(query)
     // .skip(toNumber(desde, 0))
     // .limit(toNumber(limite, 500))
     .sort('nrodecomanda')
     .populate(commonPopulate)
     .lean()
     .exec();
-  const cantidad = await Comanda.countDocuments({ activo: true });
+
+  const cantidadQuery = { activo: true, ...query };
+  const cantidad = await Comanda.countDocuments(cantidadQuery);
   res.json({ ok: true, comandas, cantidad });
 }));
 
@@ -76,6 +124,430 @@ router.get('/comandasactivas', asyncHandler(async (req, res) => {
     .exec();
   const cantidad = await Comanda.countDocuments(query);
   res.json({ ok: true, comandas, cantidad });
+}));
+
+// -----------------------------------------------------------------------------
+// 2.a. COMANDAS PARA LOGÍSTICA -------------------------------------------------
+// -----------------------------------------------------------------------------
+router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncHandler(async (req, res) => {
+  const page = Math.max(toNumber(req.query.page, 1), 1);
+  const requestedLimit = Math.max(toNumber(req.query.limit, 20), 1);
+  const limit = Math.min(requestedLimit, 20); // Siempre máximo 20 por página
+  const skip = (page - 1) * limit;
+
+  const {
+    fechaDesde,
+    fechaHasta,
+    cliente,
+    producto,
+    ruta,
+    camionero,
+    estado,
+    usuario,
+    nrocomanda,
+    puntoDistribucion,
+    sortField,
+    sortOrder,
+  } = req.query;
+
+  const filters = [{ activo: true }];
+
+  const from = parseDate(fechaDesde);
+  const to = parseDate(fechaHasta);
+  if (from || to) {
+    const rango = {};
+    if (from) rango.$gte = from;
+    if (to) {
+      // Ajusta al final del día para incluir registros completos
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      rango.$lte = end;
+    }
+    filters.push({ fecha: rango });
+  }
+
+  if (nrocomanda) {
+    const nro = Number(nrocomanda);
+    if (!Number.isNaN(nro)) filters.push({ nrodecomanda: nro });
+  }
+
+  if (cliente) {
+    if (!isValidObjectId(cliente)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const clienteId = new mongoose.Types.ObjectId(cliente);
+    filters.push({ codcli: clienteId });
+  }
+
+  if (producto) {
+    if (!isValidObjectId(producto)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const productoId = new mongoose.Types.ObjectId(producto);
+    filters.push({ 'items.codprod': productoId });
+  }
+
+  if (camionero) {
+    if (!isValidObjectId(camionero)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const camioneroId = new mongoose.Types.ObjectId(camionero);
+    filters.push({ camionero: camioneroId });
+  }
+
+  if (estado) {
+    if (!isValidObjectId(estado)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const estadoId = new mongoose.Types.ObjectId(estado);
+    filters.push({ codestado: estadoId });
+  }
+
+  if (usuario) {
+    if (!isValidObjectId(usuario)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const usuarioId = new mongoose.Types.ObjectId(usuario);
+    filters.push({ usuario: usuarioId });
+  }
+  if (puntoDistribucion) {
+    filters.push({ puntoDistribucion: { $regex: new RegExp(puntoDistribucion, 'i') } });
+  }
+
+  if (ruta) {
+    if (!isValidObjectId(ruta)) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    const clientes = await Cliente.find({ ruta }).select('_id').lean().exec();
+    const ids = clientes.map((c) => c._id);
+    if (!ids.length) {
+      return res.json({ ok: true, page, limit, total: 0, totalPages: 0, comandas: [] });
+    }
+    filters.push({ codcli: { $in: ids } });
+  }
+
+  const query = filters.length === 1 ? filters[0] : { $and: filters };
+
+  const allowedSortFields = new Set([
+    'nrodecomanda',
+    'fecha',
+    'codestado',
+    'puntoDistribucion',
+    'cliente',
+    'precioTotal',
+    'totalEntregado',
+    'ruta',
+    'camionero',
+    'usuario',
+  ]);
+
+  const sortDirection = sortOrder === 'asc' ? 1 : -1;
+  const isValidSortField = sortField && allowedSortFields.has(sortField);
+
+  const buildItemsTotalExpression = () => ({
+    $sum: {
+      $map: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        in: {
+          $multiply: [
+            {
+              $convert: {
+                input: '$$item.cantidad',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+            {
+              $convert: {
+                input: '$$item.monto',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const buildDeliveredTotalExpression = () => ({
+    $sum: {
+      $map: {
+        input: { $ifNull: ['$items', []] },
+        as: 'item',
+        in: {
+          $multiply: [
+            {
+              $convert: {
+                input: '$$item.cantidadentregada',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+            {
+              $convert: {
+                input: '$$item.monto',
+                to: 'double',
+                onNull: 0,
+                onError: 0,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  const buildSortPipeline = (field) => {
+    switch (field) {
+      case 'nrodecomanda':
+        return [{ $sort: { nrodecomanda: sortDirection, fecha: -1, _id: sortDirection } }];
+      case 'fecha':
+        return [{ $sort: { fecha: sortDirection, nrodecomanda: sortDirection, _id: sortDirection } }];
+      case 'codestado':
+        return [{ $sort: { codestado: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+      case 'puntoDistribucion':
+        return [{ $sort: { puntoDistribucion: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+      case 'cliente':
+        return [
+          {
+            $lookup: {
+              from: 'clientes',
+              localField: 'codcli',
+              foreignField: '_id',
+              as: '__clienteSort',
+            },
+          },
+          { $unwind: { path: '$__clienteSort', preserveNullAndEmptyArrays: true } },
+          {
+            $sort: {
+              '__clienteSort.razonsocial': sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __clienteSort: '$$REMOVE' } },
+        ];
+      case 'precioTotal':
+        return [
+          {
+            $addFields: {
+              __precioTotalSort: {
+                $let: {
+                  vars: {
+                    existing: {
+                      $convert: {
+                        input: '$precioTotal',
+                        to: 'double',
+                        onNull: null,
+                        onError: null,
+                      },
+                    },
+                  },
+                  in: {
+                    $ifNull: ['$$existing', buildItemsTotalExpression()],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __precioTotalSort: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __precioTotalSort: '$$REMOVE' } },
+        ];
+      case 'totalEntregado':
+        return [
+          {
+            $addFields: {
+              __totalEntregadoSort: {
+                $let: {
+                  vars: {
+                    existing: {
+                      $convert: {
+                        input: '$totalEntregado',
+                        to: 'double',
+                        onNull: null,
+                        onError: null,
+                      },
+                    },
+                  },
+                  in: {
+                    $ifNull: ['$$existing', buildDeliveredTotalExpression()],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __totalEntregadoSort: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $unset: '__totalEntregadoSort' },
+        ];
+      case 'ruta':
+        return [
+          {
+            $lookup: {
+              from: 'clientes',
+              localField: 'codcli',
+              foreignField: '_id',
+              as: '__clienteSort',
+            },
+          },
+          { $unwind: { path: '$__clienteSort', preserveNullAndEmptyArrays: true } },
+          {
+            $lookup: {
+              from: 'rutas',
+              localField: '__clienteSort.ruta',
+              foreignField: '_id',
+              as: '__rutaSort',
+            },
+          },
+          { $unwind: { path: '$__rutaSort', preserveNullAndEmptyArrays: true } },
+          {
+            $sort: {
+              '__rutaSort.ruta': sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __clienteSort: '$$REMOVE', __rutaSort: '$$REMOVE' } },
+        ];
+      case 'camionero':
+        return [
+          {
+            $lookup: {
+              from: 'usuarios',
+              localField: 'camionero',
+              foreignField: '_id',
+              as: '__camioneroSort',
+            },
+          },
+          { $unwind: { path: '$__camioneroSort', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              __camioneroNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$__camioneroSort.apellidos', ''] },
+                      ' ',
+                      { $ifNull: ['$__camioneroSort.nombres', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __camioneroNombre: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __camioneroSort: '$$REMOVE', __camioneroNombre: '$$REMOVE' } },
+        ];
+      case 'usuario':
+        return [
+          {
+            $lookup: {
+              from: 'usuarios',
+              localField: 'usuario',
+              foreignField: '_id',
+              as: '__usuarioSort',
+            },
+          },
+          { $unwind: { path: '$__usuarioSort', preserveNullAndEmptyArrays: true } },
+          {
+            $addFields: {
+              __usuarioNombre: {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ['$__usuarioSort.apellidos', ''] },
+                      ' ',
+                      { $ifNull: ['$__usuarioSort.nombres', ''] },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          {
+            $sort: {
+              __usuarioNombre: sortDirection,
+              fecha: -1,
+              nrodecomanda: -1,
+              _id: sortDirection,
+            },
+          },
+          { $set: { __usuarioSort: '$$REMOVE', __usuarioNombre: '$$REMOVE' } },
+        ];
+      default:
+        return [{ $sort: { fecha: -1, nrodecomanda: -1, _id: -1 } }];
+    }
+  };
+
+  const logisticsPopulate = [
+    {
+      path: 'codcli',
+      populate: [
+        { path: 'ruta' },
+        { path: 'localidad', populate: { path: 'provincia' } },
+      ],
+    },
+    { path: 'items.lista' },
+    {
+      path: 'items.codprod',
+      populate: [
+        { path: 'marca' },
+        { path: 'unidaddemedida' },
+      ],
+    },
+    { path: 'codestado' },
+    { path: 'camion' },
+    { path: 'usuario', select: 'nombres apellidos role email' },
+    { path: 'camionero', select: 'nombres apellidos role email' },
+  ];
+
+  const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
+  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+
+  const aggregation = Comanda.aggregate(pipeline).collation({
+    locale: 'es',
+    strength: 1,
+    caseLevel: false,
+    numericOrdering: true,
+  });
+
+  const [total, rawComandas] = await Promise.all([
+    Comanda.countDocuments(query),
+    aggregation.exec(),
+  ]);
+
+  const comandas = await Comanda.populate(rawComandas, logisticsPopulate);
+
+  const totalPages = Math.ceil(total / limit) || 0;
+
+  res.json({ ok: true, page, limit, total, totalPages, comandas });
 }));
 
 // -----------------------------------------------------------------------------
@@ -257,6 +729,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
         fechadeentrega: body.fechadeentrega,
         usuario: body.usuario,
         camionero: body.camionero,
+        puntoDistribucion: body.puntoDistribucion,
         activo: body.activo,
         items: body.items,
       });
@@ -282,7 +755,7 @@ router.post('/comandas',  asyncHandler(async (req, res) => {
     });
     return res.json({ ok: true, comanda: comandaDB });
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 }));
 
@@ -303,10 +776,82 @@ router.put('/comandas/:id', [verificaToken, verificaAdminCam_role], asyncHandler
 // 12. DESACTIVAR (SOFT‑DELETE) COMANDA -----------------------------------------
 // -----------------------------------------------------------------------------
 router.delete('/comandas/:id', [verificaToken, verificaAdmin_role], asyncHandler(async (req, res) => {
-  const comandaBorrada = await Comanda.findByIdAndUpdate(req.params.id, { activo: false }, { new: true })
+  const session = await Comanda.startSession();
+  let comandaId = null;
+
+  try {
+    const tipomovDevolucion = await Tipomovimiento.findOne({ movimiento: 'DEVOLUCION', activo: true })
+      .session(session)
+      .exec();
+
+    if (!tipomovDevolucion) {
+      return res.status(500).json({ ok: false, err: { message: 'Tipo de movimiento DEVOLUCION no encontrado' } });
+    }
+
+    await session.withTransaction(async () => {
+      const comanda = await Comanda.findById(req.params.id).session(session).exec();
+      if (!comanda) {
+        const error = new Error('Comanda no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const now = new Date();
+
+      if (comanda.activo !== false) {
+        const items = Array.isArray(comanda.items) ? comanda.items : [];
+        for (const item of items) {
+          const cantidad = Number(item?.cantidad ?? 0);
+          if (!item?.codprod || Number.isNaN(cantidad) || cantidad <= 0) continue;
+
+          await Producserv.updateOne(
+            { _id: item.codprod },
+            { $inc: { stkactual: cantidad } },
+            { session },
+          );
+
+          const stockData = {
+            codprod: item.codprod,
+            nrodecomanda: comanda.nrodecomanda ?? null,
+            movimiento: tipomovDevolucion._id,
+            cantidad,
+            fecha: now,
+          };
+
+          const usuarioMovimiento = req.usuario?._id || comanda.usuario || null;
+          if (usuarioMovimiento) stockData.usuario = usuarioMovimiento;
+
+          const stockMovimiento = new Stock(stockData);
+          await stockMovimiento.save({ session });
+        }
+
+        comanda.activo = false;
+        await comanda.save({ session, validateBeforeSave: false });
+      }
+
+      comandaId = comanda._id;
+    });
+  } catch (error) {
+    if (error?.statusCode === 404) {
+      return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+
+  if (!comandaId) {
+    return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+  }
+
+  const comandaBorrada = await Comanda.findById(comandaId)
     .populate(commonPopulate)
     .exec();
-  if (!comandaBorrada) return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+
+  if (!comandaBorrada) {
+    return res.status(404).json({ ok: false, err: { message: 'Comanda no encontrada' } });
+  }
+
   res.json({ ok: true, comanda: comandaBorrada });
 }));
 

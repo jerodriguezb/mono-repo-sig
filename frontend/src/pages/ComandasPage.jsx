@@ -33,10 +33,8 @@ const ESTADO_A_PREPARAR = '62200265c811f41820d8bda9';
 
 export default function ComandasPage() {
   const [productos, setProductos] = useState([]);
-  const [rubros, setRubros] = useState([]);
   const [listas, setListas] = useState([]);
   const [busqueda, setBusqueda] = useState('');
-  const [rubroSel, setRubroSel] = useState('');
   const [listaSel, setListaSel] = useState('');
   const [clienteSel, setClienteSel] = useState(null);
   const [clienteInput, setClienteInput] = useState('');
@@ -92,12 +90,8 @@ export default function ComandasPage() {
   useEffect(() => {
     const fetchFilters = async () => {
       try {
-        const [r, l] = await Promise.all([
-          api.get('/rubros'),
-          api.get('/listas'),
-        ]);
-        setRubros(r.data.rubros || []);
-        setListas(l.data.listas || []);
+        const { data } = await api.get('/listas');
+        setListas(data.listas || []);
       } catch (err) {
         console.error('Error obteniendo filtros', err);
       }
@@ -113,7 +107,6 @@ export default function ComandasPage() {
           desde: (page - 1) * pageSize,
         };
         if (busqueda) params.search = busqueda;
-        if (rubroSel) params.rubro = rubroSel;
         if (listaSel) params.lista = listaSel;
         const { data } = await api.get('/producservs', { params });
         setProductos(data.producservs || []);
@@ -123,7 +116,7 @@ export default function ComandasPage() {
       }
     };
     fetchProductos();
-  }, [busqueda, rubroSel, listaSel, page, pageSize]);
+  }, [busqueda, listaSel, page, pageSize]);
 
   const handleClienteInput = useCallback((_, val) => {
     setClienteInput(val);
@@ -282,12 +275,18 @@ export default function ComandasPage() {
       alert('Seleccione un cliente');
       return;
     }
+    const usuarioId = localStorage.getItem('id');
+    if (!usuarioId) {
+      alert('No se pudo identificar al usuario. Inicie sesión nuevamente.');
+      return;
+    }
     // El número de comanda se genera en el backend mediante mongoose-sequence,
     // por lo que no se envía desde el cliente.
     const payload = {
       codcli: clienteSel._id,
       fecha: new Date().toISOString(),
       codestado: ESTADO_A_PREPARAR,
+      usuario: usuarioId,
       items: items.map(({ codprod, lista, cantidad, precio }) => ({
         codprod,
         lista,
@@ -298,10 +297,12 @@ export default function ComandasPage() {
     try {
       setIsSaving(true);
       const { data } = await api.post('/comandas', payload);
+      if (!data?.comanda?.usuario) {
+        console.warn('La comanda guardada no incluye el usuario en la respuesta del backend.');
+      }
       setSavedComanda({ ...data.comanda, cliente: clienteSel });
       dispatch({ type: 'clear' });
       setBusqueda('');
-      setRubroSel('');
       setListaSel('');
       setClienteSel(null);
       setClienteInput('');
@@ -348,7 +349,11 @@ export default function ComandasPage() {
   return (
     <Stack spacing={2}>
       <Typography variant="h6">Comandas</Typography>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ flexWrap: 'wrap' }}
+      >
         <TextField
           label="Buscar"
           value={busqueda}
@@ -357,20 +362,6 @@ export default function ComandasPage() {
             setPage(1);
           }}
         />
-        <Select
-          value={rubroSel}
-          displayEmpty
-          onChange={(e) => {
-            setRubroSel(e.target.value);
-            setPage(1);
-          }}
-          sx={{ minWidth: 160 }}
-        >
-          <MenuItem value=""><em>Todos los rubros</em></MenuItem>
-          {rubros.map((r) => (
-            <MenuItem key={r._id} value={r._id}>{r.rubro || r.nombre}</MenuItem>
-          ))}
-        </Select>
         <Select
           value={listaSel}
           displayEmpty
@@ -396,7 +387,7 @@ export default function ComandasPage() {
           loading={clienteLoading}
           noOptionsText={clienteNoOpts}
           renderInput={(params) => <TextField {...params} label="Cliente" />}
-          sx={{ minWidth: 240 }}
+          sx={{ width: { xs: '100%', sm: 480 } }}
         />
       </Stack>
 

@@ -20,13 +20,24 @@ const toNumber = (v, d) => Number(v ?? d);
 // 1. LISTAR LISTAS -------------------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/listas', asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500 } = req.query;
+  const { desde = 0, limite = 500, sortField, sortOrder } = req.query;
   const query = { activo: true };
 
+  const rawSkip = toNumber(desde, 0);
+  const skip = Number.isFinite(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
+  const rawLimit = toNumber(limite, 500);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 500;
+
+  const allowedSortFields = new Set(['lista', 'codlista', 'activo']);
+  const field = allowedSortFields.has(sortField) ? sortField : 'lista';
+  const direction = sortOrder === 'desc' ? -1 : 1;
+  const sort = { [field]: direction, _id: 1 };
+
   const listas = await Lista.find(query)
-    .skip(toNumber(desde, 0))
-    .limit(toNumber(limite, 500))
-    .sort('lista')
+    .skip(skip)
+    .limit(limit)
+    .sort(sort)
+    .collation({ locale: 'es', strength: 2 })
     .lean()
     .exec();
 

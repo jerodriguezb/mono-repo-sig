@@ -1,0 +1,885 @@
+jest.setTimeout(10000);
+
+const express = require('express');
+const request = require('supertest');
+const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+
+jest.mock('../../modelos/documento', () => {
+  const mockMongoose = require('mongoose');
+  const store = [];
+  const pendingBySession = new Map();
+  const instanceStore = new Map();
+  const matchesQuery = (doc, query = {}) => {
+    if (!doc) return false;
+    const entries = Object.entries(query || {});
+    return entries.every(([key, value]) => {
+      if (key === 'NrodeDocumento') {
+        if (value && typeof value === 'object' && value.$regex) {
+          const regex = value.$regex instanceof RegExp
+            ? value.$regex
+            : new RegExp(value.$regex, value.$options);
+          return regex.test(doc.NrodeDocumento ?? '');
+        }
+        return doc.NrodeDocumento === value;
+      }
+      if (key === 'prefijo') {
+        return doc.prefijo === value;
+      }
+      if (key === 'tipo') {
+        return doc.tipo === value;
+      }
+      if (key === 'activo') {
+        return doc.activo === value;
+      }
+      return true;
+    });
+  };
+  const existsMock = jest.fn(async (query = {}) => {
+    const found = store.find((doc) => matchesQuery(doc, query));
+    return found ? { _id: found._id } : null;
+  });
+  const findByIdMock = jest.fn();
+  const findOneMock = jest.fn((query = {}) => {
+    const state = {
+      query,
+      sort: null,
+      select: null,
+      lean: false,
+    };
+
+    const execute = async () => {
+      let results = store.filter((doc) => matchesQuery(doc, state.query));
+      if (state.sort && state.sort.NrodeDocumento) {
+        const direction = state.sort.NrodeDocumento;
+        results = [...results].sort((a, b) => {
+          const aValue = a.NrodeDocumento || '';
+          const bValue = b.NrodeDocumento || '';
+          return direction < 0 ? bValue.localeCompare(aValue) : aValue.localeCompare(bValue);
+        });
+      }
+      const found = results[0];
+      if (!found) return null;
+      let selected = found;
+      if (state.select) {
+        selected = {};
+        Object.entries(state.select).forEach(([key, enabled]) => {
+          if (enabled) selected[key] = found[key];
+        });
+      }
+      if (state.lean) {
+        return { ...selected };
+      }
+      return ensureInstance(selected._id);
+    };
+
+    const chain = {
+      sort(sortObj = {}) {
+        state.sort = sortObj;
+        return chain;
+      },
+      select(selectObj = {}) {
+        state.select = selectObj;
+        return chain;
+      },
+      session() {
+        return chain;
+      },
+      lean() {
+        state.lean = true;
+        return chain;
+      },
+      exec: () => execute(),
+    };
+
+    return chain;
+  });
+
+  const cloneItems = (items = []) =>
+    (Array.isArray(items) ? items.map((item) => ({ ...item })) : items);
+
+  class DocumentoMock {
+    constructor(data = {}) {
+      this.data = { ...data };
+      this.prefijo = data.prefijo || '0001';
+      this.tipo = data.tipo;
+      this.proveedor = data.proveedor;
+      this.fechaRemito = data.fechaRemito;
+      this.items = cloneItems(data.items);
+      this.observaciones = data.observaciones;
+      this.usuario = data.usuario;
+      this.NrodeDocumento = data.NrodeDocumento;
+      this.activo = data.activo ?? true;
+      this._id = data._id ? String(data._id) : new mockMongoose.Types.ObjectId().toString();
+      instanceStore.set(this._id, this);
+    }
+
+    async save(options = {}) {
+      const docData = {
+        _id: this._id,
+        prefijo: this.prefijo,
+        tipo: this.tipo,
+        proveedor: this.proveedor,
+        fechaRemito: this.fechaRemito,
+        items: cloneItems(this.items),
+        observaciones: this.observaciones,
+        usuario: this.usuario,
+        NrodeDocumento: this.NrodeDocumento,
+        activo: this.activo,
+      };
+
+      if (options?.session) {
+        const pending = pendingBySession.get(options.session) || [];
+        const existingIndex = pending.findIndex((doc) => doc._id === this._id);
+        if (existingIndex >= 0) {
+          pending[existingIndex] = docData;
+        } else {
+          pending.push(docData);
+        }
+        pendingBySession.set(options.session, pending);
+      } else {
+        const existingIndex = store.findIndex((doc) => doc._id === this._id);
+        if (existingIndex >= 0) {
+          store[existingIndex] = docData;
+        } else {
+          store.push(docData);
+        }
+      }
+      instanceStore.set(this._id, this);
+      return this;
+    }
+
+    async populate() {
+      return this;
+    }
+
+    toObject() {
+      return {
+        _id: this._id,
+        prefijo: this.prefijo,
+        tipo: this.tipo,
+        proveedor: this.proveedor,
+        fechaRemito: this.fechaRemito,
+        items: cloneItems(this.items),
+        observaciones: this.observaciones,
+        usuario: this.usuario,
+        NrodeDocumento: this.NrodeDocumento,
+        activo: this.activo,
+      };
+    }
+  }
+
+  const ensureInstance = (id) => {
+    if (!id) return null;
+    const key = String(id);
+    const stored = store.find((doc) => doc._id === key);
+    if (!stored) return null;
+    const existingInstance = instanceStore.get(key);
+    if (existingInstance) {
+      existingInstance.prefijo = stored.prefijo;
+      existingInstance.tipo = stored.tipo;
+      existingInstance.proveedor = stored.proveedor;
+      existingInstance.fechaRemito = stored.fechaRemito;
+      existingInstance.items = cloneItems(stored.items);
+      existingInstance.observaciones = stored.observaciones;
+      existingInstance.usuario = stored.usuario;
+      existingInstance.NrodeDocumento = stored.NrodeDocumento;
+      existingInstance.activo = stored.activo;
+      return existingInstance;
+    }
+    return new DocumentoMock({ ...stored, _id: key });
+  };
+
+  findByIdMock.mockImplementation((id) => {
+    const exec = async () => ensureInstance(id);
+    const leanExec = async () => {
+      const instance = await exec();
+      return instance ? instance.toObject() : null;
+    };
+    return {
+      exec,
+      populate: () => ({
+        lean: () => ({ exec: leanExec }),
+        exec,
+      }),
+      lean: () => ({ exec: leanExec }),
+    };
+  });
+
+  DocumentoMock.exists = existsMock;
+  DocumentoMock.findById = findByIdMock;
+  DocumentoMock.findOne = findOneMock;
+  DocumentoMock.__store = store;
+  DocumentoMock.__commitSession = (session) => {
+    const pending = pendingBySession.get(session) || [];
+    pending.forEach((doc) => {
+      const existingIndex = store.findIndex((stored) => stored._id === doc._id);
+      if (existingIndex >= 0) {
+        store[existingIndex] = doc;
+      } else {
+        store.push(doc);
+      }
+      instanceStore.delete(doc._id);
+    });
+    pendingBySession.delete(session);
+  };
+  DocumentoMock.__abortSession = (session) => {
+    pendingBySession.delete(session);
+  };
+  DocumentoMock.__reset = () => {
+    store.length = 0;
+    existsMock.mockClear();
+    findByIdMock.mockClear();
+    findOneMock.mockClear();
+    pendingBySession.clear();
+    instanceStore.clear();
+  };
+
+  return DocumentoMock;
+});
+
+jest.mock('../../modelos/proveedor', () => {
+  const store = new Map();
+  const findByIdMock = jest.fn((id) => ({
+    select: () => ({
+      lean: () => ({
+        exec: async () => (store.has(String(id)) ? { _id: String(id) } : null),
+      }),
+    }),
+  }));
+
+  return {
+    __store: store,
+    __add: (doc) => store.set(String(doc._id), doc),
+    __reset: () => {
+      store.clear();
+      findByIdMock.mockClear();
+    },
+    findById: findByIdMock,
+  };
+});
+
+jest.mock('../../modelos/producserv', () => {
+  const store = new Map();
+  const findMock = jest.fn((query = {}) => ({
+    select: () => ({
+      lean: () => ({
+        exec: async () => {
+          const ids = Array.isArray(query._id?.$in) ? query._id.$in.map(String) : [];
+          return ids.filter((id) => store.has(id)).map((id) => ({ _id: id }));
+        },
+      }),
+    }),
+  }));
+
+  const findOneMock = jest.fn((query = {}) => {
+    const id = query && query._id ? String(query._id) : undefined;
+    const doc = id && store.has(id) ? { ...store.get(id) } : null;
+    const buildResponse = () => ({
+      lean: () => Promise.resolve(doc),
+    });
+
+    return {
+      session: () => buildResponse(),
+      lean: () => Promise.resolve(doc),
+    };
+  });
+
+  const findByIdAndUpdateMock = jest.fn(async (id, update = {}) => {
+    const key = String(id);
+    const current = store.get(key);
+    if (!current) return null;
+    const inc = update?.$inc?.stkactual ?? 0;
+    const updated = { ...current, stkactual: (current.stkactual ?? 0) + inc };
+    store.set(key, updated);
+    return updated;
+  });
+
+  return {
+    __store: store,
+    __add: (doc) => store.set(String(doc._id), doc),
+    __reset: () => {
+      store.clear();
+      findMock.mockClear();
+      findOneMock.mockClear();
+      findByIdAndUpdateMock.mockClear();
+    },
+    find: findMock,
+    findOne: findOneMock,
+    findByIdAndUpdate: findByIdAndUpdateMock,
+  };
+});
+
+jest.mock('../../modelos/stock', () => ({
+  insertMany: jest.fn().mockResolvedValue(),
+}));
+
+jest.mock('../../modelos/tipomovimiento', () => {
+  const defaultStore = new Map([
+    ['COMPRA', { _id: 'mov-compra' }],
+    ['INGRESO POSITIVO', { _id: 'mov-ingreso-positivo' }],
+    ['AJUSTE+', { _id: 'mov-ajuste-positivo' }],
+    ['AJUSTE-', { _id: 'mov-ajuste-negativo' }],
+  ]);
+  const store = new Map(defaultStore);
+
+  const findOneMock = jest.fn((query = {}) => ({
+    select: () => ({
+      lean: () => ({
+        exec: async () => {
+          const movimiento = query?.movimiento;
+          if (movimiento && store.has(movimiento)) {
+            return store.get(movimiento);
+          }
+          return null;
+        },
+      }),
+    }),
+  }));
+
+  return {
+    findOne: findOneMock,
+    __reset: () => {
+      store.clear();
+      defaultStore.forEach((value, key) => {
+        store.set(key, { ...value });
+      });
+      findOneMock.mockClear();
+    },
+  };
+});
+
+process.env.JWT_SECRET = 'test-secret';
+
+const Documento = require('../../modelos/documento');
+const Proveedor = require('../../modelos/proveedor');
+const Producserv = require('../../modelos/producserv');
+const Tipomovimiento = require('../../modelos/tipomovimiento');
+const router = require('../documentos');
+
+const sessionStub = {
+  startTransaction: jest.fn().mockResolvedValue(),
+  commitTransaction: jest.fn().mockImplementation(async () => {
+    Documento.__commitSession(sessionStub);
+  }),
+  abortTransaction: jest.fn().mockImplementation(async () => {
+    Documento.__abortSession(sessionStub);
+  }),
+  endSession: jest.fn().mockResolvedValue(),
+};
+
+const app = express();
+app.use(express.json());
+app.use(router);
+
+const postDocumento = (payload, authToken) =>
+  request(app)
+    .post('/documentos')
+    .set('Authorization', `Bearer ${authToken}`)
+    .send(payload);
+
+const crearProveedor = () => {
+  const doc = {
+    _id: new mongoose.Types.ObjectId().toString(),
+    codprov: 1,
+    razonsocial: 'Proveedor Test',
+    domicilio: 'Calle Falsa 123',
+    telefono: '123456789',
+  };
+  Proveedor.__add(doc);
+  return doc;
+};
+
+const crearProducto = (overrides = {}) => {
+  const doc = {
+    _id: new mongoose.Types.ObjectId().toString(),
+    codprod: 'SKU-001',
+    descripcion: 'Producto Test',
+    tipo: 'PRODUCTO',
+    iva: 21,
+    stkactual: 0,
+    activo: true,
+    ...overrides,
+  };
+  Producserv.__add(doc);
+  return doc;
+};
+
+describe('POST /documentos', () => {
+  let token;
+
+  beforeAll(() => {
+    jest.spyOn(mongoose, 'startSession').mockResolvedValue(sessionStub);
+    token = jwt.sign({ _id: new mongoose.Types.ObjectId().toString(), role: 'ADMIN_ROLE' }, process.env.JWT_SECRET);
+  });
+
+  afterAll(() => {
+    jest.restoreAllMocks();
+    delete process.env.JWT_SECRET;
+  });
+
+  beforeEach(() => {
+    Documento.__reset();
+    Proveedor.__reset();
+    Producserv.__reset();
+    Tipomovimiento.__reset();
+    sessionStub.startTransaction.mockClear();
+    sessionStub.commitTransaction.mockClear();
+    sessionStub.abortTransaction.mockClear();
+    sessionStub.endSession.mockClear();
+  });
+
+  describe('para Notas de Recepción (NR)', () => {
+    const buildPayload = () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
+
+      return {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          {
+            cantidad: 2,
+            producto: producto._id,
+            codprod: producto.codprod,
+          },
+        ],
+        numeroSugerido: '0012NR00009999',
+      };
+    };
+
+    test('crea una NR asignando el primer número consecutivo', async () => {
+      const payload = buildPayload();
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.NrodeDocumento).toBe('0012NR00000001');
+
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].NrodeDocumento).toBe('0012NR00000001');
+      expect(Documento.__store[0].prefijo).toBe('0012');
+    });
+
+    test('rechaza una NR con formato inválido', async () => {
+      const payload = { ...buildPayload(), numeroSugerido: '0012NR12' };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(400);
+      expect(response.body.ok).toBe(false);
+      expect(response.body.err.message).toMatch(/formato 0012NR/);
+      expect(Documento.__store).toHaveLength(0);
+    });
+
+    test('asigna números consecutivos en NR con el mismo prefijo', async () => {
+      const primerPayload = buildPayload();
+
+      const primeraRespuesta = await postDocumento(primerPayload, token);
+      expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.ok).toBe(true);
+      expect(primeraRespuesta.body.documento.NrodeDocumento).toBe('0012NR00000001');
+
+      const segundoPayload = buildPayload();
+      const segundaRespuesta = await postDocumento(segundoPayload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.ok).toBe(true);
+      expect(segundaRespuesta.body.documento.NrodeDocumento).toBe('0012NR00000002');
+
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0012NR00000001',
+        '0012NR00000002',
+      ]);
+    });
+
+    test('suma las cantidades de productos repetidos y actualiza el stock una sola vez', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
+
+      const payload = {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+        numeroSugerido: '0012NR00000001',
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        incremento: 5,
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(5);
+    });
+
+    test('mantiene la secuencia de NR independiente de los ajustes', async () => {
+      const proveedor = crearProveedor();
+      const productoNR = crearProducto({ codprod: 'SKU-NR' });
+      const productoAJ = crearProducto({ codprod: 'SKU-AJ', stkactual: 5 });
+
+      const primeraNR = await postDocumento(
+        {
+          tipo: 'NR',
+          prefijo: '12',
+          fechaRemito: '2024-05-20',
+          proveedor: proveedor._id,
+          items: [
+            { cantidad: 2, producto: productoNR._id, codprod: productoNR.codprod },
+          ],
+          numeroSugerido: '0012NR00001234',
+        },
+        token,
+      );
+
+      expect(primeraNR.status).toBe(201);
+      expect(primeraNR.body.documento.NrodeDocumento).toBe('0012NR00000001');
+
+      const ajustePositivo = await postDocumento(
+        {
+          tipo: 'AJ',
+          prefijo: '0012',
+          fechaRemito: '2024-05-21',
+          proveedor: proveedor._id,
+          ajusteOperacion: 'increment',
+          nroSugerido: '0012AJ00005555',
+          items: [
+            { cantidad: 3, producto: productoAJ._id, codprod: productoAJ.codprod },
+          ],
+        },
+        token,
+      );
+
+      expect(ajustePositivo.status).toBe(201);
+      expect(ajustePositivo.body.documento.NrodeDocumento).toBe('0012AJ00000001');
+
+      const segundaNR = await postDocumento(
+        {
+          tipo: 'NR',
+          prefijo: '12',
+          fechaRemito: '2024-05-22',
+          proveedor: proveedor._id,
+          items: [
+            { cantidad: 1, producto: productoNR._id, codprod: productoNR.codprod },
+          ],
+        },
+        token,
+      );
+
+      expect(segundaNR.status).toBe(201);
+      expect(segundaNR.body.documento.NrodeDocumento).toBe('0012NR00000002');
+
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0012NR00000001',
+        '0012AJ00000001',
+        '0012NR00000002',
+      ]);
+    });
+
+    test('no incrementa stock cuando el producto está inactivo', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto();
+      Producserv.__add({ ...producto, activo: false, _id: producto._id });
+
+      const payload = {
+        tipo: 'NR',
+        prefijo: '12',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+        numeroSugerido: '0012NR00000001',
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(400);
+      expect(response.body.ok).toBe(false);
+      expect(response.body.err.message).toMatch(/inactivo/);
+      expect(Documento.__store).toHaveLength(0);
+      expect(Producserv.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(sessionStub.abortTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('para Ajustes (AJ)', () => {
+    test('realiza un ajuste negativo descontando stock', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 10 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-05-20',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000123',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        decremento: 3,
+        operacion: 'decrement',
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(7);
+      expect(Documento.__store[0].NrodeDocumento).toBe(payload.nroSugerido);
+    });
+
+    test('realiza un ajuste positivo sumando stock y asigna número consecutivo', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 4 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0007',
+        fechaRemito: '2024-06-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'increment',
+        nroSugerido: '0007AJ00000042',
+        items: [
+          { cantidad: 5, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.stock.updates).toHaveLength(1);
+      expect(response.body.stock.updates[0]).toMatchObject({
+        producto: producto._id,
+        codprod: producto.codprod,
+        incremento: 5,
+        operacion: 'increment',
+      });
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(9);
+      expect(response.body.documento.NrodeDocumento).toBe('0007AJ00000001');
+      expect(Documento.__store[0].NrodeDocumento).toBe('0007AJ00000001');
+    });
+
+    test('asigna números consecutivos a ajustes positivos ignorando sugerencias previas', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 8 });
+
+      const primerPayload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-06-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'increment',
+        nroSugerido: '0001AJ99999999',
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const primeraRespuesta = await postDocumento(primerPayload, token);
+
+      expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.documento.NrodeDocumento).toBe('0001AJ00000001');
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(10);
+
+      const segundoPayload = {
+        ...primerPayload,
+        fechaRemito: '2024-06-02',
+        nroSugerido: '0001AJ12345678',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const segundaRespuesta = await postDocumento(segundoPayload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.documento.NrodeDocumento).toBe('0001AJ00000002');
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(13);
+      expect(Documento.__store.map((doc) => doc.NrodeDocumento)).toEqual([
+        '0001AJ00000001',
+        '0001AJ00000002',
+      ]);
+    });
+
+    test('persiste cantidades negativas cuando ajusteTipo indica ajuste (–)', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 18 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-07-10',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        ajusteTipo: 'AJ-',
+        nroSugerido: '0001AJ00000234',
+        items: [
+          { cantidad: 2, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.items).toHaveLength(1);
+      expect(response.body.documento.items[0].cantidad).toBe(-2);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-2);
+      expect(payload.items[0].cantidad).toBe(2);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(16);
+    });
+
+    test('persiste cantidades negativas cuando el marcador indica Ajuste (–)', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 15 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-07-15',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000999',
+        documentoMarca: 'Ajuste (–)',
+        items: [
+          { cantidad: 3, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const response = await postDocumento(payload, token);
+
+      expect(response.status).toBe(201);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.documento.items).toHaveLength(1);
+      expect(response.body.documento.items[0].cantidad).toBe(-3);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-3);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(12);
+      expect(payload.items[0].cantidad).toBe(3);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('un reintento de ajuste negativo no duplica la inversión de signo', async () => {
+      const proveedor = crearProveedor();
+      const producto = crearProducto({ stkactual: 20 });
+
+      const payload = {
+        tipo: 'AJ',
+        prefijo: '0001',
+        fechaRemito: '2024-08-01',
+        proveedor: proveedor._id,
+        ajusteOperacion: 'decrement',
+        nroSugerido: '0001AJ00000111',
+        documentoMarca: 'Ajuste (–)',
+        items: [
+          { cantidad: 4, producto: producto._id, codprod: producto.codprod },
+        ],
+      };
+
+      const primeraRespuesta = await postDocumento(payload, token);
+
+      expect(primeraRespuesta.status).toBe(201);
+      expect(primeraRespuesta.body.ok).toBe(true);
+      expect(Documento.__store).toHaveLength(1);
+      expect(Documento.__store[0].items[0].cantidad).toBe(-4);
+      expect(primeraRespuesta.body.documento.items[0].cantidad).toBe(-4);
+      expect(payload.items[0].cantidad).toBe(4);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(1);
+
+      payload.nroSugerido = '0001AJ00000112';
+
+      const segundaRespuesta = await postDocumento(payload, token);
+
+      expect(segundaRespuesta.status).toBe(201);
+      expect(segundaRespuesta.body.ok).toBe(true);
+      expect(Documento.__store).toHaveLength(2);
+      expect(Documento.__store[1].items[0].cantidad).toBe(-4);
+      expect(segundaRespuesta.body.documento.items[0].cantidad).toBe(-4);
+      expect(payload.items[0].cantidad).toBe(4);
+      expect(Producserv.findByIdAndUpdate).toHaveBeenCalledTimes(2);
+      expect(Documento.__store.map((doc) => doc.items[0].cantidad)).toEqual([-4, -4]);
+      expect(Producserv.__store.get(producto._id).stkactual).toBe(12);
+    });
+  });
+});
+
+describe('PUT /documentos/:id', () => {
+  let token;
+
+  beforeAll(() => {
+    process.env.JWT_SECRET = 'test-secret';
+    token = jwt.sign({ _id: new mongoose.Types.ObjectId().toString(), role: 'ADMIN_ROLE' }, process.env.JWT_SECRET);
+  });
+
+  afterAll(() => {
+    delete process.env.JWT_SECRET;
+  });
+
+  beforeEach(() => {
+    Documento.__reset();
+    Proveedor.__reset();
+    Producserv.__reset();
+  });
+
+  test('mantiene las cantidades negativas al actualizar un Ajuste (–)', async () => {
+    const proveedor = crearProveedor();
+    const producto = crearProducto({ stkactual: 30 });
+
+    const documentoExistente = new Documento({
+      tipo: 'AJ',
+      prefijo: '0001',
+      fechaRemito: '2024-09-01',
+      proveedor: proveedor._id,
+      items: [
+        { cantidad: -5, producto: producto._id, codprod: producto.codprod },
+      ],
+      usuario: new mongoose.Types.ObjectId().toString(),
+      observaciones: 'Ajuste negativo previo',
+    });
+    await documentoExistente.save();
+
+    const updatePayload = {
+      items: [
+        { cantidad: 6, producto: producto._id, codprod: producto.codprod },
+      ],
+    };
+
+    const response = await request(app)
+      .put(`/documentos/${documentoExistente._id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(updatePayload);
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.documento.items).toHaveLength(1);
+    expect(response.body.documento.items[0].cantidad).toBe(-6);
+    expect(Documento.__store).toHaveLength(1);
+    expect(Documento.__store[0].items[0].cantidad).toBe(-6);
+    expect(updatePayload.items[0].cantidad).toBe(6);
+  });
+});

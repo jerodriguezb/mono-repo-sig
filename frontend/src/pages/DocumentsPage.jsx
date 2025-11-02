@@ -3,13 +3,18 @@ import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Divider,
   FormControl,
   FormHelperText,
   Grid,
   IconButton,
   InputLabel,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
+  OutlinedInput,
   Paper,
   Select,
   Snackbar,
@@ -42,6 +47,13 @@ const DOCUMENT_TYPE_OPTIONS = [
   { value: 'AJ-', label: 'Ajuste (-)' },
 ];
 
+const DOCUMENT_TYPE_COLOR_MAP = {
+  R: 'cyan.main',
+  NR: 'cyan.main',
+  'AJ+': 'cyan.main',
+  'AJ-': 'error.main',
+};
+
 const DEFAULT_DATE = new Date().toISOString().split('T')[0];
 
 const normalizePrefijo = (value) => {
@@ -71,8 +83,10 @@ export default function DocumentsPage() {
 
   const [providers, setProviders] = useState([]);
   const [providersLoading, setProvidersLoading] = useState(false);
-  const [products, setProducts] = useState([]);
-  const [productsLoading, setProductsLoading] = useState(false);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
+  const [productCache, setProductCache] = useState({});
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [documents, setDocuments] = useState([]);
@@ -88,26 +102,62 @@ export default function DocumentsPage() {
 
   const [nextSequence, setNextSequence] = useState(null);
   const [numeroSugerido, setNumeroSugerido] = useState('');
+  const [numeroSugeridoError, setNumeroSugeridoError] = useState('');
   const [ajusteOperacion, setAjusteOperacion] = useState('decrement');
 
-  const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: 1 });
+  const [itemDraft, setItemDraft] = useState({ productoId: '', cantidad: '1' });
+  const [itemDraftError, setItemDraftError] = useState('');
   const [editingIndex, setEditingIndex] = useState(-1);
   const [items, setItems] = useState([]);
 
   const [saving, setSaving] = useState(false);
   const [alert, setAlert] = useState({ open: false, severity: 'success', message: '' });
 
+  const selectedTypeLabel = useMemo(
+    () => DOCUMENT_TYPE_OPTIONS.find((option) => option.value === selectedType)?.label ?? '',
+    [selectedType],
+  );
   const baseType = useMemo(
     () => (selectedType.startsWith('AJ') ? 'AJ' : selectedType),
     [selectedType],
   );
   const previousBaseTypeRef = useRef(baseType);
+  const productSearchRequestIdRef = useRef(0);
+
+  const shouldShowTitleSuffix = useMemo(
+    () => Boolean(selectedTypeLabel) && (activeStep === 1 || activeStep === 2),
+    [activeStep, selectedTypeLabel],
+  );
+
+  const titleText = useMemo(
+    () => (shouldShowTitleSuffix ? `Gestión de documentos — ${selectedTypeLabel}` : 'Gestión de documentos'),
+    [selectedTypeLabel, shouldShowTitleSuffix],
+  );
+
+  const titleColor = useMemo(
+    () => (shouldShowTitleSuffix ? DOCUMENT_TYPE_COLOR_MAP[selectedType] : undefined),
+    [selectedType, shouldShowTitleSuffix],
+  );
+
+  const isNumeroSugeridoValid = useMemo(() => {
+    if (baseType !== 'R') return true;
+    if (!numeroSugerido) return false;
+    const numericValue = Number(numeroSugerido);
+    return Number.isSafeInteger(numericValue) && numericValue > 0 && !numeroSugeridoError;
+  }, [baseType, numeroSugerido, numeroSugeridoError]);
 
   const canProceedStep0 = Boolean(selectedType && selectedProvider);
-  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4);
+  const canProceedStep1 = Boolean(fechaRemito && prefijo && prefijo.length === 4 && isNumeroSugeridoValid);
   const canSubmit = items.length > 0 && canProceedStep1;
 
   const selectedUserFromStorage = useMemo(() => localStorage.getItem('id'), []);
+  const responsableDisplayName = useMemo(() => {
+    if (!usuarioResponsable) return 'Sin especificar';
+    const selectedUser = users.find((user) => user._id === usuarioResponsable);
+    if (!selectedUser) return 'Sin especificar';
+    const nombres = `${selectedUser.nombres ?? ''} ${selectedUser.apellidos ?? ''}`.trim();
+    return nombres || selectedUser.email || 'Sin especificar';
+  }, [usuarioResponsable, users]);
 
   const updateDataError = useCallback((key, message) => {
     setDataError((prev) => ({ ...prev, [key]: message }));
@@ -123,19 +173,6 @@ export default function DocumentsPage() {
       updateDataError('providers', parseApiError(error, 'No se pudieron cargar los proveedores'));
     } finally {
       setProvidersLoading(false);
-    }
-  }, [updateDataError]);
-
-  const fetchProducts = useCallback(async () => {
-    setProductsLoading(true);
-    try {
-      const { data } = await api.get('/producservs', { params: { limite: 100 } });
-      setProducts(data?.producservs ?? []);
-      updateDataError('products', '');
-    } catch (error) {
-      updateDataError('products', parseApiError(error, 'No se pudieron cargar los productos'));
-    } finally {
-      setProductsLoading(false);
     }
   }, [updateDataError]);
 
@@ -186,10 +223,61 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     fetchProviders();
-    fetchProducts();
     fetchUsers();
     fetchDocuments();
-  }, [fetchProviders, fetchProducts, fetchUsers, fetchDocuments]);
+  }, [fetchProviders, fetchUsers, fetchDocuments]);
+
+  useEffect(() => {
+    const trimmedTerm = productSearchTerm.trim();
+    const requestId = productSearchRequestIdRef.current + 1;
+    productSearchRequestIdRef.current = requestId;
+
+    if (trimmedTerm.length < 3) {
+      setProductSearchLoading(false);
+      setProductSearchResults([]);
+      updateDataError('products', '');
+      return;
+    }
+
+    setProductSearchLoading(true);
+    const handler = setTimeout(() => {
+      api
+        .get('/producservs/lookup', { params: { q: trimmedTerm, limit: 20 } })
+        .then(({ data }) => {
+          if (productSearchRequestIdRef.current !== requestId) return;
+
+          const results = Array.isArray(data?.producservs)
+            ? data.producservs.slice(0, 20)
+            : [];
+
+          setProductSearchResults(results);
+          setProductCache((prev) => {
+            const next = { ...prev };
+            results.forEach((product) => {
+              if (!product?._id) return;
+              const id = product._id;
+              next[id] = { ...(prev[id] ?? {}), ...product };
+            });
+            return next;
+          });
+          updateDataError('products', '');
+        })
+        .catch((error) => {
+          if (productSearchRequestIdRef.current !== requestId) return;
+          setProductSearchResults([]);
+          updateDataError('products', parseApiError(error, 'No se pudieron cargar los productos'));
+        })
+        .finally(() => {
+          if (productSearchRequestIdRef.current === requestId) {
+            setProductSearchLoading(false);
+          }
+        });
+    }, 350);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [productSearchTerm, updateDataError]);
 
   useEffect(() => {
     if (selectedUserFromStorage && users.length > 0 && !usuarioResponsable) {
@@ -211,7 +299,7 @@ export default function DocumentsPage() {
 
     if (baseType === 'AJ') {
       setAjusteOperacion(selectedType === 'AJ+' ? 'increment' : 'decrement');
-    } else if (baseType === 'NR') {
+    } else if (baseType === 'NR' || baseType === 'R') {
       setAjusteOperacion('increment');
     } else {
       setAjusteOperacion('decrement');
@@ -220,12 +308,17 @@ export default function DocumentsPage() {
     if (baseType === 'NR' || baseType === 'AJ') {
       const nextPrefijo = '0001';
       if (prefijo !== nextPrefijo) setPrefijo(nextPrefijo);
-      fetchNextSequenceForType(baseType, nextPrefijo).catch(() => {});
+      fetchNextSequenceForType(baseType, nextPrefijo)
+        .then(() => {
+          setNumeroSugeridoError('');
+        })
+        .catch(() => {});
     } else {
       setNextSequence(null);
       updateDataError('sequence', '');
       if (baseType !== 'R' || previousBaseType !== 'R') {
         setNumeroSugerido('');
+        setNumeroSugeridoError('');
       }
     }
 
@@ -239,13 +332,36 @@ export default function DocumentsPage() {
     }
   }, [prefijo, baseType, nextSequence]);
 
+  const ensureNumeroSugeridoValido = useCallback(() => {
+    if (baseType !== 'R') return true;
+    if (!numeroSugerido) {
+      setNumeroSugeridoError((prev) => prev || 'Ingresá un número de documento antes de continuar.');
+      return false;
+    }
+    const numericValue = Number(numeroSugerido);
+    if (!Number.isSafeInteger(numericValue) || numericValue <= 0) {
+      setNumeroSugeridoError('El número de documento debe ser un entero positivo.');
+      return false;
+    }
+    if (numeroSugeridoError) return false;
+    return true;
+  }, [baseType, numeroSugerido, numeroSugeridoError]);
+
   const handleNext = () => {
     if (activeStep === 0 && !canProceedStep0) {
       setAlert({ open: true, severity: 'warning', message: 'Seleccioná el tipo de documento y el proveedor para continuar.' });
       return;
     }
     if (activeStep === 1 && !canProceedStep1) {
-      setAlert({ open: true, severity: 'warning', message: 'Completá los datos del documento antes de avanzar.' });
+      const numeroValido = ensureNumeroSugeridoValido();
+      setAlert({
+        open: true,
+        severity: 'warning',
+        message:
+          baseType === 'R' && !numeroValido
+            ? 'Verificá el número de remito antes de avanzar.'
+            : 'Completá los datos del documento antes de avanzar.',
+      });
       return;
     }
     setActiveStep((prev) => Math.min(prev + 1, steps.length - 1));
@@ -256,8 +372,22 @@ export default function DocumentsPage() {
   };
 
   const handleNumeroSugeridoChange = (event) => {
-    if (baseType === 'R') {
-      setNumeroSugerido(event.target.value);
+    if (baseType !== 'R') return;
+    const rawValue = event.target.value ?? '';
+    const digitsOnly = rawValue.toString().replace(/\D/g, '');
+    const limitedDigits = digitsOnly.length > 8 ? digitsOnly.slice(-8) : digitsOnly;
+    if (!limitedDigits) {
+      setNumeroSugerido('');
+      setNumeroSugeridoError('');
+      return;
+    }
+    const parsed = Number(limitedDigits);
+    const normalized = padSequence(parsed);
+    setNumeroSugerido(normalized);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      setNumeroSugeridoError('El número de documento debe ser un entero positivo.');
+    } else {
+      setNumeroSugeridoError('');
     }
   };
 
@@ -266,14 +396,45 @@ export default function DocumentsPage() {
     setPrefijo(value);
   };
 
+  const handleProductSearchChange = (event) => {
+    setProductSearchTerm(event.target.value ?? '');
+  };
+
+  const handleSelectProductFromLookup = (product) => {
+    if (!product?._id) return;
+    const id = product._id;
+    setItemDraft((prev) => ({ ...prev, productoId: id }));
+    setProductCache((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...product } }));
+    setItemDraftError('');
+  };
+
   const handleItemDraftChange = (event) => {
     const { name, value } = event.target;
-    setItemDraft((prev) => ({ ...prev, [name]: name === 'cantidad' ? value : value }));
+    if (name === 'cantidad') {
+      if (value === '') {
+        setItemDraft((prev) => ({ ...prev, cantidad: '' }));
+        setItemDraftError('');
+        return;
+      }
+      if (!/^\d+$/.test(value)) {
+        return;
+      }
+      const numericValue = Number(value);
+      setItemDraft((prev) => ({ ...prev, cantidad: value }));
+      if (!Number.isInteger(numericValue) || numericValue <= 0) {
+        setItemDraftError('La cantidad debe ser un entero positivo.');
+      } else {
+        setItemDraftError('');
+      }
+      return;
+    }
+    setItemDraft((prev) => ({ ...prev, [name]: value }));
   };
 
   const resetItemDraft = () => {
-    setItemDraft({ productoId: '', cantidad: 1 });
+    setItemDraft({ productoId: '', cantidad: '1' });
     setEditingIndex(-1);
+    setItemDraftError('');
   };
 
   const handleAddOrUpdateItem = () => {
@@ -283,15 +444,22 @@ export default function DocumentsPage() {
       setAlert({ open: true, severity: 'warning', message: 'Seleccioná un producto para agregarlo al detalle.' });
       return;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setAlert({ open: true, severity: 'warning', message: 'La cantidad debe ser un número positivo.' });
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+      const message = 'La cantidad debe ser un entero positivo.';
+      setItemDraftError(message);
+      setAlert({ open: true, severity: 'warning', message });
       return;
     }
-    const product = products.find((prod) => prod._id === productId);
+    setItemDraftError('');
+    const product = productCache[productId] ?? productSearchResults.find((prod) => prod._id === productId);
     if (!product) {
       setAlert({ open: true, severity: 'error', message: 'El producto seleccionado no está disponible.' });
       return;
     }
+    setProductCache((prev) => ({
+      ...prev,
+      [productId]: { ...(prev[productId] ?? {}), ...product },
+    }));
     const draftItem = {
       productoId: productId,
       cantidad: quantity,
@@ -323,8 +491,18 @@ export default function DocumentsPage() {
 
   const handleEditItem = (index) => {
     const item = items[index];
-    setItemDraft({ productoId: item.productoId, cantidad: item.cantidad });
+    setItemDraft({ productoId: item.productoId, cantidad: String(item.cantidad ?? '') });
     setEditingIndex(index);
+    setItemDraftError('');
+    setProductCache((prev) => ({
+      ...prev,
+      [item.productoId]: {
+        ...(prev[item.productoId] ?? {}),
+        codprod: item.codprod,
+        descripcion: item.descripcion,
+        stkactual: item.stkactual,
+      },
+    }));
   };
 
   const handleRemoveItem = (index) => {
@@ -345,8 +523,11 @@ export default function DocumentsPage() {
     resetItemDraft();
     setNextSequence(null);
     setNumeroSugerido('');
+    setNumeroSugeridoError('');
     setAjusteOperacion('decrement');
     updateDataError('sequence', '');
+    setProductSearchTerm('');
+    setProductSearchResults([]);
   };
 
   const closeAlert = (_, reason) => {
@@ -355,6 +536,10 @@ export default function DocumentsPage() {
   };
 
   const handleSubmit = async () => {
+    if (baseType === 'R' && !ensureNumeroSugeridoValido()) {
+      setAlert({ open: true, severity: 'warning', message: 'Verificá el número de remito antes de guardar.' });
+      return;
+    }
     if (!canSubmit) {
       setAlert({ open: true, severity: 'warning', message: 'Revisá el formulario: faltan datos obligatorios.' });
       return;
@@ -382,6 +567,35 @@ export default function DocumentsPage() {
         codprod: item.codprod,
       })),
     };
+    if (baseType === 'AJ') {
+      payload.ajusteOperacion = ajusteOperacion === 'increment' ? 'increment' : 'decrement';
+      if (selectedType === 'AJ-') {
+        payload.ajusteTipo = 'AJ-';
+      }
+    }
+    const rawNumeroDocumento =
+      baseType === 'NR' && sequenceInfo?.numero ? sequenceInfo.numero : numeroSugerido;
+    const trimmedNumeroDocumento = rawNumeroDocumento?.toString().trim();
+    if ((baseType === 'R' || baseType === 'NR') && trimmedNumeroDocumento) {
+      payload.nroDocumento = trimmedNumeroDocumento;
+    }
+    if (selectedType === 'AJ+' || selectedType === 'AJ-') {
+      const trimmedNumeroSugerido =
+        numeroSugerido?.toString().trim() || sequenceInfo?.numero?.toString().trim() || '';
+      if (!trimmedNumeroSugerido) {
+        setAlert({
+          open: true,
+          severity: 'warning',
+          message: 'No se pudo determinar el número sugerido para el ajuste.',
+        });
+        return;
+      }
+      payload.nroSugerido = trimmedNumeroSugerido;
+    }
+    const responsableId = usuarioResponsable || selectedUserFromStorage || '';
+    if (responsableId) {
+      payload.usuarioResponsable = responsableId;
+    }
     const obs = observaciones.trim();
     if (obs) payload.observaciones = obs;
 
@@ -390,43 +604,62 @@ export default function DocumentsPage() {
       const { data } = await api.post('/documentos', payload);
       if (!data?.ok) throw new Error('La API no confirmó la creación del documento.');
 
-      const stockUpdates = [];
-      const stockErrors = [];
-      const sign = ajusteOperacion === 'increment' ? 1 : -1;
-      for (const item of items) {
-        const product = products.find((prod) => prod._id === item.productoId);
-        const currentStock = Number(product?.stkactual ?? item.stkactual ?? 0);
-        const newStock = Math.max(currentStock + sign * item.cantidad, 0);
-        try {
-          await api.put(`/producservs/${item.productoId}`, { stkactual: newStock });
-          stockUpdates.push({ id: item.productoId, stkactual: newStock });
-        } catch (error) {
-          stockErrors.push(`${item.codprod}: ${parseApiError(error, 'error al actualizar stock')}`);
-        }
-      }
+      const stockInfo = data?.stock ?? {};
+      const stockErrors = Array.isArray(stockInfo?.errors) ? stockInfo.errors : [];
+      const backendUpdates = Array.isArray(stockInfo?.updates) ? stockInfo.updates : [];
 
-      if (stockUpdates.length) {
-        setProducts((prevProducts) => prevProducts.map((prod) => {
-          const update = stockUpdates.find((item) => item.id === prod._id);
-          return update ? { ...prod, stkactual: update.stkactual } : prod;
-        }));
+      const updatesMap = new Map();
+      backendUpdates.forEach((update) => {
+        const key = update?.producto || update?.id || update?._id;
+        if (key) {
+          updatesMap.set(key.toString(), Number(update?.stkactual ?? 0));
+        }
+      });
+
+      items.forEach((item) => {
+        if (updatesMap.has(item.productoId)) return;
+        const product = productCache[item.productoId];
+        const currentStock = Number(product?.stkactual ?? item.stkactual ?? 0);
+        const adjustedCantidad = Number(item.cantidad ?? 0);
+        const newStock =
+          ajusteOperacion === 'increment'
+            ? currentStock + adjustedCantidad
+            : Math.max(currentStock - adjustedCantidad, 0);
+        updatesMap.set(item.productoId, newStock);
+      });
+
+      if (updatesMap.size > 0) {
+        setProductCache((prev) => {
+          const next = { ...prev };
+          updatesMap.forEach((value, key) => {
+            if (next[key]) {
+              next[key] = { ...next[key], stkactual: value };
+            }
+          });
+          return next;
+        });
+        setProductSearchResults((prev) =>
+          prev.map((prod) => (updatesMap.has(prod._id) ? { ...prod, stkactual: updatesMap.get(prod._id) } : prod)),
+        );
       }
 
       await fetchDocuments();
 
-      if (stockErrors.length > 0) {
+      const formattedStockErrors = stockErrors.map((errorItem) =>
+        typeof errorItem === 'string' ? errorItem : String(errorItem?.message ?? errorItem),
+      );
+
+      if (formattedStockErrors.length > 0) {
         setAlert({
           open: true,
           severity: 'warning',
-          message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${stockErrors.join(' | ')}`,
+          message: `Documento registrado pero algunas actualizaciones de stock fallaron: ${formattedStockErrors.join(' | ')}`,
         });
       } else {
-        const manualNumber = baseType === 'R' ? numeroSugerido.trim() : '';
-        const successMessage = sequenceInfo
-          ? `Documento ${sequenceInfo.numero} registrado correctamente.`
-          : manualNumber
-            ? `Documento ${manualNumber} registrado correctamente.`
-            : 'Documento registrado correctamente.';
+        const backendNumber = data?.documento?.NrodeDocumento?.toString().trim();
+        const successMessage = backendNumber
+          ? `Documento ${backendNumber} registrado correctamente.`
+          : 'Documento registrado correctamente.';
         setAlert({ open: true, severity: 'success', message: successMessage });
         resetForm();
       }
@@ -441,6 +674,13 @@ export default function DocumentsPage() {
     () => items.reduce((acc, item) => acc + Number(item.cantidad ?? 0), 0),
     [items],
   );
+
+  const selectedProduct = useMemo(
+    () => (itemDraft.productoId ? productCache[itemDraft.productoId] ?? null : null),
+    [itemDraft.productoId, productCache],
+  );
+
+  const showDocumentNumberFields = baseType === 'R';
 
   const renderStepContent = () => {
     switch (activeStep) {
@@ -513,7 +753,7 @@ export default function DocumentsPage() {
         return (
           <Paper sx={{ p: 3 }}>
             <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} md={showDocumentNumberFields ? 4 : 6}>
                 <TextField
                   label="Fecha"
                   type="date"
@@ -523,46 +763,40 @@ export default function DocumentsPage() {
                   InputLabelProps={{ shrink: true }}
                 />
               </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Prefijo"
-                  value={prefijo}
-                  onChange={handlePrefijoChange}
-                  fullWidth
-                  inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
-                  helperText={baseType === 'R' ? 'Editable para remitos.' : 'Asignado automáticamente.'}
-                  disabled={baseType !== 'R'}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  label="Número sugerido"
-                  value={numeroSugerido}
-                  onChange={handleNumeroSugeridoChange}
-                  fullWidth
-                  InputProps={{ readOnly: baseType !== 'R' }}
-                  helperText={dataError.sequence || 'Se consulta el backend antes de grabar.'}
-                />
-              </Grid>
+              {showDocumentNumberFields && (
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Prefijo"
+                    value={prefijo}
+                    onChange={handlePrefijoChange}
+                    fullWidth
+                    inputProps={{ inputMode: 'numeric', maxLength: 4, pattern: '[0-9]*' }}
+                    helperText="Editable para remitos."
+                  />
+                </Grid>
+              )}
+              {showDocumentNumberFields && (
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    label="Número sugerido"
+                    value={numeroSugerido}
+                    onChange={handleNumeroSugeridoChange}
+                    fullWidth
+                    inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
+                    error={Boolean(numeroSugeridoError)}
+                    helperText={numeroSugeridoError || 'Ingresá manualmente un número entero positivo (8 dígitos).'}
+                  />
+                </Grid>
+              )}
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
-                  <InputLabel id="responsable-label">Responsable</InputLabel>
-                  <Select
-                    labelId="responsable-label"
+                  <InputLabel htmlFor="responsable-input">Responsable</InputLabel>
+                  <OutlinedInput
+                    id="responsable-input"
                     label="Responsable"
-                    value={usuarioResponsable}
-                    onChange={(event) => setUsuarioResponsable(event.target.value)}
-                    disabled={usersLoading}
-                  >
-                    <MenuItem value="">
-                      Sin especificar
-                    </MenuItem>
-                    {users.map((user) => (
-                      <MenuItem key={user._id} value={user._id}>
-                        {`${user.nombres ?? ''} ${user.apellidos ?? ''}`.trim() || user.email}
-                      </MenuItem>
-                    ))}
-                  </Select>
+                    value={responsableDisplayName}
+                    inputProps={{ readOnly: true, 'aria-readonly': true }}
+                  />
                   {usersLoading && <FormHelperText>Cargando usuarios...</FormHelperText>}
                   {dataError.users && <FormHelperText error>{dataError.users}</FormHelperText>}
                   <FormHelperText>
@@ -589,28 +823,69 @@ export default function DocumentsPage() {
             <Stack spacing={3}>
               <Grid container spacing={2} alignItems="center">
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel id="producto-label">Producto</InputLabel>
-                    <Select
-                      labelId="producto-label"
-                      label="Producto"
-                      name="productoId"
-                      value={itemDraft.productoId}
-                      onChange={handleItemDraftChange}
-                      disabled={productsLoading}
-                    >
-                      <MenuItem value="" disabled>
-                        Seleccione un producto
-                      </MenuItem>
-                      {products.map((product) => (
-                        <MenuItem key={product._id} value={product._id}>
-                          {product.descripcion}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    {productsLoading && <FormHelperText>Cargando productos...</FormHelperText>}
+                  <Stack spacing={1}>
+                    <TextField
+                      label="Buscar producto"
+                      value={productSearchTerm}
+                      onChange={handleProductSearchChange}
+                      placeholder="Ingresá al menos 3 caracteres"
+                      fullWidth
+                      autoComplete="off"
+                    />
+                    {productSearchLoading && (
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <CircularProgress size={16} />
+                        <Typography variant="caption" color="text.secondary">
+                          Buscando productos...
+                        </Typography>
+                      </Stack>
+                    )}
                     {dataError.products && <FormHelperText error>{dataError.products}</FormHelperText>}
-                  </FormControl>
+                    {!dataError.products &&
+                      productSearchTerm.trim().length > 0 &&
+                      productSearchTerm.trim().length < 3 && (
+                        <FormHelperText>Escribí al menos 3 caracteres para buscar.</FormHelperText>
+                      )}
+                    {(productSearchTerm.trim().length >= 3 || productSearchResults.length > 0) && (
+                      <Paper variant="outlined" sx={{ maxHeight: 240, overflowY: 'auto' }}>
+                        {productSearchResults.length === 0 && !productSearchLoading ? (
+                          <Box sx={{ p: 2 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              No se encontraron productos para la búsqueda.
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <List dense disablePadding>
+                            {productSearchResults.slice(0, 20).map((product) => {
+                              const primaryLabel = product.codprod
+                                ? `${product.codprod} – ${product.descripcion}`
+                                : product.descripcion;
+                              return (
+                                <ListItemButton
+                                  key={product._id}
+                                  onClick={() => handleSelectProductFromLookup(product)}
+                                  selected={itemDraft.productoId === product._id}
+                                >
+                                  <ListItemText
+                                    primary={primaryLabel}
+                                    secondary={`Stock actual: ${Number(product.stkactual ?? 0)}`}
+                                  />
+                                </ListItemButton>
+                              );
+                            })}
+                          </List>
+                        )}
+                      </Paper>
+                    )}
+                    {selectedProduct && (
+                      <Typography variant="body2" color="text.secondary">
+                        Seleccionaste:{' '}
+                        {selectedProduct.codprod
+                          ? `${selectedProduct.codprod} – ${selectedProduct.descripcion}`
+                          : selectedProduct.descripcion}
+                      </Typography>
+                    )}
+                  </Stack>
                 </Grid>
                 <Grid item xs={12} md={3}>
                   <TextField
@@ -620,7 +895,9 @@ export default function DocumentsPage() {
                     value={itemDraft.cantidad}
                     onChange={handleItemDraftChange}
                     fullWidth
-                    inputProps={{ min: 0, step: '0.01' }}
+                    inputProps={{ min: 1, step: 1, inputMode: 'numeric', pattern: '[0-9]*' }}
+                    error={Boolean(itemDraftError)}
+                    helperText={itemDraftError}
                   />
                 </Grid>
                 <Grid item xs={12} md={3}>
@@ -697,7 +974,9 @@ export default function DocumentsPage() {
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Typography variant="h5">Gestión de documentos</Typography>
+        <Typography variant="h5" sx={titleColor ? { color: titleColor } : undefined}>
+          {titleText}
+        </Typography>
         <Button
           variant="text"
           color="secondary"
