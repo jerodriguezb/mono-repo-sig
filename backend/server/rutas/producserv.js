@@ -87,8 +87,22 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     'iva',
     'activo',
   ];
-  const sf = allowedSortFields.includes(sortField) ? sortField : 'descripcion';
-  const sortOpt = { [sf]: sortOrder === 'desc' ? -1 : 1 };
+  const sortOpt = {};
+  const appendSort = (field, direction) => {
+    if (!(field in sortOpt)) {
+      sortOpt[field] = direction;
+    }
+  };
+
+  if (allowedSortFields.includes(sortField)) {
+    appendSort(sortField, sortOrder === 'desc' ? -1 : 1);
+  }
+
+  [
+    ['tieneStockPositivo', -1],
+    ['stkactual', -1],
+    ['descripcion', 1],
+  ].forEach(([field, direction]) => appendSort(field, direction));
 
   const pipeline = [
     { $match: q },
@@ -111,9 +125,11 @@ router.get('/producservs', asyncHandler(async (req, res) => {
         marcaNombre: '$marca.marca',
         unidaddemedidaNombre: '$unidaddemedida.unidaddemedida',
         unidadNombre: '$unidaddemedida.unidaddemedida',
+        tieneStockPositivo: { $cond: [{ $gt: ['$stkactual', 0] }, 1, 0] },
       },
     },
     { $sort: sortOpt },
+    { $unset: 'tieneStockPositivo' },
     { $skip: toNumber(desde, 0) },
     { $limit: limit },
   ];
