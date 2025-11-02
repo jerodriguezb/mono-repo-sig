@@ -100,7 +100,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
 
   [
     ['tieneStockPositivo', -1],
-    ['stkactual', 1],
+    ['stkactual', -1],
     ['descripcion', 1],
   ].forEach(([field, direction]) => appendSort(field, direction));
 
