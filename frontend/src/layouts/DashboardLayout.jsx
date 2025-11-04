@@ -28,7 +28,6 @@ import Inventory2Icon from '@mui/icons-material/Inventory2';
 import SecurityIcon from '@mui/icons-material/Security';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
-import ListAltIcon from '@mui/icons-material/ListAlt';
 import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
@@ -37,23 +36,28 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { DASHBOARD_SCREENS } from '../constants/screens.js';
 
 /* ----------------─ Menú lateral ─---------------- */
-const navItems = [
-  { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
-  { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
-  { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
-  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
-  { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
+const iconByPath = {
+  '/clients': <GroupIcon />,
+  '/users': <PeopleAltIcon />,
+  '/products': <Inventory2Icon />, // 👈 NUEVO
+  '/documents': <DescriptionIcon />,
+  '/comandas': <ReceiptLongIcon />,
+  '/ordenes': <AssignmentTurnedInIcon />,
+  '/historial-comandas': <HistoryIcon />,
+  '/permissions': <SecurityIcon />,
+  '/distribucion': <DeliveryDiningIcon />,
+  '/logistics': <LocalShippingIcon />,
+  '/precios': <PriceChangeIcon />,
+};
 
-  { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
-
-  { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
-  { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
-  { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
-  { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
-  { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
-];
+const navItems = DASHBOARD_SCREENS.map(({ label, path }) => ({
+  label,
+  path,
+  icon: iconByPath[path],
+}));
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
