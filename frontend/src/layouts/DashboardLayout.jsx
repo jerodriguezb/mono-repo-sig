@@ -39,7 +39,7 @@ import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
 
 /* ----------------─ Menú lateral ─---------------- */
-const navItems = [
+export const dashboardNavItems = [
   { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
   { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
   { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
@@ -118,7 +118,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {dashboardNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')
