@@ -8,15 +8,11 @@
 
 const jwt = require('jsonwebtoken');
 const { promisify } = require('util');
+const { ROLES, ROLE_VALUES } = require('../constants/roles');
 
 // -----------------------------------------------------------------------------
 // Config & constantes ----------------------------------------------------------
 const JWT_SECRET   = process.env.JWT_SECRET || process.env.SEED;      // retro‑compat
-const ROLES = {
-  ADMIN  : 'ADMIN_ROLE',
-  CAMION : 'USER_CAM',
-  PREV   : 'USER_PREV',
-};
 
 // -----------------------------------------------------------------------------
 // Helpers de utilidad ----------------------------------------------------------
@@ -56,10 +52,10 @@ const checkRole = (...roles) => (req, res, next) =>
     : unauthorized(res, 'Permiso denegado', 403);
 
 // Middlewares específicos conservando nombres originales ----------------------
-const verificaAdmin_role      = checkRole(ROLES.ADMIN);
-const verificaCam_role        = checkRole(ROLES.CAMION);
-const verificaAdminCam_role   = checkRole(ROLES.ADMIN,  ROLES.CAMION);
-const verificaAdminPrev_role  = checkRole(ROLES.ADMIN,  ROLES.PREV);
+const verificaAdmin_role      = checkRole(ROLES.ADMIN, ROLES.SUPER);
+const verificaCam_role        = checkRole(ROLES.CAMION, ROLES.SUPER);
+const verificaAdminCam_role   = checkRole(ROLES.ADMIN, ROLES.CAMION, ROLES.SUPER);
+const verificaAdminPrev_role  = checkRole(ROLES.ADMIN, ROLES.PREV, ROLES.SUPER);
 
 // -----------------------------------------------------------------------------
 // Exportaciones ---------------------------------------------------------------
@@ -70,4 +66,5 @@ module.exports = {
   verificaAdminCam_role,
   verificaAdminPrev_role,
   ROLES,                     // opcional por si se quieren reutilizar
+  ROLE_VALUES,
 };
