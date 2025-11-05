@@ -6,6 +6,7 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const Producserv = require('./modelos/producserv');
+const Permission = require('./modelos/permissions');
 
 // Carga de variables de entorno, configuraciones globales, etc.
 require('./config/config');
@@ -32,6 +33,7 @@ async function startServer() {
 
     // Sincronizar índices con la base de datos
     await Producserv.syncIndexes();
+    await Permission.syncIndexes();
 
     // Levantar el servidor SÓLO después de una conexión exitosa a la BD
     app.listen(PORT, () => {
