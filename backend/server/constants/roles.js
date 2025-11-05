@@ -1,0 +1,20 @@
+const ROLES = {
+  SUPER: 'SUPER_ADMIN',
+  ADMIN: 'ADMIN_ROLE',
+  USER: 'USER_ROLE',
+  CAMION: 'USER_CAM',
+  PREV: 'USER_PREV',
+};
+
+const ROLE_VALUES = [
+  ROLES.SUPER,
+  ROLES.ADMIN,
+  ROLES.USER,
+  ROLES.CAMION,
+  ROLES.PREV,
+];
+
+module.exports = {
+  ROLES,
+  ROLE_VALUES,
+};
