@@ -37,23 +37,27 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { screens } from '../constants/screens.js';
 
 /* ----------------─ Menú lateral ─---------------- */
-const navItems = [
-  { label: 'Clientes', path: '/clients',   icon: <GroupIcon /> },
-  { label: 'Usuarios', path: '/users',     icon: <PeopleAltIcon /> },
-  { label: 'Productos', path: '/products',     icon: <Inventory2Icon /> }, // 👈 NUEVO
-  { label: 'Documentos', path: '/documents', icon: <DescriptionIcon /> },
-  { label: 'Comandas', path: '/comandas', icon: <ReceiptLongIcon /> },
+const iconMap = {
+  '/clients': <GroupIcon />,
+  '/users': <PeopleAltIcon />,
+  '/products': <Inventory2Icon />,
+  '/documents': <DescriptionIcon />,
+  '/comandas': <ReceiptLongIcon />,
+  '/ordenes': <AssignmentTurnedInIcon />,
+  '/historial-comandas': <HistoryIcon />,
+  '/permissions': <SecurityIcon />,
+  '/distribucion': <DeliveryDiningIcon />,
+  '/logistics': <LocalShippingIcon />,
+  '/precios': <PriceChangeIcon />,
+};
 
-  { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
-
-  { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
-  { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
-  { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
-  { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
-  { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
-];
+export const navItems = screens.map((screen) => ({
+  ...screen,
+  icon: iconMap[screen.path] ?? null,
+}));
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
