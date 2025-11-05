@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { postLogin } from "../api/rutaUsuarios"; // tu helper original
+import { setStoredUser } from "../utils/auth";
 // import fondoLogo from "../assets/logo.png"; // 🖼 asegurate de tener esta imagen en src/assets/
 
 const LoginForm = () => {
@@ -19,9 +20,10 @@ const LoginForm = () => {
 
   useEffect(() => {
     if (user.data.ok) {
+      const usuario = user.data.usuario;
       localStorage.setItem("token", user.data.token);
-      localStorage.setItem("id", user.data.usuario._id);
-      localStorage.setItem("usuario", JSON.stringify(user.data.usuario.nombres));
+      localStorage.setItem("id", usuario._id);
+      setStoredUser(usuario);
       setIsLoggedIn(true);
       navigate("/");
     }
