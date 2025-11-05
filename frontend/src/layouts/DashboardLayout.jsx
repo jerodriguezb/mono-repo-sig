@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -37,6 +37,7 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { getScreensForRole } from '../constants/permissions.js';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
@@ -59,6 +60,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [nombreUsuario, setNombreUsuario] = useState('');
+  const [userRole, setUserRole] = useState('');
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -69,7 +71,60 @@ export default function DashboardLayout({ themeName, setThemeName }) {
 
     const storedUser = localStorage.getItem('usuario');
     if (storedUser) setNombreUsuario(JSON.parse(storedUser));
+
+    let storedRole = localStorage.getItem('usuarioRole');
+
+    if (!storedRole && token) {
+      try {
+        const [, payload] = token.split('.');
+        if (payload && typeof atob === 'function') {
+          const decoded = JSON.parse(atob(payload));
+          if (decoded?.role) {
+            storedRole = decoded.role;
+            localStorage.setItem('usuarioRole', decoded.role);
+          }
+        }
+      } catch (_) {
+        storedRole = '';
+      }
+    }
+
+    if (storedRole) setUserRole(storedRole);
   }, [navigate]);
+
+  useEffect(() => {
+    const storedRole = localStorage.getItem('usuarioRole');
+    if (storedRole && storedRole !== userRole) setUserRole(storedRole);
+  }, [userRole]);
+
+  const allowedPaths = useMemo(() => {
+    if (!userRole) return navItems.map((item) => item.path);
+    return getScreensForRole(userRole);
+  }, [userRole]);
+
+  useEffect(() => {
+    if (!userRole) return;
+    if (!Array.isArray(allowedPaths) || allowedPaths.length === 0) return;
+
+    const isAllowed = allowedPaths.some((allowedPath) =>
+      pathname === allowedPath || pathname.startsWith(`${allowedPath}/`)
+    );
+
+    if (pathname === '/' || !isAllowed) {
+      navigate(allowedPaths[0], { replace: true });
+    }
+  }, [allowedPaths, navigate, pathname, userRole]);
+
+  const visibleNavItems = useMemo(() => {
+    if (!Array.isArray(allowedPaths)) return navItems;
+    if (!userRole) return navItems;
+    if (allowedPaths.length === 0) return [];
+
+    const allowedSet = new Set(allowedPaths);
+    return navItems.filter((item) => allowedSet.has(item.path));
+  }, [allowedPaths, userRole]);
+
+  const hasContentAccess = !userRole || (Array.isArray(allowedPaths) && allowedPaths.length > 0);
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
@@ -118,7 +173,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {visibleNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')
@@ -144,7 +199,27 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Box component="main" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <Toolbar />
         <Box sx={{ flexGrow: 1, p: 3 }}>
-          <Outlet />
+          {hasContentAccess ? (
+            <Outlet />
+          ) : (
+            <Box
+              sx={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                textAlign: 'center',
+                gap: 2,
+              }}
+            >
+              <SecurityIcon sx={{ fontSize: 48, color: 'text.secondary' }} />
+              <Typography variant="h5">No tenés pantallas habilitadas</Typography>
+              <Typography variant="body1" color="text.secondary">
+                Comunicate con un administrador para que te asigne los permisos correspondientes.
+              </Typography>
+            </Box>
+          )}
         </Box>
         <Footer />
       </Box>
