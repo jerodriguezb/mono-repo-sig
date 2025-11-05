@@ -21,7 +21,8 @@ const LoginForm = () => {
     if (user.data.ok) {
       localStorage.setItem("token", user.data.token);
       localStorage.setItem("id", user.data.usuario._id);
-      localStorage.setItem("usuario", JSON.stringify(user.data.usuario.nombres));
+      localStorage.setItem("usuario", JSON.stringify(user.data.usuario));
+      localStorage.setItem("nombreUsuario", user.data.usuario.nombres || "");
       setIsLoggedIn(true);
       navigate("/");
     }

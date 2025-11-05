@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -20,6 +20,7 @@ import {
   DialogContentText,
   DialogActions,
   Button,
+  Alert,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import GroupIcon from '@mui/icons-material/Group';
@@ -55,10 +56,29 @@ const navItems = [
   { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
 ];
 
+const allPaths = navItems.map((item) => item.path);
+
+const getAllowedPathsByRole = (role) => {
+  switch (role) {
+    case 'SUPER_ADMIN':
+      return allPaths;
+    case 'ADMIN_ROLE':
+      return allPaths.filter((path) => path !== '/permissions');
+    case 'USER_CAM':
+      return ['/distribucion'];
+    case 'USER_PREV':
+      return ['/comandas', '/clients'];
+    case 'USER_ROLE':
+      return [];
+    default:
+      return [];
+  }
+};
+
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [nombreUsuario, setNombreUsuario] = useState('');
+  const [usuario, setUsuario] = useState(null);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -68,8 +88,48 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     if (!token) navigate('/login');
 
     const storedUser = localStorage.getItem('usuario');
-    if (storedUser) setNombreUsuario(JSON.parse(storedUser));
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        setUsuario(parsed);
+      } catch (error) {
+        setUsuario({ nombres: storedUser });
+      }
+    } else {
+      const storedName = localStorage.getItem('nombreUsuario');
+      if (storedName) setUsuario({ nombres: storedName });
+    }
   }, [navigate]);
+
+  const allowedPaths = useMemo(() => getAllowedPathsByRole(usuario?.role), [usuario?.role]);
+  const visibleNavItems = useMemo(() => {
+    if (!usuario) return navItems;
+    if (allowedPaths.length === 0) return [];
+    return navItems.filter((item) => allowedPaths.includes(item.path));
+  }, [usuario, allowedPaths]);
+  const nombreUsuario = usuario?.nombres || localStorage.getItem('nombreUsuario') || '';
+
+  useEffect(() => {
+    if (!usuario) return;
+
+    if (allowedPaths.length === 0) {
+      if (pathname !== '/') navigate('/', { replace: true });
+      return;
+    }
+
+    const isRoot = pathname === '/';
+    if (isRoot) {
+      navigate(allowedPaths[0], { replace: true });
+      return;
+    }
+
+    const hasAccess = allowedPaths.some((allowedPath) => pathname.startsWith(allowedPath));
+    if (!hasAccess) {
+      navigate(allowedPaths[0], { replace: true });
+    }
+  }, [usuario, allowedPaths, pathname, navigate]);
+
+  const showNoAccess = usuario && allowedPaths.length === 0;
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
@@ -118,7 +178,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {visibleNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')
@@ -144,7 +204,13 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Box component="main" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <Toolbar />
         <Box sx={{ flexGrow: 1, p: 3 }}>
-          <Outlet />
+          {showNoAccess ? (
+            <Alert severity="warning">
+              Tu rol actualmente no posee accesos asignados. Contacta a un administrador para obtener permisos.
+            </Alert>
+          ) : (
+            <Outlet />
+          )}
         </Box>
         <Footer />
       </Box>
