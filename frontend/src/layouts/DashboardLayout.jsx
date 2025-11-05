@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -37,6 +37,8 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { getStoredUser } from '../utils/auth';
+import { isPathAllowed, getFallbackPath } from '../constants/rolePermissions';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
@@ -59,6 +61,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [nombreUsuario, setNombreUsuario] = useState('');
+  const [userRole, setUserRole] = useState(null);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -67,9 +70,31 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     const token = localStorage.getItem('token');
     if (!token) navigate('/login');
 
-    const storedUser = localStorage.getItem('usuario');
-    if (storedUser) setNombreUsuario(JSON.parse(storedUser));
+    const storedUser = getStoredUser();
+    if (storedUser) {
+      setNombreUsuario(storedUser.nombres ?? '');
+      setUserRole(storedUser.role ?? 'USER_ROLE');
+    } else {
+      setNombreUsuario('');
+      setUserRole('USER_ROLE');
+    }
   }, [navigate]);
+
+  useEffect(() => {
+    if (!userRole) return;
+
+    const fallback = getFallbackPath(userRole);
+    const allowed = isPathAllowed(userRole, pathname);
+
+    if ((pathname === '/' || !allowed) && fallback && pathname !== fallback) {
+      navigate(fallback, { replace: true });
+    }
+  }, [userRole, pathname, navigate]);
+
+  const filteredNavItems = useMemo(() => {
+    if (!userRole) return [];
+    return navItems.filter(({ path }) => isPathAllowed(userRole, path));
+  }, [userRole]);
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
@@ -118,7 +143,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {filteredNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')

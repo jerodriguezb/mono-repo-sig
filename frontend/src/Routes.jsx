@@ -11,6 +11,9 @@ import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
 import DistribucionPage from './pages/DistribucionPage.jsx';
+import PermissionsPage from './pages/PermissionsPage.jsx';
+import NoAccessPage from './pages/NoAccessPage.jsx';
+import RoleGuard from './components/RoleGuard.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -24,16 +27,87 @@ export default function AppRoutes({ themeName, setThemeName }) {
           </PrivateRoute>
         }
       >
-        <Route path="clients" element={<ClientsPage />} />
-        <Route path="/products" element={<ProductsPage />} />
-        <Route path="/documents" element={<DocumentsPage />} />
-        <Route path="comandas" element={<ComandasPage />} />
-        <Route path="/ordenes" element={<OrdersPage />} />
-        <Route path="/historial-comandas" element={<HistorialComandas />} />
-        <Route path="/distribucion" element={<DistribucionPage />} />
-        <Route path="/logistics" element={<LogisticsPage />} />
-        <Route path="/precios" element={<PricesPage />} />
-        {/* Otras rutas aquí */}
+        <Route
+          path="clients"
+          element={(
+            <RoleGuard requiredPath="/clients">
+              <ClientsPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/products"
+          element={(
+            <RoleGuard requiredPath="/products">
+              <ProductsPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/documents"
+          element={(
+            <RoleGuard requiredPath="/documents">
+              <DocumentsPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="comandas"
+          element={(
+            <RoleGuard requiredPath="/comandas">
+              <ComandasPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/ordenes"
+          element={(
+            <RoleGuard requiredPath="/ordenes">
+              <OrdersPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/historial-comandas"
+          element={(
+            <RoleGuard requiredPath="/historial-comandas">
+              <HistorialComandas />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/permissions"
+          element={(
+            <RoleGuard requiredPath="/permissions">
+              <PermissionsPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/distribucion"
+          element={(
+            <RoleGuard requiredPath="/distribucion">
+              <DistribucionPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/logistics"
+          element={(
+            <RoleGuard requiredPath="/logistics">
+              <LogisticsPage />
+            </RoleGuard>
+          )}
+        />
+        <Route
+          path="/precios"
+          element={(
+            <RoleGuard requiredPath="/precios">
+              <PricesPage />
+            </RoleGuard>
+          )}
+        />
+        <Route path="/no-access" element={<NoAccessPage />} />
       </Route>
     </Routes>
   );
