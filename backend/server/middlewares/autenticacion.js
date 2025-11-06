@@ -13,9 +13,11 @@ const { promisify } = require('util');
 // Config & constantes ----------------------------------------------------------
 const JWT_SECRET   = process.env.JWT_SECRET || process.env.SEED;      // retro‑compat
 const ROLES = {
-  ADMIN  : 'ADMIN_ROLE',
-  CAMION : 'USER_CAM',
-  PREV   : 'USER_PREV',
+  SUPER_ADMIN : 'SUPER_ADMIN',
+  ADMIN       : 'ADMIN_ROLE',
+  CAMION      : 'USER_CAM',
+  PREV        : 'USER_PREV',
+  USER        : 'USER_ROLE',
 };
 
 // -----------------------------------------------------------------------------
@@ -50,10 +52,11 @@ const verificaToken = async (req, res, next) => {
 // -----------------------------------------------------------------------------
 // Middleware genérico de roles -------------------------------------------------
 /** Uso: `checkRole(ROLES.ADMIN)`, `checkRole(ROLES.ADMIN, ROLES.CAMION)` … */
-const checkRole = (...roles) => (req, res, next) =>
-  roles.includes(req.usuario?.role)
-    ? next()
-    : unauthorized(res, 'Permiso denegado', 403);
+const checkRole = (...roles) => (req, res, next) => {
+  const role = req.usuario?.role;
+  if (role === ROLES.SUPER_ADMIN || roles.includes(role)) return next();
+  return unauthorized(res, 'Permiso denegado', 403);
+};
 
 // Middlewares específicos conservando nombres originales ----------------------
 const verificaAdmin_role      = checkRole(ROLES.ADMIN);
