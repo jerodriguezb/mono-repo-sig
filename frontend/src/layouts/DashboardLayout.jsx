@@ -38,6 +38,7 @@ import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { fetchPermissions } from '../api/permissions';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
@@ -56,29 +57,32 @@ const navItems = [
   { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
 ];
 
-const allPaths = navItems.map((item) => item.path);
-
-const getAllowedPathsByRole = (role) => {
-  switch (role) {
-    case 'SUPER_ADMIN':
-      return allPaths;
-    case 'ADMIN_ROLE':
-      return allPaths.filter((path) => path !== '/permissions');
-    case 'USER_CAM':
-      return ['/distribucion'];
-    case 'USER_PREV':
-      return ['/comandas', '/clients'];
-    case 'USER_ROLE':
-      return [];
-    default:
-      return [];
-  }
+const defaultRolePermissions = {
+  SUPER_ADMIN: navItems.map((item) => item.path),
+  ADMIN_ROLE: navItems.filter((item) => item.path !== '/permissions').map((item) => item.path),
+  USER_ROLE: [],
+  USER_CAM: ['/distribucion'],
+  USER_PREV: ['/comandas', '/clients'],
 };
+
+const clonePermissions = (permissions = {}) =>
+  Object.fromEntries(
+    Object.entries(permissions).map(([role, screens]) => [role, Array.isArray(screens) ? [...screens] : []]),
+  );
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [usuario, setUsuario] = useState(null);
+  const [rolePermissions, setRolePermissions] = useState(() => {
+    const stored = localStorage.getItem('rolePermissions');
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored);
+    } catch (error) {
+      return null;
+    }
+  });
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -101,10 +105,58 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     }
   }, [navigate]);
 
-  const allowedPaths = useMemo(() => getAllowedPathsByRole(usuario?.role), [usuario?.role]);
+  useEffect(() => {
+    const handlePermissionsUpdated = (event) => {
+      const detail = event?.detail;
+      if (detail && typeof detail === 'object') {
+        setRolePermissions(clonePermissions(detail));
+      }
+    };
+
+    window.addEventListener('role-permissions-updated', handlePermissionsUpdated);
+    return () => window.removeEventListener('role-permissions-updated', handlePermissionsUpdated);
+  }, []);
+
+  useEffect(() => {
+    if (!usuario?.role) return;
+    let active = true;
+
+    const loadPermissions = async () => {
+      try {
+        const data = await fetchPermissions();
+        if (!active || !data?.permissions) return;
+        setRolePermissions(clonePermissions(data.permissions));
+        localStorage.setItem('rolePermissions', JSON.stringify(data.permissions));
+      } catch (_) {
+        if (!active) return;
+        setRolePermissions((prev) => {
+          if (prev) return prev;
+          const fallback = clonePermissions(defaultRolePermissions);
+          localStorage.setItem('rolePermissions', JSON.stringify(fallback));
+          return fallback;
+        });
+      }
+    };
+
+    loadPermissions();
+    return () => {
+      active = false;
+    };
+  }, [usuario?.role]);
+
+  const allowedPaths = useMemo(() => {
+    if (!usuario?.role) return [];
+    if (rolePermissions && Object.prototype.hasOwnProperty.call(rolePermissions, usuario.role)) {
+      const paths = rolePermissions[usuario.role];
+      return Array.isArray(paths) ? paths : [];
+    }
+    const fallback = defaultRolePermissions[usuario.role];
+    return Array.isArray(fallback) ? fallback : [];
+  }, [usuario?.role, rolePermissions]);
+
   const visibleNavItems = useMemo(() => {
     if (!usuario) return navItems;
-    if (allowedPaths.length === 0) return [];
+    if (!allowedPaths || allowedPaths.length === 0) return [];
     return navItems.filter((item) => allowedPaths.includes(item.path));
   }, [usuario, allowedPaths]);
   const nombreUsuario = usuario?.nombres || localStorage.getItem('nombreUsuario') || '';
