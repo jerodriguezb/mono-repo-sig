@@ -54,14 +54,32 @@ const sanitizeScreens = (screens = []) => {
   return Array.from(unique);
 };
 
+const ROLES_WITH_MANDATORY_DEFAULTS = new Set(['SUPER_ADMIN', 'ADMIN_ROLE']);
+
+const applyRoleDefaults = (role, screens) => {
+  const sanitized = sanitizeScreens(screens);
+  if (!ROLES_WITH_MANDATORY_DEFAULTS.has(role)) {
+    return sanitized;
+  }
+
+  const defaults = DEFAULT_PERMISSIONS[role] || [];
+  if (!defaults.length) return sanitized;
+
+  const merged = new Set(defaults);
+  sanitized.forEach((screen) => merged.add(screen));
+  return Array.from(merged);
+};
+
 const mapDocsToMatrix = (docs = []) => {
   const matrix = {};
   docs.forEach(({ role, screens }) => {
-    if (role) matrix[role] = sanitizeScreens(screens);
+    if (role) matrix[role] = applyRoleDefaults(role, screens);
   });
 
   KNOWN_ROLES.forEach((role) => {
-    if (!matrix[role]) matrix[role] = [...(DEFAULT_PERMISSIONS[role] || [])];
+    if (!matrix[role]) {
+      matrix[role] = applyRoleDefaults(role, DEFAULT_PERMISSIONS[role] || []);
+    }
   });
 
   return matrix;

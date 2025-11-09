@@ -30,6 +30,7 @@ const FALLBACK_SCREENS = [
   { label: 'Permisos', path: '/permissions' },
   { label: 'Distribución', path: '/distribucion' },
   { label: 'Logística', path: '/logistics' },
+  { label: 'Mov Auditoría', path: '/mov-auditoria' },
   { label: 'Precios', path: '/precios' },
 ];
 
