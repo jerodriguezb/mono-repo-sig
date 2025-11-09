@@ -45,6 +45,9 @@ let stockSchema = new Schema({
 
 });
 
+stockSchema.index({ activo: 1, fecha: -1, codprod: 1 });
+stockSchema.index({ activo: 1, movimiento: 1 });
+
 stockSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
