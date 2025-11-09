@@ -24,4 +24,8 @@ rubroSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
 
+// Índices
+rubroSchema.index({ codrubro: 1 }, { unique: true });
+rubroSchema.index({ activo: 1, rubro: 1 });
+
 module.exports = mongoose.model("Rubro", rubroSchema);

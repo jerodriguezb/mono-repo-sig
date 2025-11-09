@@ -29,4 +29,8 @@ marcaSchema.plugin(uniqueValidator, {
   message: "{PATH} debe ser único",
 });
 
+// Índices
+marcaSchema.index({ codmarca: 1 }, { unique: true });
+marcaSchema.index({ activo: 1, marca: 1 });
+
 module.exports = mongoose.model("Marca", marcaSchema);

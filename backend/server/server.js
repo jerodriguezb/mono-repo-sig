@@ -6,6 +6,8 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const Producserv = require('./modelos/producserv');
+const Rubro = require('./modelos/rubro');
+const Marca = require('./modelos/marca');
 
 // Carga de variables de entorno, configuraciones globales, etc.
 require('./config/config');
@@ -31,7 +33,11 @@ async function startServer() {
     console.log('✅ Base de datos conectada:', URLDB);
 
     // Sincronizar índices con la base de datos
-    await Producserv.syncIndexes();
+    await Promise.all([
+      Producserv.syncIndexes(),
+      Rubro.syncIndexes(),
+      Marca.syncIndexes(),
+    ]);
 
     // Levantar el servidor SÓLO después de una conexión exitosa a la BD
     app.listen(PORT, () => {
