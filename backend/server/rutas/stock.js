@@ -22,6 +22,11 @@ const sanitizeLimit = (value, fallback = 500, max = 1000) => {
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
 };
+const sanitizeOffset = (value) => {
+  const parsed = Number.parseInt(value ?? 0, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+};
 const STOCK_LIST_INDEX = { activo: 1, fecha: -1, codprod: 1 };
 
 const encodeCursor = (doc) => {
@@ -64,11 +69,37 @@ const stockPopulate = [
   { path: 'usuario', select: 'nombres apellidos role' },
 ];
 
+const parseObjectId = (value) => {
+  if (!value) return null;
+  if (value instanceof ObjectId) return value;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  if (!ObjectId.isValid(trimmed)) return undefined;
+  return new ObjectId(trimmed);
+};
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date;
+};
+
 // -----------------------------------------------------------------------------
 // 1. LISTAR MOVIMIENTOS DE STOCK ------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/stocks', asyncHandler(async (req, res) => {
-  const { limite, cursor: cursorRaw } = req.query;
+  const {
+    limite,
+    cursor: cursorRaw,
+    desde: desdeRaw,
+    producto,
+    movimiento,
+    usuario,
+    nrodecomanda,
+    fechaDesde,
+    fechaHasta,
+  } = req.query;
   const limit = sanitizeLimit(limite);
   const cursor = decodeCursor(cursorRaw);
 
@@ -77,32 +108,97 @@ router.get('/stocks', asyncHandler(async (req, res) => {
   }
 
   const baseQuery = { activo: true };
-  const mongoQuery = cursor ? { ...baseQuery, ...buildCursorQuery(cursor) } : baseQuery;
+
+  const productId = parseObjectId(producto);
+  if (productId === undefined) {
+    return res.status(400).json({ ok: false, err: { message: 'Producto inválido' } });
+  }
+  if (productId) baseQuery.codprod = productId;
+
+  const movimientoId = parseObjectId(movimiento);
+  if (movimientoId === undefined) {
+    return res.status(400).json({ ok: false, err: { message: 'Tipo de movimiento inválido' } });
+  }
+  if (movimientoId) baseQuery.movimiento = movimientoId;
+
+  const usuarioId = parseObjectId(usuario);
+  if (usuarioId === undefined) {
+    return res.status(400).json({ ok: false, err: { message: 'Usuario inválido' } });
+  }
+  if (usuarioId) baseQuery.usuario = usuarioId;
+
+  if (nrodecomanda !== undefined && nrodecomanda !== null && nrodecomanda !== '') {
+    const parsedOrder = Number.parseInt(nrodecomanda, 10);
+    if (!Number.isFinite(parsedOrder)) {
+      return res.status(400).json({ ok: false, err: { message: 'Número de comanda inválido' } });
+    }
+    baseQuery.nrodecomanda = parsedOrder;
+  }
+
+  const fromDate = parseDate(fechaDesde);
+  if (fromDate === undefined) {
+    return res.status(400).json({ ok: false, err: { message: 'Fecha desde inválida' } });
+  }
+  const toDate = parseDate(fechaHasta);
+  if (toDate === undefined) {
+    return res.status(400).json({ ok: false, err: { message: 'Fecha hasta inválida' } });
+  }
+
+  if (fromDate || toDate) {
+    const fechaQuery = {};
+    if (fromDate) {
+      fromDate.setHours(0, 0, 0, 0);
+      fechaQuery.$gte = fromDate;
+    }
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+      if (fromDate && toDate < fromDate) {
+        return res.status(400).json({ ok: false, err: { message: 'El rango de fechas es inválido' } });
+      }
+      fechaQuery.$lte = toDate;
+    }
+    baseQuery.fecha = fechaQuery;
+  }
+
+  const offset = sanitizeOffset(desdeRaw);
   const sort = { fecha: -1, _id: -1 };
 
-  let queryBuilder = Stock.find(mongoQuery)
-    .sort(sort)
-    .limit(limit + 1)
-    .populate(stockPopulate)
-    .lean();
-
-  if (process.env.NODE_ENV === 'staging') {
-    queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
-  }
-
-  const docs = await queryBuilder.exec();
-  const hasMore = docs.length > limit;
-  const stocks = hasMore ? docs.slice(0, limit) : docs;
-  let nextCursor = null;
-
-  if (hasMore && stocks.length) {
-    const lastDoc = stocks[stocks.length - 1];
-    nextCursor = encodeCursor(lastDoc);
-  }
+  const applyCommonOptions = (query) => {
+    let builder = query.sort(sort).populate(stockPopulate).lean();
+    if (process.env.NODE_ENV === 'staging') {
+      builder = builder.hint(STOCK_LIST_INDEX);
+    }
+    return builder;
+  };
 
   const cantidad = await Stock.countDocuments(baseQuery);
+  let stocks = [];
+  let hasMore = false;
+  let nextCursor = null;
 
-  res.json({ ok: true, stocks, cantidad, hasMore, nextCursor, limite: limit });
+  if (cursor) {
+    const mongoQuery = { ...baseQuery, ...buildCursorQuery(cursor) };
+    const docs = await applyCommonOptions(Stock.find(mongoQuery).limit(limit + 1)).exec();
+    hasMore = docs.length > limit;
+    stocks = hasMore ? docs.slice(0, limit) : docs;
+    if (hasMore && stocks.length) {
+      nextCursor = encodeCursor(stocks[stocks.length - 1]);
+    }
+  } else {
+    const docs = await applyCommonOptions(Stock.find(baseQuery).skip(offset).limit(limit)).exec();
+    stocks = docs;
+    hasMore = offset + stocks.length < cantidad;
+  }
+
+  res.json({
+    ok: true,
+    stocks,
+    cantidad,
+    hasMore,
+    nextCursor,
+    limite: limit,
+    ...(cursor ? {} : { desde: offset }),
+  });
 }));
 
 // -----------------------------------------------------------------------------
