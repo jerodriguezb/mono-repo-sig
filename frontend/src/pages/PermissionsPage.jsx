@@ -59,7 +59,7 @@ const DEFAULT_MATRIX = {
 const broadcastPermissionsUpdate = (permissions) => {
   try {
     window.dispatchEvent(new CustomEvent('role-permissions-updated', { detail: permissions }));
-  } catch (error) {
+  } catch {
     // Ignora si el ambiente no soporta CustomEvent (SSR, tests)
   }
 };
@@ -93,7 +93,7 @@ export default function PermissionsPage() {
 
     try {
       return JSON.parse(storedUser);
-    } catch (error) {
+    } catch {
       return { nombres: storedUser };
     }
   }, []);
@@ -124,7 +124,7 @@ export default function PermissionsPage() {
         setScreens(availableScreens);
         localStorage.setItem('rolePermissions', JSON.stringify(permissions));
         broadcastPermissionsUpdate(permissions);
-      } catch (err) {
+      } catch {
         if (!active) return;
         setError('No se pudieron obtener los permisos actuales. Se muestran los valores por defecto.');
         const fallback = cloneMatrix(DEFAULT_MATRIX);

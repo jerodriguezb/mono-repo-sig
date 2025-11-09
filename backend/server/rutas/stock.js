@@ -64,21 +64,136 @@ const stockPopulate = [
   { path: 'usuario', select: 'nombres apellidos role' },
 ];
 
+const parseObjectId = (value) => {
+  if (!value) return null;
+  const trimmed = value.toString().trim();
+  if (!trimmed) return null;
+  if (!ObjectId.isValid(trimmed)) return undefined;
+  return new ObjectId(trimmed);
+};
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed;
+};
+
 // -----------------------------------------------------------------------------
 // 1. LISTAR MOVIMIENTOS DE STOCK ------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/stocks', asyncHandler(async (req, res) => {
-  const { limite, cursor: cursorRaw } = req.query;
+  const {
+    limite,
+    cursor: cursorRaw,
+    desde: desdeRaw,
+    producto,
+    movimiento,
+    usuario,
+    nrodecomanda,
+    fechaDesde,
+    fechaHasta,
+  } = req.query;
+
   const limit = sanitizeLimit(limite);
   const cursor = decodeCursor(cursorRaw);
+  const offset = Number.parseInt(desdeRaw ?? '', 10);
+  const useOffsetPagination = Number.isFinite(offset) && offset >= 0;
 
-  if (cursorRaw && !cursor) {
+  if (!useOffsetPagination && cursorRaw && !cursor) {
     return res.status(400).json({ ok: false, err: { message: 'Cursor inválido' } });
   }
 
-  const baseQuery = { activo: true };
-  const mongoQuery = cursor ? { ...baseQuery, ...buildCursorQuery(cursor) } : baseQuery;
+  const filterQuery = { activo: true };
+
+  if (producto) {
+    const productId = parseObjectId(producto);
+    if (productId === undefined) {
+      return res.status(400).json({ ok: false, err: { message: 'ID de producto inválido' } });
+    }
+    if (productId) filterQuery.codprod = productId;
+  }
+
+  if (movimiento) {
+    const movimientoId = parseObjectId(movimiento);
+    if (movimientoId === undefined) {
+      return res.status(400).json({ ok: false, err: { message: 'ID de movimiento inválido' } });
+    }
+    if (movimientoId) filterQuery.movimiento = movimientoId;
+  }
+
+  if (usuario) {
+    const usuarioId = parseObjectId(usuario);
+    if (usuarioId === undefined) {
+      return res.status(400).json({ ok: false, err: { message: 'ID de usuario inválido' } });
+    }
+    if (usuarioId) filterQuery.usuario = usuarioId;
+  }
+
+  if (nrodecomanda) {
+    const parsedComanda = Number.parseInt(nrodecomanda, 10);
+    if (!Number.isFinite(parsedComanda)) {
+      return res.status(400).json({ ok: false, err: { message: 'Número de comanda inválido' } });
+    }
+    filterQuery.nrodecomanda = parsedComanda;
+  }
+
+  if (fechaDesde || fechaHasta) {
+    const start = parseDate(fechaDesde);
+    const end = parseDate(fechaHasta);
+
+    if (start === undefined || end === undefined) {
+      return res.status(400).json({ ok: false, err: { message: 'Rango de fechas inválido' } });
+    }
+
+    const range = {};
+
+    if (start) {
+      const normalizedStart = new Date(start);
+      normalizedStart.setHours(0, 0, 0, 0);
+      range.$gte = normalizedStart;
+    }
+
+    if (end) {
+      const normalizedEnd = new Date(end);
+      normalizedEnd.setHours(23, 59, 59, 999);
+      range.$lte = normalizedEnd;
+    }
+
+    if (Object.keys(range).length > 0) {
+      filterQuery.fecha = range;
+    }
+  }
+
   const sort = { fecha: -1, _id: -1 };
+  const cantidad = await Stock.countDocuments(filterQuery);
+
+  if (useOffsetPagination) {
+    let queryBuilder = Stock.find(filterQuery)
+      .sort(sort)
+      .skip(offset)
+      .limit(limit + 1)
+      .populate(stockPopulate)
+      .lean();
+
+    if (process.env.NODE_ENV === 'staging') {
+      queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
+    }
+
+    const docs = await queryBuilder.exec();
+    const hasMore = docs.length > limit;
+    const stocks = hasMore ? docs.slice(0, limit) : docs;
+    let nextCursor = null;
+
+    if (hasMore && stocks.length) {
+      const lastDoc = stocks[stocks.length - 1];
+      nextCursor = encodeCursor(lastDoc);
+    }
+
+    return res.json({ ok: true, stocks, cantidad, hasMore, nextCursor, limite: limit, desde: offset });
+  }
+
+  const mongoQuery = cursor ? { ...filterQuery, ...buildCursorQuery(cursor) } : filterQuery;
 
   let queryBuilder = Stock.find(mongoQuery)
     .sort(sort)
@@ -99,8 +214,6 @@ router.get('/stocks', asyncHandler(async (req, res) => {
     const lastDoc = stocks[stocks.length - 1];
     nextCursor = encodeCursor(lastDoc);
   }
-
-  const cantidad = await Stock.countDocuments(baseQuery);
 
   res.json({ ok: true, stocks, cantidad, hasMore, nextCursor, limite: limit });
 }));
