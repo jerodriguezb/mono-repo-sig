@@ -15,6 +15,7 @@ const AVAILABLE_SCREENS = [
   { label: 'Comandas', path: '/comandas' },
   { label: 'Órdenes', path: '/ordenes' },
   { label: 'Historial de Comandas', path: '/historial-comandas' },
+  { label: 'Mov Auditoría', path: '/mov-auditoria' },
   { label: 'Permisos', path: '/permissions' },
   { label: 'Distribución', path: '/distribucion' },
   { label: 'Logística', path: '/logistics' },
@@ -56,7 +57,10 @@ const sanitizeScreens = (screens = []) => {
 const mapDocsToMatrix = (docs = []) => {
   const matrix = {};
   docs.forEach(({ role, screens }) => {
-    if (role) matrix[role] = sanitizeScreens(screens);
+    if (!role) return;
+    const sanitized = sanitizeScreens(screens);
+    const defaults = DEFAULT_PERMISSIONS[role] || [];
+    matrix[role] = Array.from(new Set([...sanitized, ...defaults]));
   });
 
   KNOWN_ROLES.forEach((role) => {

@@ -68,41 +68,125 @@ const stockPopulate = [
 // 1. LISTAR MOVIMIENTOS DE STOCK ------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/stocks', asyncHandler(async (req, res) => {
-  const { limite, cursor: cursorRaw } = req.query;
+  const {
+    limite,
+    cursor: cursorRaw,
+    desde,
+    offset,
+    producto,
+    movimiento,
+    usuario,
+    nrodecomanda,
+    fechaDesde,
+    fechaHasta,
+  } = req.query;
+
   const limit = sanitizeLimit(limite);
   const cursor = decodeCursor(cursorRaw);
+  const offsetRaw = desde ?? offset;
+  const offsetValue = Number.parseInt(offsetRaw ?? 0, 10);
+  const useOffsetPagination = Number.isFinite(offsetValue) && offsetValue >= 0 && offsetRaw !== undefined;
 
-  if (cursorRaw && !cursor) {
+  if (cursorRaw && !cursor && !useOffsetPagination) {
     return res.status(400).json({ ok: false, err: { message: 'Cursor inválido' } });
   }
 
   const baseQuery = { activo: true };
-  const mongoQuery = cursor ? { ...baseQuery, ...buildCursorQuery(cursor) } : baseQuery;
+  const filters = {};
+
+  const isValidObjectId = (value) => typeof value === 'string' && ObjectId.isValid(value);
+  const parseDate = (value, endOfDay = false) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+      if (endOfDay) date.setHours(23, 59, 59, 999);
+      else date.setHours(0, 0, 0, 0);
+    }
+    return date;
+  };
+
+  if (isValidObjectId(producto)) {
+    filters.codprod = new ObjectId(producto);
+  }
+
+  if (isValidObjectId(movimiento)) {
+    filters.movimiento = new ObjectId(movimiento);
+  }
+
+  if (isValidObjectId(usuario)) {
+    filters.usuario = new ObjectId(usuario);
+  }
+
+  if (nrodecomanda !== undefined) {
+    const parsedComanda = Number.parseInt(nrodecomanda, 10);
+    if (Number.isFinite(parsedComanda)) {
+      filters.nrodecomanda = parsedComanda;
+    }
+  }
+
+  const fechaFiltro = {};
+  const fechaInicio = parseDate(fechaDesde, false);
+  const fechaFin = parseDate(fechaHasta, true);
+
+  if (fechaInicio) fechaFiltro.$gte = fechaInicio;
+  if (fechaFin) fechaFiltro.$lte = fechaFin;
+  if (Object.keys(fechaFiltro).length > 0) {
+    filters.fecha = fechaFiltro;
+  }
+
+  const countQuery = { ...baseQuery, ...filters };
   const sort = { fecha: -1, _id: -1 };
 
-  let queryBuilder = Stock.find(mongoQuery)
-    .sort(sort)
-    .limit(limit + 1)
-    .populate(stockPopulate)
-    .lean();
-
-  if (process.env.NODE_ENV === 'staging') {
-    queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
-  }
-
-  const docs = await queryBuilder.exec();
-  const hasMore = docs.length > limit;
-  const stocks = hasMore ? docs.slice(0, limit) : docs;
+  let stocks = [];
+  let cantidad = 0;
+  let hasMore = false;
   let nextCursor = null;
 
-  if (hasMore && stocks.length) {
-    const lastDoc = stocks[stocks.length - 1];
-    nextCursor = encodeCursor(lastDoc);
+  if (useOffsetPagination) {
+    const docs = await Stock.find(countQuery)
+      .sort(sort)
+      .skip(offsetValue)
+      .limit(limit)
+      .populate(stockPopulate)
+      .lean()
+      .exec();
+
+    stocks = docs;
+    cantidad = await Stock.countDocuments(countQuery);
+    hasMore = offsetValue + stocks.length < cantidad;
+  } else {
+    const mongoQuery = cursor ? { ...countQuery, ...buildCursorQuery(cursor) } : countQuery;
+
+    let queryBuilder = Stock.find(mongoQuery)
+      .sort(sort)
+      .limit(limit + 1)
+      .populate(stockPopulate)
+      .lean();
+
+    if (process.env.NODE_ENV === 'staging') {
+      queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
+    }
+
+    const docs = await queryBuilder.exec();
+    hasMore = docs.length > limit;
+    stocks = hasMore ? docs.slice(0, limit) : docs;
+    if (hasMore && stocks.length) {
+      const lastDoc = stocks[stocks.length - 1];
+      nextCursor = encodeCursor(lastDoc);
+    }
+    cantidad = await Stock.countDocuments(countQuery);
   }
 
-  const cantidad = await Stock.countDocuments(baseQuery);
-
-  res.json({ ok: true, stocks, cantidad, hasMore, nextCursor, limite: limit });
+  res.json({
+    ok: true,
+    stocks,
+    cantidad,
+    hasMore,
+    nextCursor,
+    limite: limit,
+    offset: useOffsetPagination ? offsetValue : undefined,
+  });
 }));
 
 // -----------------------------------------------------------------------------
