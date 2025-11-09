@@ -23,6 +23,7 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     search,
     sortField,
     sortOrder,
+    related,
   } = req.query;
 
   // Limita la cantidad de resultados para preservar el rendimiento
@@ -104,39 +105,95 @@ router.get('/producservs', asyncHandler(async (req, res) => {
     ['descripcion', 1],
   ].forEach(([field, direction]) => appendSort(field, direction));
 
-  const pipeline = [
-    { $match: q },
-    { $lookup: { from: 'rubros', localField: 'rubro', foreignField: '_id', as: 'rubro' } },
-    { $unwind: { path: '$rubro', preserveNullAndEmptyArrays: true } },
-    { $lookup: { from: 'marcas', localField: 'marca', foreignField: '_id', as: 'marca' } },
-    { $unwind: { path: '$marca', preserveNullAndEmptyArrays: true } },
-    {
-      $lookup: {
-        from: 'unidaddemedidas',
-        localField: 'unidaddemedida',
-        foreignField: '_id',
-        as: 'unidaddemedida',
-      },
-    },
-    { $unwind: { path: '$unidaddemedida', preserveNullAndEmptyArrays: true } },
-    {
-      $addFields: {
-        rubroNombre: '$rubro.rubro',
-        marcaNombre: '$marca.marca',
-        unidaddemedidaNombre: '$unidaddemedida.unidaddemedida',
-        unidadNombre: '$unidaddemedida.unidaddemedida',
-        tieneStockPositivo: { $cond: [{ $gt: ['$stkactual', 0] }, 1, 0] },
-      },
-    },
-    { $sort: sortOpt },
-    { $unset: 'tieneStockPositivo' },
-    { $skip: toNumber(desde, 0) },
-    { $limit: limit },
-  ];
+  const normalizeCsv = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+      return value.flatMap((v) => `${v}`.split(',').map((x) => x.trim()).filter(Boolean));
+    }
+    return `${value}`
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+  };
 
-  const producservs = await Producserv.aggregate(pipeline).exec();
+  const requestedRelated = new Set(normalizeCsv(related));
+  if (!requestedRelated.size) {
+    ['rubro', 'rubroNombre', 'marca', 'marcaNombre', 'unidaddemedida', 'unidaddemedidaNombre', 'unidadNombre']
+      .forEach((field) => requestedRelated.add(field));
+  }
 
-  const cantidad = await Producserv.countDocuments(q);
+  const requiresRubro = requestedRelated.has('rubro')
+    || requestedRelated.has('rubroNombre')
+    || searchField === 'rubroNombre'
+    || sortField === 'rubroNombre';
+  const requiresMarca = requestedRelated.has('marca')
+    || requestedRelated.has('marcaNombre')
+    || searchField === 'marcaNombre'
+    || sortField === 'marcaNombre';
+  const requiresUnidad = requestedRelated.has('unidaddemedida')
+    || requestedRelated.has('unidaddemedidaNombre')
+    || requestedRelated.has('unidadNombre')
+    || searchField === 'unidaddemedidaNombre'
+    || searchField === 'unidadNombre'
+    || sortField === 'unidaddemedidaNombre'
+    || sortField === 'unidadNombre';
+
+  const pipeline = [{ $match: q }];
+
+  if (requiresRubro) {
+    pipeline.push(
+      { $lookup: { from: 'rubros', localField: 'rubro', foreignField: '_id', as: 'rubro' } },
+      { $unwind: { path: '$rubro', preserveNullAndEmptyArrays: true } },
+    );
+  }
+
+  if (requiresMarca) {
+    pipeline.push(
+      { $lookup: { from: 'marcas', localField: 'marca', foreignField: '_id', as: 'marca' } },
+      { $unwind: { path: '$marca', preserveNullAndEmptyArrays: true } },
+    );
+  }
+
+  if (requiresUnidad) {
+    pipeline.push(
+      {
+        $lookup: {
+          from: 'unidaddemedidas',
+          localField: 'unidaddemedida',
+          foreignField: '_id',
+          as: 'unidaddemedida',
+        },
+      },
+      { $unwind: { path: '$unidaddemedida', preserveNullAndEmptyArrays: true } },
+    );
+  }
+
+  const addFields = {
+    tieneStockPositivo: { $cond: [{ $gt: ['$stkactual', 0] }, 1, 0] },
+  };
+
+  if (requiresRubro) {
+    addFields.rubroNombre = '$rubro.rubro';
+  }
+  if (requiresMarca) {
+    addFields.marcaNombre = '$marca.marca';
+  }
+  if (requiresUnidad) {
+    addFields.unidaddemedidaNombre = '$unidaddemedida.unidaddemedida';
+    addFields.unidadNombre = '$unidaddemedida.unidaddemedida';
+  }
+
+  pipeline.push({ $addFields: addFields });
+  pipeline.push({ $sort: sortOpt });
+  pipeline.push({ $unset: 'tieneStockPositivo' });
+  pipeline.push({ $skip: toNumber(desde, 0) });
+  pipeline.push({ $limit: limit });
+
+  const [producservs, cantidad] = await Promise.all([
+    Producserv.aggregate(pipeline).exec(),
+    Producserv.countDocuments(q),
+  ]);
+
   res.json({ ok: true, producservs, cantidad });
 }));
 
