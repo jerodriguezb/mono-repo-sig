@@ -22,6 +22,65 @@ const sanitizeLimit = (value, fallback = 500, max = 1000) => {
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
 };
+const parseObjectId = (value) => {
+  if (!value) return null;
+  if (value instanceof ObjectId) return value;
+  if (typeof value === 'string' && ObjectId.isValid(value.trim())) {
+    return new ObjectId(value.trim());
+  }
+  return null;
+};
+
+const parseDateAtStartOfDay = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const parseDateAtEndOfDay = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(23, 59, 59, 999);
+  return date;
+};
+
+const buildFilterQuery = ({
+  producto,
+  movimiento,
+  usuario,
+  nrodecomanda,
+  fechaDesde,
+  fechaHasta,
+}) => {
+  const query = {};
+
+  const productoId = parseObjectId(producto);
+  if (productoId) query.codprod = productoId;
+
+  const movimientoId = parseObjectId(movimiento);
+  if (movimientoId) query.movimiento = movimientoId;
+
+  const usuarioId = parseObjectId(usuario);
+  if (usuarioId) query.usuario = usuarioId;
+
+  if (nrodecomanda !== undefined && nrodecomanda !== null && nrodecomanda !== '') {
+    const parsed = Number.parseInt(nrodecomanda, 10);
+    if (Number.isFinite(parsed)) query.nrodecomanda = parsed;
+  }
+
+  const fechaInicio = parseDateAtStartOfDay(fechaDesde);
+  const fechaFin = parseDateAtEndOfDay(fechaHasta);
+  if (fechaInicio || fechaFin) {
+    query.fecha = {};
+    if (fechaInicio) query.fecha.$gte = fechaInicio;
+    if (fechaFin) query.fecha.$lte = fechaFin;
+  }
+
+  return query;
+};
 const STOCK_LIST_INDEX = { activo: 1, fecha: -1, codprod: 1 };
 
 const encodeCursor = (doc) => {
@@ -68,41 +127,84 @@ const stockPopulate = [
 // 1. LISTAR MOVIMIENTOS DE STOCK ------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/stocks', asyncHandler(async (req, res) => {
-  const { limite, cursor: cursorRaw } = req.query;
-  const limit = sanitizeLimit(limite);
+  const {
+    limite,
+    cursor: cursorRaw,
+    desde,
+    producto,
+    movimiento,
+    usuario,
+    nrodecomanda,
+    fechaDesde,
+    fechaHasta,
+  } = req.query;
+
+  const limit = sanitizeLimit(limite, 50, 500);
+  const offsetCandidate = Number.parseInt(desde ?? 0, 10);
+  const skip = Number.isFinite(offsetCandidate) && offsetCandidate > 0 ? offsetCandidate : 0;
   const cursor = decodeCursor(cursorRaw);
 
   if (cursorRaw && !cursor) {
     return res.status(400).json({ ok: false, err: { message: 'Cursor inválido' } });
   }
 
-  const baseQuery = { activo: true };
-  const mongoQuery = cursor ? { ...baseQuery, ...buildCursorQuery(cursor) } : baseQuery;
+  const filters = buildFilterQuery({
+    producto,
+    movimiento,
+    usuario,
+    nrodecomanda,
+    fechaDesde,
+    fechaHasta,
+  });
+
+  const baseQuery = { activo: true, ...filters };
   const sort = { fecha: -1, _id: -1 };
 
-  let queryBuilder = Stock.find(mongoQuery)
-    .sort(sort)
-    .limit(limit + 1)
-    .populate(stockPopulate)
-    .lean();
-
-  if (process.env.NODE_ENV === 'staging') {
-    queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
-  }
-
-  const docs = await queryBuilder.exec();
-  const hasMore = docs.length > limit;
-  const stocks = hasMore ? docs.slice(0, limit) : docs;
+  const countPromise = Stock.countDocuments(baseQuery);
+  let docs = [];
+  let hasMore = false;
   let nextCursor = null;
+  let totalCount = null;
 
-  if (hasMore && stocks.length) {
-    const lastDoc = stocks[stocks.length - 1];
-    nextCursor = encodeCursor(lastDoc);
+  if (cursor) {
+    const cursorQuery = { ...baseQuery, ...buildCursorQuery(cursor) };
+    let queryBuilder = Stock.find(cursorQuery)
+      .sort(sort)
+      .limit(limit + 1)
+      .populate(stockPopulate)
+      .lean();
+
+    if (process.env.NODE_ENV === 'staging') {
+      queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
+    }
+
+    const results = await queryBuilder.exec();
+    hasMore = results.length > limit;
+    docs = hasMore ? results.slice(0, limit) : results;
+  } else {
+    let queryBuilder = Stock.find(baseQuery)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .populate(stockPopulate)
+      .lean();
+
+    if (process.env.NODE_ENV === 'staging') {
+      queryBuilder = queryBuilder.hint(STOCK_LIST_INDEX);
+    }
+
+    docs = await queryBuilder.exec();
+    totalCount = await countPromise;
+    hasMore = skip + docs.length < totalCount;
   }
 
-  const cantidad = await Stock.countDocuments(baseQuery);
+  if (docs.length && hasMore) {
+    nextCursor = encodeCursor(docs[docs.length - 1]);
+  }
 
-  res.json({ ok: true, stocks, cantidad, hasMore, nextCursor, limite: limit });
+  const cantidad = totalCount ?? (await countPromise);
+
+  res.json({ ok: true, stocks: docs, cantidad, hasMore, nextCursor, limite: limit, desde: skip });
 }));
 
 // -----------------------------------------------------------------------------
