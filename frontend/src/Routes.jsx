@@ -12,6 +12,7 @@ import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
 import DistribucionPage from './pages/DistribucionPage.jsx';
 import PermissionsPage from './pages/PermissionsPage.jsx';
+import MovAuditPage from './pages/MovAuditPage.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -33,6 +34,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/historial-comandas" element={<HistorialComandas />} />
         <Route path="/distribucion" element={<DistribucionPage />} />
         <Route path="/logistics" element={<LogisticsPage />} />
+        <Route path="/mov-auditoria" element={<MovAuditPage />} />
         <Route path="/precios" element={<PricesPage />} />
         <Route path="/permissions" element={<PermissionsPage />} />
         {/* Otras rutas aquí */}

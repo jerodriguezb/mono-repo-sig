@@ -35,6 +35,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
 import PriceChangeIcon from '@mui/icons-material/PriceChange';
+import ManageSearchIcon from '@mui/icons-material/ManageSearch';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
@@ -54,6 +55,7 @@ const navItems = [
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Mov Auditoría', path: '/mov-auditoria', icon: <ManageSearchIcon /> },
   { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
 ];
 
@@ -79,7 +81,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     if (!stored) return null;
     try {
       return JSON.parse(stored);
-    } catch (error) {
+    } catch {
       return null;
     }
   });
@@ -96,7 +98,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       try {
         const parsed = JSON.parse(storedUser);
         setUsuario(parsed);
-      } catch (error) {
+      } catch {
         setUsuario({ nombres: storedUser });
       }
     } else {
@@ -127,7 +129,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
         if (!active || !data?.permissions) return;
         setRolePermissions(clonePermissions(data.permissions));
         localStorage.setItem('rolePermissions', JSON.stringify(data.permissions));
-      } catch (_) {
+      } catch {
         if (!active) return;
         setRolePermissions((prev) => {
           if (prev) return prev;
