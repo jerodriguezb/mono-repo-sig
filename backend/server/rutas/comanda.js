@@ -302,16 +302,152 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     },
   });
 
+  const STOCK_SORT_PRIORITY = Object.freeze({
+    __fullyCovered: -1,
+    __hasStock: -1,
+    __positiveStockCount: -1,
+    __totalStockDisponible: -1,
+  });
+
+  const createStockSortStage = (additionalSort) => {
+    const baseSort = { ...STOCK_SORT_PRIORITY };
+    if (additionalSort && typeof additionalSort === 'object') {
+      return { $sort: { ...baseSort, ...additionalSort } };
+    }
+    return { $sort: { ...baseSort, fecha: -1, nrodecomanda: -1, _id: -1 } };
+  };
+
+  const buildStockPriorityStages = () => [
+    {
+      $lookup: {
+        from: 'producservs',
+        localField: 'items.codprod',
+        foreignField: '_id',
+        as: '__productStocks',
+      },
+    },
+    {
+      $addFields: {
+        __stockDetails: {
+          $map: {
+            input: { $ifNull: ['$items', []] },
+            as: 'item',
+            in: {
+              stock: {
+                $let: {
+                  vars: {
+                    product: {
+                      $first: {
+                        $filter: {
+                          input: '$__productStocks',
+                          as: 'prod',
+                          cond: { $eq: ['$$prod._id', '$$item.codprod'] },
+                        },
+                      },
+                    },
+                  },
+                  in: {
+                    $convert: {
+                      input: { $ifNull: ['$$product.stkactual', 0] },
+                      to: 'double',
+                      onNull: 0,
+                      onError: 0,
+                    },
+                  },
+                },
+              },
+              requested: {
+                $convert: {
+                  input: { $ifNull: ['$$item.cantidad', 0] },
+                  to: 'double',
+                  onNull: 0,
+                  onError: 0,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        __itemsCount: { $size: '$__stockDetails' },
+        __positiveStockCount: {
+          $size: {
+            $filter: {
+              input: '$__stockDetails',
+              as: 'info',
+              cond: { $gt: ['$$info.stock', 0] },
+            },
+          },
+        },
+        __fullyCoveredCount: {
+          $size: {
+            $filter: {
+              input: '$__stockDetails',
+              as: 'info',
+              cond: { $gte: ['$$info.stock', '$$info.requested'] },
+            },
+          },
+        },
+        __totalStockDisponible: {
+          $reduce: {
+            input: '$__stockDetails',
+            initialValue: 0,
+            in: { $add: ['$$value', '$$this.stock'] },
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        __hasStock: {
+          $cond: [{ $gt: ['$__positiveStockCount', 0] }, 1, 0],
+        },
+        __fullyCovered: {
+          $cond: [
+            { $eq: ['$__itemsCount', 0] },
+            0,
+            {
+              $cond: [
+                { $eq: ['$__fullyCoveredCount', '$__itemsCount'] },
+                1,
+                0,
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
+      $set: {
+        __productStocks: '$$REMOVE',
+        __stockDetails: '$$REMOVE',
+      },
+    },
+  ];
+
+  const stockCleanupStage = {
+    $set: {
+      __itemsCount: '$$REMOVE',
+      __positiveStockCount: '$$REMOVE',
+      __fullyCoveredCount: '$$REMOVE',
+      __totalStockDisponible: '$$REMOVE',
+      __hasStock: '$$REMOVE',
+      __fullyCovered: '$$REMOVE',
+    },
+  };
+
   const buildSortPipeline = (field) => {
     switch (field) {
       case 'nrodecomanda':
-        return [{ $sort: { nrodecomanda: sortDirection, fecha: -1, _id: sortDirection } }];
+        return [createStockSortStage({ nrodecomanda: sortDirection, fecha: -1, _id: sortDirection })];
       case 'fecha':
-        return [{ $sort: { fecha: sortDirection, nrodecomanda: sortDirection, _id: sortDirection } }];
+        return [createStockSortStage({ fecha: sortDirection, nrodecomanda: sortDirection, _id: sortDirection })];
       case 'codestado':
-        return [{ $sort: { codestado: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+        return [createStockSortStage({ codestado: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection })];
       case 'puntoDistribucion':
-        return [{ $sort: { puntoDistribucion: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection } }];
+        return [createStockSortStage({ puntoDistribucion: sortDirection, fecha: -1, nrodecomanda: -1, _id: sortDirection })];
       case 'cliente':
         return [
           {
@@ -323,14 +459,12 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             },
           },
           { $unwind: { path: '$__clienteSort', preserveNullAndEmptyArrays: true } },
-          {
-            $sort: {
-              '__clienteSort.razonsocial': sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
+          createStockSortStage({
+            '__clienteSort.razonsocial': sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
           { $set: { __clienteSort: '$$REMOVE' } },
         ];
       case 'precioTotal':
@@ -356,14 +490,12 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
               },
             },
           },
-          {
-            $sort: {
-              __precioTotalSort: sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
+          createStockSortStage({
+            __precioTotalSort: sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
           { $set: { __precioTotalSort: '$$REMOVE' } },
         ];
       case 'totalEntregado':
@@ -389,15 +521,13 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
               },
             },
           },
-          {
-            $sort: {
-              __totalEntregadoSort: sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
-          { $unset: '__totalEntregadoSort' },
+          createStockSortStage({
+            __totalEntregadoSort: sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
+          { $set: { __totalEntregadoSort: '$$REMOVE' } },
         ];
       case 'ruta':
         return [
@@ -419,14 +549,12 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
             },
           },
           { $unwind: { path: '$__rutaSort', preserveNullAndEmptyArrays: true } },
-          {
-            $sort: {
-              '__rutaSort.ruta': sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
+          createStockSortStage({
+            '__rutaSort.ruta': sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
           { $set: { __clienteSort: '$$REMOVE', __rutaSort: '$$REMOVE' } },
         ];
       case 'camionero':
@@ -455,14 +583,12 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
               },
             },
           },
-          {
-            $sort: {
-              __camioneroNombre: sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
+          createStockSortStage({
+            __camioneroNombre: sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
           { $set: { __camioneroSort: '$$REMOVE', __camioneroNombre: '$$REMOVE' } },
         ];
       case 'usuario':
@@ -491,18 +617,16 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
               },
             },
           },
-          {
-            $sort: {
-              __usuarioNombre: sortDirection,
-              fecha: -1,
-              nrodecomanda: -1,
-              _id: sortDirection,
-            },
-          },
+          createStockSortStage({
+            __usuarioNombre: sortDirection,
+            fecha: -1,
+            nrodecomanda: -1,
+            _id: sortDirection,
+          }),
           { $set: { __usuarioSort: '$$REMOVE', __usuarioNombre: '$$REMOVE' } },
         ];
       default:
-        return [{ $sort: { fecha: -1, nrodecomanda: -1, _id: -1 } }];
+        return [createStockSortStage({ fecha: -1, nrodecomanda: -1, _id: -1 })];
     }
   };
 
@@ -528,8 +652,16 @@ router.get('/comandas/logistica', [verificaToken, verificaAdminCam_role], asyncH
     { path: 'camionero', select: 'nombres apellidos role email' },
   ];
 
+  const stockPriorityStages = buildStockPriorityStages();
   const sortPipeline = buildSortPipeline(isValidSortField ? sortField : null);
-  const pipeline = [{ $match: query }, ...sortPipeline, { $skip: skip }, { $limit: limit }];
+  const pipeline = [
+    { $match: query },
+    ...stockPriorityStages,
+    ...sortPipeline,
+    stockCleanupStage,
+    { $skip: skip },
+    { $limit: limit },
+  ];
 
   const aggregation = Comanda.aggregate(pipeline).collation({
     locale: 'es',
