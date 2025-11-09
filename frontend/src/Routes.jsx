@@ -7,6 +7,7 @@ import DocumentsPage from './pages/DocumentsPage.jsx';
 import LogisticsPage from './pages/LogisticsPage.jsx';
 import PricesPage from './pages/PricesPage.jsx';
 import OrdersPage from './pages/OrdersPage.jsx';
+import MovAuditPage from './pages/MovAuditPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
@@ -35,6 +36,7 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/logistics" element={<LogisticsPage />} />
         <Route path="/precios" element={<PricesPage />} />
         <Route path="/permissions" element={<PermissionsPage />} />
+        <Route path="/mov-auditoria" element={<MovAuditPage />} />
         {/* Otras rutas aquí */}
       </Route>
     </Routes>

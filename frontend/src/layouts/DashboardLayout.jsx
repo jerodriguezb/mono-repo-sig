@@ -31,6 +31,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import HistoryIcon from '@mui/icons-material/History';
+import ManageHistoryIcon from '@mui/icons-material/ManageHistory';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
@@ -51,6 +52,7 @@ const navItems = [
   { label: 'Ordenes', path: '/ordenes', icon: <AssignmentTurnedInIcon /> },
 
   { label: 'Historial', path: '/historial-comandas', icon: <HistoryIcon /> },
+  { label: 'Mov Auditoría', path: '/mov-auditoria', icon: <ManageHistoryIcon /> },
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
@@ -79,7 +81,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     if (!stored) return null;
     try {
       return JSON.parse(stored);
-    } catch (error) {
+    } catch {
       return null;
     }
   });
@@ -96,7 +98,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       try {
         const parsed = JSON.parse(storedUser);
         setUsuario(parsed);
-      } catch (error) {
+      } catch {
         setUsuario({ nombres: storedUser });
       }
     } else {
@@ -127,7 +129,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
         if (!active || !data?.permissions) return;
         setRolePermissions(clonePermissions(data.permissions));
         localStorage.setItem('rolePermissions', JSON.stringify(data.permissions));
-      } catch (_) {
+      } catch {
         if (!active) return;
         setRolePermissions((prev) => {
           if (prev) return prev;
