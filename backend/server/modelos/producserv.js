@@ -71,9 +71,18 @@ producservSchema.plugin(uniqueValidator, {
 
 // Índices para búsquedas frecuentes
 producservSchema.index({ codprod: 1 }, { unique: true });
-producservSchema.index({ descripcion: 1 });
-producservSchema.index({ rubro: 1 });
-producservSchema.index({ marca: 1 });
+producservSchema.index({ activo: 1, descripcion: 1 });
+producservSchema.index({ activo: 1, codprod: 1 });
+producservSchema.index({ activo: 1, rubro: 1 });
+producservSchema.index({ activo: 1, marca: 1 });
 producservSchema.index({ stkactual: 1 });
+producservSchema.index(
+  { descripcion: "text", codprod: "text" },
+  {
+    default_language: "spanish",
+    weights: { descripcion: 5, codprod: 3 },
+    partialFilterExpression: { activo: true },
+  }
+);
 
 module.exports = mongoose.model("Producserv", producservSchema);
