@@ -11,6 +11,23 @@ const toNumber = (v, d) => Number(v ?? d);
 const escapeRegExp = (value) => value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 const producPopulate = ['rubro', 'marca', 'unidaddemedida'];
 
+const lookupCache = new Map();
+const DEFAULT_LOOKUP_CACHE_TTL = Math.max(Number(process.env.PRODUCSERV_LOOKUP_CACHE_TTL ?? 5000), 0);
+const getLookupCacheKey = (term, limit) => `${term}::${limit}`;
+const getLookupCacheEntry = (key) => {
+  const cached = lookupCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt < Date.now()) {
+    lookupCache.delete(key);
+    return null;
+  }
+  return cached.payload;
+};
+const setLookupCacheEntry = (key, payload, ttlMs) => {
+  if (!ttlMs) return;
+  lookupCache.set(key, { payload, expiresAt: Date.now() + ttlMs });
+};
+
 /** LISTAR (por defecto, sólo activos) */
 router.get('/producservs', asyncHandler(async (req, res) => {
 
@@ -217,40 +234,98 @@ router.get('/producservs/lookup', asyncHandler(async (req, res) => {
   const escaped = escapeRegExp(term);
   const prefixRegex = new RegExp(`^${escaped}`, 'i');
   const containsRegex = new RegExp(escaped, 'i');
-
   const projection = { codprod: 1, descripcion: 1, stkactual: 1 };
-  const seen = new Set();
-  const results = [];
 
-  const runQuery = async (field, regex, sortField) => {
-    if (results.length >= limit) return;
-    const docs = await Producserv.find({ activo: true, [field]: { $regex: regex } })
-      .sort({ [sortField]: 1 })
-      .limit(limit - results.length)
+  const cacheEnabled = req.query.cache !== 'false';
+  const ttlCandidate = Number(req.query.ttl ?? DEFAULT_LOOKUP_CACHE_TTL);
+  const ttl = Number.isFinite(ttlCandidate)
+    ? Math.max(ttlCandidate, 0)
+    : DEFAULT_LOOKUP_CACHE_TTL;
+  const cacheKey = getLookupCacheKey(term, limit);
+  if (cacheEnabled && ttl) {
+    const cached = getLookupCacheEntry(cacheKey);
+    if (cached) {
+      return res.json({ ok: true, producservs: cached });
+    }
+  }
+
+  const envProfile = String(process.env.PRODUCSERV_LOOKUP_PROFILE ?? 'true').toLowerCase() === 'true';
+  const envExplain = String(process.env.PRODUCSERV_LOOKUP_EXPLAIN ?? 'false').toLowerCase() === 'true';
+  let shouldProfile = envProfile;
+  if (req.query.profile === 'true') shouldProfile = true;
+  if (req.query.profile === 'false') shouldProfile = false;
+  const shouldExplain = envExplain || req.query.explain === 'true';
+  if (shouldExplain) shouldProfile = true;
+  const timerLabel = `producservLookup:${term}:${limit}:${Date.now()}`;
+
+  const query = {
+    activo: true,
+    $or: [
+      { codprod: { $regex: prefixRegex } },
+      { descripcion: { $regex: prefixRegex } },
+      { codprod: { $regex: containsRegex } },
+      { descripcion: { $regex: containsRegex } },
+    ],
+  };
+  const fetchLimit = Math.min(limit * 4, 40);
+
+  if (shouldProfile) console.time(timerLabel);
+
+  try {
+    if (shouldExplain) {
+      const explainPlan = await Producserv.find(query)
+        .select({ _id: 1 })
+        .limit(fetchLimit)
+        .explain('executionStats');
+      console.debug('Producserv lookup explain', { term, limit, explainPlan });
+    }
+
+    const docs = await Producserv.find(query)
       .select(projection)
+      .sort({ codprod: 1, descripcion: 1 })
+      .limit(fetchLimit)
       .lean()
       .exec();
 
+    const scored = [];
+    const seen = new Set();
     docs.forEach((doc) => {
       const id = doc?._id?.toString();
       if (!id || seen.has(id)) return;
       seen.add(id);
-      results.push(doc);
+
+      let priority = 4;
+      if (typeof doc.codprod === 'string' && prefixRegex.test(doc.codprod)) priority = 0;
+      else if (typeof doc.descripcion === 'string' && prefixRegex.test(doc.descripcion)) priority = 1;
+      else if (typeof doc.codprod === 'string' && containsRegex.test(doc.codprod)) priority = 2;
+      else if (typeof doc.descripcion === 'string' && containsRegex.test(doc.descripcion)) priority = 3;
+
+      scored.push({ doc, priority });
     });
-  };
 
-  await runQuery('codprod', prefixRegex, 'codprod');
-  await runQuery('descripcion', prefixRegex, 'descripcion');
+    scored.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      if (a.doc.codprod && b.doc.codprod) {
+        const codComparison = a.doc.codprod.localeCompare(b.doc.codprod, 'es', { sensitivity: 'base' });
+        if (codComparison) return codComparison;
+      }
+      if (a.doc.descripcion && b.doc.descripcion) {
+        const descComparison = a.doc.descripcion.localeCompare(b.doc.descripcion, 'es', { sensitivity: 'base' });
+        if (descComparison) return descComparison;
+      }
+      return 0;
+    });
 
-  if (results.length < limit) {
-    await runQuery('codprod', containsRegex, 'codprod');
+    const finalDocs = scored.slice(0, limit).map((item) => item.doc);
+
+    if (cacheEnabled && ttl) {
+      setLookupCacheEntry(cacheKey, finalDocs, ttl);
+    }
+
+    res.json({ ok: true, producservs: finalDocs });
+  } finally {
+    if (shouldProfile) console.timeEnd(timerLabel);
   }
-
-  if (results.length < limit) {
-    await runQuery('descripcion', containsRegex, 'descripcion');
-  }
-
-  res.json({ ok: true, producservs: results.slice(0, limit) });
 }));
 
 /** OBTENER POR ID */
