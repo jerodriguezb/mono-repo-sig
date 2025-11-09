@@ -25,6 +25,7 @@ app.use(require("./tipomovimiento"));
 app.use(require("./invoice"));
 app.use(require("./remito"));
 app.use(require("./documentos"));
+app.use(require("./permission"));
 
 app.use(require("./login"));
 module.exports = app;

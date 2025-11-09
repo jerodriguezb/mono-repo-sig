@@ -18,8 +18,8 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
@@ -42,6 +42,27 @@ const numberFormatter = new Intl.NumberFormat('es-AR', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
+
+const PDF_COLUMNS = [
+  { id: 'nrodecomanda', header: 'Nro. comanda' },
+  { id: 'cliente', header: 'Cliente' },
+  { id: 'ruta', header: 'Ruta' },
+  { id: 'producto', header: 'Producto' },
+  { id: 'rubro', header: 'Rubro' },
+  { id: 'camion', header: 'Camión' },
+  { id: 'cantidad', header: 'Cantidad' },
+];
+
+const toExportString = (value) => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'Sí' : 'No';
+  }
+  return String(value);
+};
 
 const buildOption = (id, label, raw = null) => {
   if (!id || !label) return null;
@@ -491,6 +512,7 @@ export default function OrdersPage() {
   });
 
   const filteredRows = table.getFilteredRowModel().flatRows;
+  const hasVisibleRows = table.getRowModel().rows.length > 0;
 
   const { totalRegistros, totalBultos } = useMemo(() => {
     const totalCantidad = filteredRows.reduce(
@@ -511,74 +533,69 @@ export default function OrdersPage() {
     [],
   );
 
-  const handleExportCsv = useCallback(() => {
-    if (!filteredRows.length) return;
-    const headers = [
-      'Nro. comanda',
-      'Cliente',
-      'Ruta',
-      'Producto',
-      'Rubro',
-      'Camión',
-      'Cantidad',
-    ];
-    const rows = filteredRows.map((row) => {
-      const item = row.original;
-      return [
-        item?.nrodecomanda ?? '',
-        item?.codcli?.razonsocial ?? '',
-        getRutaLabel(item),
-        item?.codprod?.descripcion ?? '',
-        getRubroLabel(item),
-        item?.showCamion ? item?.camion?.camion ?? '' : '',
-        numberFormatter.format(Number(item?.cantidad ?? 0)),
-      ];
-    });
-    const content = [headers, ...rows]
-      .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(';'))
-      .join('\n');
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `ordenes_a_preparar_${new Date().toISOString()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [filteredRows, getRutaLabel, getRubroLabel]);
-
   const handleExportPdf = useCallback(() => {
+    const { rows: currentRows } = table.getRowModel();
+    if (!currentRows.length) return;
+
     const doc = new jsPDF({ orientation: 'landscape' });
     doc.setFontSize(14);
     doc.text('Órdenes – A preparar', 14, 18);
-    const body = filteredRows.map((row) => {
-      const item = row.original;
-      return [
-        item?.nrodecomanda ?? '',
-        item?.codcli?.razonsocial ?? '',
-        getRutaLabel(item),
-        item?.codprod?.descripcion ?? '',
-        getRubroLabel(item),
-        item?.showCamion ? item?.camion?.camion ?? '' : '',
-        numberFormatter.format(Number(item?.cantidad ?? 0)),
-      ];
+
+    const body = currentRows.map((row) => {
+      const cellsById = row.getVisibleCells().reduce((acc, cell) => {
+        acc[cell.column.id] = cell;
+        return acc;
+      }, {});
+
+      return PDF_COLUMNS.map((column) => {
+        const cell = cellsById[column.id];
+        if (!cell) return '';
+
+        if (cell.getIsGrouped()) {
+          const label = toExportString(cell.getValue());
+          const count = row.subRows?.length ?? 0;
+          return count ? `${label} (${count})` : label;
+        }
+
+        if (cell.getIsAggregated()) {
+          const aggregatedValue = cell.getValue();
+          if (column.id === 'cantidad') {
+            return numberFormatter.format(Number(aggregatedValue ?? 0));
+          }
+          return toExportString(aggregatedValue);
+        }
+
+        if (cell.getIsPlaceholder()) {
+          return '';
+        }
+
+        if (column.id === 'cantidad') {
+          return numberFormatter.format(Number(cell.getValue() ?? 0));
+        }
+
+        if (column.id === 'camion') {
+          if (row.original && !row.original.showCamion) {
+            return '';
+          }
+        }
+
+        return toExportString(cell.getValue());
+      });
     });
+
     autoTable(doc, {
-      head: [[
-        'Nro. comanda',
-        'Cliente',
-        'Ruta',
-        'Producto',
-        'Rubro',
-        'Camión',
-        'Cantidad',
-      ]],
+      head: [PDF_COLUMNS.map((column) => column.header)],
       body,
       startY: 24,
     });
+
     doc.save('ordenes_a_preparar.pdf');
-  }, [filteredRows, getRutaLabel, getRubroLabel]);
+  }, [table]);
+
+  const handleReload = useCallback(() => {
+    if (!estadoId) return;
+    fetchOrders(estadoId);
+  }, [estadoId, fetchOrders]);
 
   return (
     <Stack spacing={3} sx={{ p: 2 }}>
@@ -586,21 +603,21 @@ export default function OrdersPage() {
         <Typography variant="h5">Órdenes — A preparar</Typography>
         <Stack direction="row" spacing={1}>
           <Button
-            variant="outlined"
-            startIcon={<FileDownloadIcon />}
-            onClick={handleExportCsv}
-            disabled={!filteredRows.length}
-          >
-            Exportar CSV
-          </Button>
-          <Button
             variant="contained"
             color="secondary"
             startIcon={<PictureAsPdfIcon />}
             onClick={handleExportPdf}
-            disabled={!filteredRows.length}
+            disabled={!hasVisibleRows}
           >
             Exportar PDF
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleReload}
+            disabled={loading || !estadoId}
+          >
+            Recargar
           </Button>
         </Stack>
       </Stack>

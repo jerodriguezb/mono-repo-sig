@@ -1,5 +1,5 @@
 // File: src/layouts/DashboardLayout.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
@@ -20,6 +20,7 @@ import {
   DialogContentText,
   DialogActions,
   Button,
+  Alert,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import GroupIcon from '@mui/icons-material/Group';
@@ -33,9 +34,11 @@ import HistoryIcon from '@mui/icons-material/History';
 import DescriptionIcon from '@mui/icons-material/Description';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import DeliveryDiningIcon from '@mui/icons-material/DeliveryDining';
+import PriceChangeIcon from '@mui/icons-material/PriceChange';
 import ThemeSelector from '../components/ThemeSelector.jsx';
 import Footer from '../components/Footer';
 import logo from '../assets/logo.png';
+import { fetchPermissions } from '../api/permissions';
 
 /* ----------------─ Menú lateral ─---------------- */
 const navItems = [
@@ -51,12 +54,35 @@ const navItems = [
   { label: 'Permisos', path: '/permissions', icon: <SecurityIcon /> },
   { label: 'Distribución', path: '/distribucion', icon: <DeliveryDiningIcon /> },
   { label: 'Logística', path: '/logistics',  icon: <LocalShippingIcon /> },
+  { label: 'Precios', path: '/precios', icon: <PriceChangeIcon /> },
 ];
+
+const defaultRolePermissions = {
+  SUPER_ADMIN: navItems.map((item) => item.path),
+  ADMIN_ROLE: navItems.filter((item) => item.path !== '/permissions').map((item) => item.path),
+  USER_ROLE: [],
+  USER_CAM: ['/distribucion'],
+  USER_PREV: ['/comandas', '/clients'],
+};
+
+const clonePermissions = (permissions = {}) =>
+  Object.fromEntries(
+    Object.entries(permissions).map(([role, screens]) => [role, Array.isArray(screens) ? [...screens] : []]),
+  );
 
 export default function DashboardLayout({ themeName, setThemeName }) {
   const [open, setOpen] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [nombreUsuario, setNombreUsuario] = useState('');
+  const [usuario, setUsuario] = useState(null);
+  const [rolePermissions, setRolePermissions] = useState(() => {
+    const stored = localStorage.getItem('rolePermissions');
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored);
+    } catch (error) {
+      return null;
+    }
+  });
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -66,8 +92,96 @@ export default function DashboardLayout({ themeName, setThemeName }) {
     if (!token) navigate('/login');
 
     const storedUser = localStorage.getItem('usuario');
-    if (storedUser) setNombreUsuario(JSON.parse(storedUser));
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        setUsuario(parsed);
+      } catch (error) {
+        setUsuario({ nombres: storedUser });
+      }
+    } else {
+      const storedName = localStorage.getItem('nombreUsuario');
+      if (storedName) setUsuario({ nombres: storedName });
+    }
   }, [navigate]);
+
+  useEffect(() => {
+    const handlePermissionsUpdated = (event) => {
+      const detail = event?.detail;
+      if (detail && typeof detail === 'object') {
+        setRolePermissions(clonePermissions(detail));
+      }
+    };
+
+    window.addEventListener('role-permissions-updated', handlePermissionsUpdated);
+    return () => window.removeEventListener('role-permissions-updated', handlePermissionsUpdated);
+  }, []);
+
+  useEffect(() => {
+    if (!usuario?.role) return;
+    let active = true;
+
+    const loadPermissions = async () => {
+      try {
+        const data = await fetchPermissions();
+        if (!active || !data?.permissions) return;
+        setRolePermissions(clonePermissions(data.permissions));
+        localStorage.setItem('rolePermissions', JSON.stringify(data.permissions));
+      } catch (_) {
+        if (!active) return;
+        setRolePermissions((prev) => {
+          if (prev) return prev;
+          const fallback = clonePermissions(defaultRolePermissions);
+          localStorage.setItem('rolePermissions', JSON.stringify(fallback));
+          return fallback;
+        });
+      }
+    };
+
+    loadPermissions();
+    return () => {
+      active = false;
+    };
+  }, [usuario?.role]);
+
+  const allowedPaths = useMemo(() => {
+    if (!usuario?.role) return [];
+    if (rolePermissions && Object.prototype.hasOwnProperty.call(rolePermissions, usuario.role)) {
+      const paths = rolePermissions[usuario.role];
+      return Array.isArray(paths) ? paths : [];
+    }
+    const fallback = defaultRolePermissions[usuario.role];
+    return Array.isArray(fallback) ? fallback : [];
+  }, [usuario?.role, rolePermissions]);
+
+  const visibleNavItems = useMemo(() => {
+    if (!usuario) return navItems;
+    if (!allowedPaths || allowedPaths.length === 0) return [];
+    return navItems.filter((item) => allowedPaths.includes(item.path));
+  }, [usuario, allowedPaths]);
+  const nombreUsuario = usuario?.nombres || localStorage.getItem('nombreUsuario') || '';
+
+  useEffect(() => {
+    if (!usuario) return;
+
+    if (allowedPaths.length === 0) {
+      if (pathname !== '/') navigate('/', { replace: true });
+      return;
+    }
+
+    const isRoot = pathname === '/';
+    if (isRoot) {
+      navigate(allowedPaths[0], { replace: true });
+      return;
+    }
+
+    const hasAccess = allowedPaths.some((allowedPath) => pathname.startsWith(allowedPath));
+    if (!hasAccess) {
+      navigate(allowedPaths[0], { replace: true });
+    }
+  }, [usuario, allowedPaths, pathname, navigate]);
+
+  const showNoAccess = usuario && allowedPaths.length === 0;
 
   /* -------- handlers logout -------- */
   const handleLogoutClick   = () => setConfirmLogoutOpen(true);
@@ -116,7 +230,7 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Drawer variant="persistent" open={open}>
         <Toolbar />
         <List>
-          {navItems.map(({ label, path, icon }) => {
+          {visibleNavItems.map(({ label, path, icon }) => {
             const isSelected =
               path === '/ordenes'
                 ? pathname.startsWith('/ordenes')
@@ -142,7 +256,13 @@ export default function DashboardLayout({ themeName, setThemeName }) {
       <Box component="main" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <Toolbar />
         <Box sx={{ flexGrow: 1, p: 3 }}>
-          <Outlet />
+          {showNoAccess ? (
+            <Alert severity="warning">
+              Tu rol actualmente no posee accesos asignados. Contacta a un administrador para obtener permisos.
+            </Alert>
+          ) : (
+            <Outlet />
+          )}
         </Box>
         <Footer />
       </Box>

@@ -5,11 +5,13 @@ import ProductsPage from './pages/ProductsPage.jsx';
 import ComandasPage from './pages/ComandasPage.jsx';
 import DocumentsPage from './pages/DocumentsPage.jsx';
 import LogisticsPage from './pages/LogisticsPage.jsx';
+import PricesPage from './pages/PricesPage.jsx';
 import OrdersPage from './pages/OrdersPage.jsx';
 import LoginForm from './pages/LoginForm';
 import PrivateRoute from './components/PrivateRoute';
 import HistorialComandas from './components/HistorialComandas.jsx';
 import DistribucionPage from './pages/DistribucionPage.jsx';
+import PermissionsPage from './pages/PermissionsPage.jsx';
 
 export default function AppRoutes({ themeName, setThemeName }) {
   return (
@@ -31,6 +33,8 @@ export default function AppRoutes({ themeName, setThemeName }) {
         <Route path="/historial-comandas" element={<HistorialComandas />} />
         <Route path="/distribucion" element={<DistribucionPage />} />
         <Route path="/logistics" element={<LogisticsPage />} />
+        <Route path="/precios" element={<PricesPage />} />
+        <Route path="/permissions" element={<PermissionsPage />} />
         {/* Otras rutas aquí */}
       </Route>
     </Routes>
