@@ -68,7 +68,14 @@ const ensureComandasAccess = (req, res, next) => {
 // 1. LISTAR TODAS LAS COMANDAS --------------------------------------------------
 // -----------------------------------------------------------------------------
 router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(async (req, res) => {
-  const { desde = 0, limite = 500, estado, camionero } = req.query;
+  const {
+    desde = 0,
+    limite = 500,
+    estado,
+    camionero,
+    sortField,
+    sortOrder,
+  } = req.query;
 
   if (estado && !isValidObjectId(estado)) {
     return res.json({ ok: true, comandas: [], cantidad: 0 });
@@ -97,17 +104,73 @@ router.get('/comandas', [verificaToken, ensureComandasAccess], asyncHandler(asyn
     query.camionero = camioneroId;
   }
 
+  const sortConfig = {};
+  if (sortField) {
+    const rawOrder = typeof sortOrder === 'string' ? sortOrder.toLowerCase() : sortOrder;
+    const isDesc = rawOrder === 'desc' || rawOrder === '-1' || Number(rawOrder) === -1;
+    sortConfig[sortField] = isDesc ? -1 : 1;
+  } else {
+    sortConfig.nrodecomanda = 1;
+  }
+
   const comandas = await Comanda.find(query)
     // .skip(toNumber(desde, 0))
     // .limit(toNumber(limite, 500))
-    .sort('nrodecomanda')
+    .sort(sortConfig)
     .populate(commonPopulate)
     .lean()
     .exec();
 
   const cantidadQuery = { activo: true, ...query };
   const cantidad = await Comanda.countDocuments(cantidadQuery);
-  res.json({ ok: true, comandas, cantidad });
+
+  let orderedComandas = comandas;
+  if (!sortField) {
+    const resolveStockPriority = (items) => {
+      if (!Array.isArray(items) || items.length === 0) {
+        return Number.NEGATIVE_INFINITY;
+      }
+
+      let hasValidStock = false;
+      let maxStock = Number.NEGATIVE_INFINITY;
+
+      items.forEach((item) => {
+        const rawStock = Number(item?.codprod?.stkactual);
+        if (!Number.isFinite(rawStock)) {
+          return;
+        }
+
+        hasValidStock = true;
+        if (rawStock > maxStock) {
+          maxStock = rawStock;
+        }
+      });
+
+      return hasValidStock ? maxStock : Number.NEGATIVE_INFINITY;
+    };
+
+    const comandasWithPriority = comandas.map((comanda) => ({
+      comanda,
+      stockPriority: resolveStockPriority(comanda.items),
+    }));
+
+    comandasWithPriority.sort((aEntry, bEntry) => {
+      const { stockPriority: aStock } = aEntry;
+      const { stockPriority: bStock } = bEntry;
+
+      if (aStock !== bStock) {
+        return bStock > aStock ? 1 : -1;
+      }
+
+      const aNumero = Number(aEntry.comanda.nrodecomanda) || 0;
+      const bNumero = Number(bEntry.comanda.nrodecomanda) || 0;
+      return aNumero - bNumero;
+    });
+
+    orderedComandas = comandasWithPriority.map((entry) => entry.comanda);
+  }
+
+  res.json({ ok: true, comandas: orderedComandas, cantidad });
 }));
 
 // -----------------------------------------------------------------------------
